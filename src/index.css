@@ -1,0 +1,132 @@
+:root {
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: #080808;
+}
+
+.support-form-field::placeholder {
+  color: rgba(210, 210, 210, 0.72) !important;
+  -webkit-text-fill-color: rgba(210, 210, 210, 0.72) !important;
+  opacity: 1 !important;
+  font-style: italic;
+  font-weight: 400;
+}
+
+.support-form-field::-webkit-input-placeholder {
+  color: rgba(210, 210, 210, 0.72) !important;
+  -webkit-text-fill-color: rgba(210, 210, 210, 0.72) !important;
+  opacity: 1 !important;
+  font-style: italic;
+  font-weight: 400;
+}
+
+.support-form-field::-moz-placeholder {
+  color: rgba(210, 210, 210, 0.72) !important;
+  opacity: 1 !important;
+  font-style: italic;
+  font-weight: 400;
+}
+
+input::placeholder,
+textarea::placeholder,
+input::-webkit-input-placeholder,
+textarea::-webkit-input-placeholder,
+input::-moz-placeholder,
+textarea::-moz-placeholder {
+  font-style: italic;
+  font-weight: 500;
+  opacity: 0.78;
+}
+
+.support-form-field,
+.support-form-field:focus,
+.support-form-field:active,
+.support-form-field:disabled {
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+  caret-color: #ffffff !important;
+  font-style: normal;
+  font-weight: 400;
+  opacity: 1;
+}
+
+input.support-form-field,
+textarea.support-form-field,
+input.support-form-field:focus,
+textarea.support-form-field:focus,
+input.support-form-field:active,
+textarea.support-form-field:active {
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+  caret-color: #ffffff !important;
+  font-style: normal !important;
+  font-weight: 400 !important;
+}
+
+input.support-form-field::placeholder,
+textarea.support-form-field::placeholder {
+  color: rgba(210, 210, 210, 0.72) !important;
+  -webkit-text-fill-color: rgba(210, 210, 210, 0.72) !important;
+  opacity: 1 !important;
+  font-style: italic !important;
+  font-weight: 400 !important;
+}
+
+input.support-form-field::-webkit-input-placeholder,
+textarea.support-form-field::-webkit-input-placeholder {
+  color: rgba(210, 210, 210, 0.72) !important;
+  -webkit-text-fill-color: rgba(210, 210, 210, 0.72) !important;
+  opacity: 1 !important;
+  font-style: italic !important;
+  font-weight: 400 !important;
+}
+
+input.support-form-field::-moz-placeholder,
+textarea.support-form-field::-moz-placeholder {
+  color: rgba(210, 210, 210, 0.72) !important;
+  opacity: 1 !important;
+  font-style: italic !important;
+  font-weight: 400 !important;
+}
+
+@media (prefers-color-scheme: dark) {
+  input.support-form-field[type="file"] {
+    color: #d1d5db !important;
+    -webkit-text-fill-color: #d1d5db !important;
+  }
+
+  input.support-form-field[type="file"]::file-selector-button {
+    background: rgba(255, 255, 255, 0.06);
+    color: #d1d5db;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+
+  input.support-form-field[type="file"]:hover::file-selector-button {
+    background: rgba(255, 255, 255, 0.1);
+  }
+}
+
+.support-remove-attachment-btn:hover {
+  color: #ef4444 !important;
+}

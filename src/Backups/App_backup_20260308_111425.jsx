@@ -1,0 +1,19069 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import logoLight from "./assets/15.png";
+import logoDark from "./assets/16.png";
+import heroDark from "./assets/tabstudio-hero-dark.png";
+import heroLight from "./assets/tabstudio-hero-light.png";
+import developerPhoto from "./assets/HarryBolton.JPG";
+import tabbyLight from "./assets/tabby-light-v1-transparent.png";
+import tabbyDark from "./assets/tabby-dark-v1-transparent.png";
+
+/**
+ * App ordering is TOP->BOTTOM strings: [E, B, G, D, A, E] (high → low)
+ * Tuning list is shown/stored as LOW → HIGH (E A D G B E)
+ * We convert on apply by reversing.
+ */
+
+const DEFAULT_TUNING = ["E", "B", "G", "D", "A", "E"]; // high → low (app order)
+const DEFAULT_COLS = 32;
+const TRIPLE_CLICK_RESET_COLS = 32;
+const MIN_COLS = 1;
+const MAX_COLS = 64;
+const DEFAULT_COLS_AUTO_DELAY_MS = 3000;
+const MIN_COLS_AUTO_DELAY_MS = 1000;
+const MAX_COLS_AUTO_DELAY_MS = 10000;
+
+const LS_USER_TUNINGS_KEY = "tab_editor_user_tunings_v1";
+const LS_USER_CHORDS_KEY = "tab_editor_user_chords_v1";
+const LS_CHORD_OVERRIDES_KEY = "tab_editor_chord_overrides_v1";
+const LS_INSTRUMENT_FAVS_KEY = "tab_editor_instrument_favs_v1";
+const LS_ACCENT_COLOR_KEY = "tabstudio_accent_color_v1";
+const LS_DEFAULT_COLS_KEY = "tabstudio_default_cols_v1";
+const LS_COLS_AUTO_DELAY_MS_KEY = "tabstudio_cols_auto_delay_ms_v1";
+const LS_SCROLL_SCOPE_KEY = "tabstudio_scroll_scope_v1";
+const LS_THEME_MODE_KEY = "tabstudio_theme_mode";
+const LS_UI_LANG_KEY = "tabstudio_ui_lang_v1";
+const LS_PERSONAL_BEST_COMPLETED_ROWS_KEY = "tabstudio_personal_best_completed_rows";
+const LS_TABS_MILESTONES_TRIGGERED_KEY = "tabstudio_tabs_milestones_triggered";
+const LS_FIRST_EXPORT_CELEBRATED_KEY = "tabstudio_first_export_celebrated";
+const LS_SETTINGS_FULLSCREEN_KEY = "tabstudio_settings_fullscreen_v1";
+const LS_LIBRARY_V1_KEY = "tabstudio_library_v1";
+const LS_SLOGAN_OFFSET_X_KEY = "tabstudio_slogan_offset_x_v1";
+const LS_EXPORT_BG_MODE_KEY = "tabstudio_export_bg_mode";
+const LS_EXPORT_BG_COLOR_KEY = "tabstudio_export_bg_color";
+const LS_EXPORT_TEXT_COLOR_KEY = "tabstudio_export_text_color";
+const LS_EXPORT_THICKNESS_KEY = "tabstudio_export_thickness";
+const LS_EXPORT_TEXT_OUTLINE_KEY = "tabstudio_export_text_outline";
+const LS_EXPORT_SHOW_ROW_NAMES_KEY = "tabstudio_export_show_row_names";
+const LS_EXPORT_SHOW_ARTIST_KEY = "tabstudio_export_show_artist";
+const LS_EXPORT_SHOW_ALBUM_KEY = "tabstudio_export_show_album";
+const LS_EXPORT_SHOW_SONG_KEY = "tabstudio_export_show_song";
+const LS_EXPORT_SHOW_INSTRUMENT_KEY = "tabstudio_export_show_instrument";
+const LS_EXPORT_SHOW_TUNING_KEY = "tabstudio_export_show_tuning";
+const LS_EXPORT_SHOW_CAPO_KEY = "tabstudio_export_show_capo";
+const LS_EXPORT_SHOW_TEMPO_KEY = "tabstudio_export_show_tempo";
+const LS_EXPORT_SHOW_IMAGE_BRANDING_KEY = "tabstudio_export_show_image_branding";
+const LS_CHORDS_SECTION_KEY = "tabstudio_chords_section_v1";
+const LS_SELECTED_PLAN_KEY = "selectedPlan";
+const LS_USER_STATE_KEY = "tabstudioUserState";
+const LS_TABSTUDIO_DRAFT_KEY = "tabstudioDraft";
+const LS_RESTORE_DRAFT_AFTER_MEMBERSHIP_KEY = "tabstudioRestoreDraftAfterMembership";
+const LS_RESTORE_DRAFT_AFTER_SIGNIN_KEY = "tabstudioRestoreDraftAfterSignin";
+const LS_HEADER_TABBY_NUDGE_SHOWN_SESSION_KEY = "tabstudioHeaderTabbyNudgeShown";
+const LS_HEADER_TABBY_ENGAGED_SESSION_KEY = "tabstudioHeaderTabbyEngaged";
+const HEADER_INTRO_SESSION_KEY = "tabstudioIntroPlayed";
+const HEADER_TAGLINE_FADE_MS = 2400;
+const HEADER_TABS_ANCHOR_OFFSET_PX = 48;
+const HEADER_TAGLINE_SLIDE_MS = 2300;
+const HEADER_TAGLINE_SLIDE_EASE = "cubic-bezier(0.22, 0.61, 0.36, 1)";
+const LIBRARY_DELETE_WAIT_SECONDS = 10;
+const TABSTUDIO_TUTORIAL_URL = "https://www.youtube.com/watch?v=Aq5WXmQQooo&list=RDAq5WXmQQooo&start_radio=1";
+const TABS_CREATED_MILESTONES = [10, 25, 50, 100, 250, 500, 1000];
+const NO_ALBUM_NAME = "No Album";
+const DEFAULT_SLOGAN_OFFSET_X = -4;
+const SLOGAN_INTRO_OFFSET_DELTA = 16;
+const EXPORT_BRANDING_TEXT = "write tabs, save tabs, play tabs. Tabs, simplified.";
+
+function normalizeUserState(rawState) {
+  const base = { isLoggedIn: false, hasMembership: false, planType: null, email: "" };
+  if (!rawState || typeof rawState !== "object") return base;
+  const plan = rawState.planType === "player" || rawState.planType === "creator" ? rawState.planType : null;
+  return {
+    isLoggedIn: Boolean(rawState.isLoggedIn),
+    hasMembership: Boolean(rawState.hasMembership),
+    planType: plan,
+    email: String(rawState.email || ""),
+  };
+}
+
+function loadUserStateFromStorage() {
+  if (typeof window === "undefined") return normalizeUserState(null);
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(LS_USER_STATE_KEY) || "null");
+    return normalizeUserState(parsed);
+  } catch {
+    return normalizeUserState(null);
+  }
+}
+
+function persistUserStateToStorage(nextState) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(LS_USER_STATE_KEY, JSON.stringify(normalizeUserState(nextState)));
+  } catch {}
+}
+
+function getPlanMeta(planId) {
+  if (planId === "creator") {
+    return { label: "Creator Plan", monthly: "$9.99/month" };
+  }
+  return { label: "Player Plan", monthly: "$4.99/month" };
+}
+function EditIcon({ size = 14, strokeWidth = 2 }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+    </svg>
+  );
+}
+
+function HelpHubPage({
+  onBack,
+  onGoProjects,
+  onGoExport,
+  onGoSettings,
+  targetSection = "about",
+  supportUserEmail = "",
+  supportUserId = "",
+  supportPaidSubscriber = false,
+}) {
+  const aboutRef = useRef(null);
+  const featuresRef = useRef(null);
+  const featureSpotlightRef = useRef(null);
+  const developerRef = useRef(null);
+  const faqRef = useRef(null);
+  const supportRef = useRef(null);
+  const helpScrollRef = useRef(null);
+  const tabbySpeechDelayRef = useRef(null);
+  const supportSwapTimerRef = useRef(null);
+  const supportThanksTimerRef = useRef(null);
+  const [openFaqId, setOpenFaqId] = useState("");
+  const [faqQuery, setFaqQuery] = useState("");
+  const [hoveredFeatureId, setHoveredFeatureId] = useState("");
+  const [spotlightHovered, setSpotlightHovered] = useState(false);
+  const [tabbyFloatUp, setTabbyFloatUp] = useState(false);
+  const [tabbyBlink, setTabbyBlink] = useState(false);
+  const [tabbySpeechVisible, setTabbySpeechVisible] = useState(false);
+  const [tabbySpeechIndex, setTabbySpeechIndex] = useState(0);
+  const [tabbySpeechPlaying, setTabbySpeechPlaying] = useState(false);
+  const [tabbySpeechTrigger, setTabbySpeechTrigger] = useState(0);
+  const [tabbySupportThanksVisible, setTabbySupportThanksVisible] = useState(false);
+  const [activeHelpSection, setActiveHelpSection] = useState(String(targetSection || "about").toLowerCase());
+  const [themeRefresh, setThemeRefresh] = useState(0);
+  const spotlightSwapTimerRef = useRef(null);
+  const [supportShowForm, setSupportShowForm] = useState(false);
+  const [supportLeftVisible, setSupportLeftVisible] = useState(true);
+  const [supportSenderEmail, setSupportSenderEmail] = useState("");
+  const [supportSubject, setSupportSubject] = useState("");
+  const [supportMessage, setSupportMessage] = useState("");
+  const [supportFormErrors, setSupportFormErrors] = useState({});
+  const [supportFocusedField, setSupportFocusedField] = useState("");
+  const [supportSending, setSupportSending] = useState(false);
+  const [displayedFeatureId, setDisplayedFeatureId] = useState("");
+  const [focusedFeatureId, setFocusedFeatureId] = useState("");
+  const [spotlightVisible, setSpotlightVisible] = useState(true);
+  const [helpFeatureNarrow, setHelpFeatureNarrow] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth <= 1180 : false
+  );
+
+  const getSystemThemeForHelp = useCallback(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return "light";
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }, []);
+  const isHelpDarkMode = useMemo(() => {
+    if (typeof window === "undefined") return true;
+    try {
+      const stored = window.localStorage.getItem(LS_THEME_MODE_KEY);
+      if (stored === "dark") return true;
+      if (stored === "light") return false;
+    } catch {}
+    return getSystemThemeForHelp() === "dark";
+  }, [getSystemThemeForHelp, themeRefresh]);
+  const helpAccentId = useMemo(() => {
+    const fallback = isHelpDarkMode ? "white" : "black";
+    if (typeof window === "undefined") return fallback;
+    try {
+      const stored = window.localStorage.getItem(LS_ACCENT_COLOR_KEY);
+      if (ACCENT_PRESETS.some((p) => p.id === stored)) {
+        if (isHelpDarkMode && stored === "black") return fallback;
+        if (!isHelpDarkMode && stored === "white") return fallback;
+        return stored;
+      }
+    } catch {}
+    return fallback;
+  }, [isHelpDarkMode, themeRefresh]);
+  const helpAccent = useMemo(
+    () => (ACCENT_PRESETS.find((preset) => preset.id === helpAccentId) || ACCENT_PRESETS[0]).hex,
+    [helpAccentId]
+  );
+  const HELP_THEME = useMemo(() => {
+    const base = isHelpDarkMode ? DARK_THEME : LIGHT_THEME;
+    return {
+      ...base,
+      accent: helpAccent,
+      accentSoft: withAlpha(helpAccent, isHelpDarkMode ? 0.2 : 0.16),
+    };
+  }, [isHelpDarkMode, helpAccent]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const onStorage = (e) => {
+      if (!e?.key || e.key === LS_THEME_MODE_KEY || e.key === LS_ACCENT_COLOR_KEY) {
+        setThemeRefresh((v) => v + 1);
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    let mq;
+    const onSystemThemeChange = () => setThemeRefresh((v) => v + 1);
+    if (typeof window.matchMedia === "function") {
+      mq = window.matchMedia("(prefers-color-scheme: dark)");
+      if (typeof mq.addEventListener === "function") mq.addEventListener("change", onSystemThemeChange);
+      else if (typeof mq.addListener === "function") mq.addListener(onSystemThemeChange);
+    }
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      if (mq) {
+        if (typeof mq.removeEventListener === "function") mq.removeEventListener("change", onSystemThemeChange);
+        else if (typeof mq.removeListener === "function") mq.removeListener(onSystemThemeChange);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setTabbyFloatUp((v) => !v);
+    }, 2200);
+    return () => window.clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    let timerId = null;
+    const runBlink = () => {
+      const waitMs = 7000 + Math.floor(Math.random() * 5000);
+      timerId = window.setTimeout(() => {
+        if (!mounted) return;
+        setTabbyBlink(true);
+        window.setTimeout(() => {
+          if (!mounted) return;
+          setTabbyBlink(false);
+        }, 220);
+        runBlink();
+      }, waitMs);
+    };
+    runBlink();
+    return () => {
+      mounted = false;
+      if (timerId) window.clearTimeout(timerId);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!tabbySpeechTrigger) return undefined;
+    let toSecondLine = null;
+    let toThirdLine = null;
+    let toHide = null;
+    setTabbySpeechPlaying(true);
+    setTabbySpeechVisible(true);
+    setTabbySpeechIndex(0);
+    toSecondLine = window.setTimeout(() => {
+      setTabbySpeechIndex(1);
+    }, 2800);
+    toThirdLine = window.setTimeout(() => {
+      setTabbySpeechIndex(2);
+    }, 5800);
+    toHide = window.setTimeout(() => {
+      setTabbySpeechVisible(false);
+      setTabbySpeechIndex(0);
+      setTabbySpeechPlaying(false);
+    }, 9300);
+    return () => {
+      if (toSecondLine) window.clearTimeout(toSecondLine);
+      if (toThirdLine) window.clearTimeout(toThirdLine);
+      if (toHide) window.clearTimeout(toHide);
+    };
+  }, [tabbySpeechTrigger]);
+
+  useEffect(() => {
+    if (!supportShowForm) setSupportSenderEmail("");
+  }, [supportShowForm]);
+
+  useEffect(() => {
+    return () => {
+      if (spotlightSwapTimerRef.current) window.clearTimeout(spotlightSwapTimerRef.current);
+      if (supportSwapTimerRef.current) window.clearTimeout(supportSwapTimerRef.current);
+      if (supportThanksTimerRef.current) window.clearTimeout(supportThanksTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (tabbySpeechDelayRef.current) {
+      window.clearTimeout(tabbySpeechDelayRef.current);
+      tabbySpeechDelayRef.current = null;
+    }
+    if (activeHelpSection !== "support") return undefined;
+    if (tabbySpeechPlaying || tabbySpeechVisible || tabbySupportThanksVisible) return undefined;
+    tabbySpeechDelayRef.current = window.setTimeout(() => {
+      setTabbySpeechTrigger((v) => v + 1);
+      tabbySpeechDelayRef.current = null;
+    }, 1500);
+    return () => {
+      if (tabbySpeechDelayRef.current) {
+        window.clearTimeout(tabbySpeechDelayRef.current);
+        tabbySpeechDelayRef.current = null;
+      }
+    };
+  }, [activeHelpSection, tabbySpeechPlaying, tabbySpeechVisible, tabbySupportThanksVisible]);
+
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      if (supportShowForm) {
+        setSupportFormErrors({});
+        setSupportLeftVisible(false);
+        if (supportSwapTimerRef.current) window.clearTimeout(supportSwapTimerRef.current);
+        supportSwapTimerRef.current = window.setTimeout(() => {
+          setSupportShowForm(false);
+          setSupportLeftVisible(true);
+          supportSwapTimerRef.current = null;
+        }, 220);
+        return;
+      }
+      onBack?.();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onBack, supportShowForm]);
+  useEffect(() => {
+    const onResize = () => setHelpFeatureNarrow(window.innerWidth <= 1180);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  useEffect(() => {
+    const map = {
+      about: aboutRef,
+      faq: faqRef,
+      support: supportRef,
+    };
+    const key = String(targetSection || "about").toLowerCase();
+    const ref = map[key] || aboutRef;
+    const id = requestAnimationFrame(() => {
+      try {
+        ref.current?.scrollIntoView({ behavior: "auto", block: "start" });
+      } catch {}
+    });
+    return () => cancelAnimationFrame(id);
+  }, [targetSection]);
+  useEffect(() => {
+    setActiveHelpSection(String(targetSection || "about").toLowerCase());
+  }, [targetSection]);
+  useEffect(() => {
+    if (String(targetSection || "").toLowerCase() !== "faq") return;
+    setOpenFaqId("");
+  }, [targetSection]);
+
+  useEffect(() => {
+    const root = helpScrollRef.current;
+    if (!root) return undefined;
+    const observed = [
+      ["about", aboutRef.current],
+      ["features", featuresRef.current],
+      ["developer", developerRef.current],
+      ["faq", faqRef.current],
+      ["support", supportRef.current],
+    ].filter(([, el]) => Boolean(el));
+    if (!observed.length) return undefined;
+    const ratios = new Map();
+    const obs = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const id = entry.target?.id;
+          if (!id) continue;
+          ratios.set(id, entry.intersectionRatio);
+        }
+        let bestId = "";
+        let bestRatio = -1;
+        for (const [id, ratio] of ratios.entries()) {
+          if (ratio > bestRatio) {
+            bestId = id;
+            bestRatio = ratio;
+          }
+        }
+        if (bestId) setActiveHelpSection(bestId);
+      },
+      {
+        root,
+        threshold: [0.15, 0.3, 0.45, 0.6, 0.75, 0.9],
+      }
+    );
+    for (const [, el] of observed) obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
+
+  const sectionCard = {
+    borderRadius: 14,
+    border: `1px solid ${HELP_THEME.border}`,
+    background: HELP_THEME.surfaceWarm,
+    padding: 18,
+    display: "grid",
+    gap: 10,
+  };
+  const navPillStyle = {
+    minHeight: 34,
+    padding: "0 12px",
+    borderRadius: 999,
+    border: `1px solid ${HELP_THEME.border}`,
+    background: "transparent",
+    color: HELP_THEME.text,
+    fontSize: 13,
+    fontWeight: 850,
+    cursor: "pointer",
+  };
+  const navPillFor = (sectionId) => ({
+    ...navPillStyle,
+    border: `1px solid ${
+      activeHelpSection === sectionId ? withAlpha(HELP_THEME.accent, 0.72) : HELP_THEME.border
+    }`,
+    background:
+      activeHelpSection === sectionId ? withAlpha(HELP_THEME.accent, isHelpDarkMode ? 0.14 : 0.09) : "transparent",
+    boxShadow:
+      activeHelpSection === sectionId
+        ? `0 0 0 2px ${withAlpha(HELP_THEME.accent, isHelpDarkMode ? 0.12 : 0.08)}`
+        : "none",
+    transition: "border-color 160ms ease, background 160ms ease, box-shadow 160ms ease",
+  });
+  const sectionStyle = (sectionId) => ({
+    ...sectionCard,
+    border: `1px solid ${
+      activeHelpSection === sectionId ? withAlpha(HELP_THEME.accent, 0.72) : HELP_THEME.border
+    }`,
+    boxShadow:
+      activeHelpSection === sectionId
+        ? `0 0 0 2px ${withAlpha(HELP_THEME.accent, isHelpDarkMode ? 0.12 : 0.08)}`
+        : "none",
+    transition: "border-color 180ms ease, box-shadow 180ms ease",
+  });
+  const DEFAULT_SPOTLIGHT = {
+    icon: "📂",
+    title: "Keep Your Songs Organised",
+    description:
+      "Manage multiple songs and riff ideas in one place without losing track of your work. TabStudio keeps your tabs organised so you can focus on writing.",
+    visualTitle: "Artist → Album → Song Organisation",
+  };
+  const featureCards = [
+    {
+      id: "fast",
+      icon: "⚡",
+      title: "Write Tabs Instantly",
+      body:
+        "Capture riffs and song ideas quickly with a clean tab editor built specifically for guitar.\n\nNo clutter. No complicated music software.",
+      spotlightVisualTitle: "Fast Guitar Tab Grid",
+    },
+    {
+      id: "creator-export",
+      icon: "🎥",
+      title: "Tabs for Content Creators",
+      body:
+        "Export tabs as PNG images designed for overlaying onto YouTube, TikTok, or lesson videos.\n\nPerfect for guitar teachers and online creators.",
+      spotlightVisualTitle: "PNG Export for Creator Overlays",
+    },
+    {
+      id: "techniques",
+      icon: "🎸",
+      title: "Built-In Guitar Techniques",
+      body:
+        "Insert slides, bends and other guitar techniques directly into your tabs so other musicians can read them clearly.",
+      spotlightVisualTitle: "Technique Notation Tools",
+    },
+    {
+      id: "export-pdf",
+      icon: "📄",
+      title: "Export Clean Tab Sheets",
+      body:
+        "Export your tabs as clear PDF tab sheets ready for printing, rehearsals, or sharing with bandmates.",
+      spotlightVisualTitle: "Printable PDF Export",
+    },
+    {
+      id: "autosave",
+      icon: "💾",
+      title: "Never Lose Your Ideas",
+      body:
+        "TabStudio automatically saves your work while you write so unfinished riffs and tabs are never lost.",
+      spotlightVisualTitle: "Auto-Save Protection",
+    },
+    {
+      id: "guitarists",
+      icon: "🎯",
+      title: "Designed by a Guitarist",
+      body:
+        "TabStudio was created by a guitarist who wanted a simpler way to write and organise tabs.\n\nNo music theory required.",
+      spotlightVisualTitle: "Built with Guitar Workflow in Mind",
+    },
+    {
+      id: "themes",
+      icon: "🎨",
+      title: "Customise Your Workspace",
+      body:
+        "Switch between dark and light mode and adjust theme colours to suit your writing style.",
+      spotlightVisualTitle: "Dark / Light + Accent Themes",
+    },
+    {
+      id: "listening",
+      icon: "💬",
+      title: "We're Listening",
+      body:
+        "Your feedback directly shapes what ships next in TabStudio.\n\nFeature ideas and workflow notes help prioritise meaningful updates.",
+      spotlightVisualTitle: "Community-Led Improvements",
+    },
+  ];
+  const selectedSpotlightFeature = useMemo(
+    () => featureCards.find((feature) => feature.id === displayedFeatureId) || null,
+    [featureCards, displayedFeatureId]
+  );
+  const spotlightData = useMemo(() => {
+    if (!selectedSpotlightFeature) return DEFAULT_SPOTLIGHT;
+    return {
+      icon: selectedSpotlightFeature.icon,
+      title: selectedSpotlightFeature.title,
+      description: selectedSpotlightFeature.body.replace(/\n\n/g, " "),
+      visualTitle: selectedSpotlightFeature.spotlightVisualTitle || selectedSpotlightFeature.title,
+    };
+  }, [selectedSpotlightFeature]);
+  const onSelectFeatureCard = (feature) => {
+    if (!feature?.id) return;
+    if (displayedFeatureId === feature.id && spotlightVisible) return;
+    try {
+      const scroller = helpScrollRef.current;
+      const target = featureSpotlightRef.current;
+      if (scroller && target) {
+        const scrollerRect = scroller.getBoundingClientRect();
+        const targetRect = target.getBoundingClientRect();
+        const from = scroller.scrollTop;
+        const to = from + (targetRect.top - scrollerRect.top) - 10;
+        const distance = to - from;
+        const duration = 420;
+        const start = performance.now();
+        const easeInOutCubic = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+        const step = (now) => {
+          const elapsed = now - start;
+          const p = Math.min(1, elapsed / duration);
+          scroller.scrollTop = from + distance * easeInOutCubic(p);
+          if (p < 1) requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
+      } else {
+        target?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    } catch {}
+    setSpotlightVisible(false);
+    if (spotlightSwapTimerRef.current) window.clearTimeout(spotlightSwapTimerRef.current);
+    spotlightSwapTimerRef.current = window.setTimeout(() => {
+      setDisplayedFeatureId(feature.id);
+      setSpotlightVisible(true);
+      spotlightSwapTimerRef.current = null;
+    }, 190);
+  };
+  const faqItems = [
+    {
+      id: "faq-1",
+      q: "What instruments does TabStudio support?",
+      a: "Currently TabStudio focuses on standard guitar tablature.\n\nAdditional instrument support may be considered in future updates.",
+    },
+    {
+      id: "faq-2",
+      q: "Where are my tabs stored?",
+      a: "Your tabs are stored securely and linked to your account.\n\nIf your subscription ends, your tabs are not deleted. They remain safely stored in your account, but they become inaccessible until your subscription is renewed.\n\nThis helps protect your projects, song ideas, and saved tabs from being permanently lost.",
+    },
+    {
+      id: "faq-3",
+      q: "Why does TabStudio require a subscription?",
+      a: "Running TabStudio requires ongoing infrastructure for storing projects, maintaining accounts, and supporting continued development of the app.\n\nSubscriptions help cover hosting, storage, maintenance, and future improvements.\n\nThe goal is to keep TabStudio sustainable while continuing to improve the experience for users.",
+    },
+    {
+      id: "faq-4",
+      q: "What happens if I cancel my subscription?",
+      a: "If your subscription ends, your stored tabs are not deleted.\n\nYour tabs and projects remain safely stored in your account, but editing and access will be unavailable until your subscription is renewed.\n\nThis is designed to protect your work while keeping the service sustainable.",
+    },
+    {
+      id: "faq-5",
+      q: "Can I export my tabs?",
+      a: "Yes.\n\nThe Standard subscription plan can export tabs as clean PDF sheets, ideal for printing, rehearsals, and sharing with bandmates.\n\nThe Content Creator subscription plan can also export PNG images, making it easy to use tab overlays in lesson videos, tutorials, YouTube content, and social media posts.",
+    },
+    {
+      id: "faq-6",
+      q: "Does TabStudio auto-save my work?",
+      a: "Yes.\n\nTabStudio automatically saves your work while you write. If you close the app, refresh the page, temporarily disconnect, or leave with an unfinished tab still in the grid, your progress should still be there when you return.\n\nThis helps protect unfinished ideas, riffs, and song sections from being lost.",
+    },
+    {
+      id: "faq-7",
+      q: "Can I organise multiple songs?",
+      a: "Yes.\n\nTabStudio allows you to organise tabs and projects using an Artist → Album → Song structure, helping keep ideas tidy and easy to manage.\n\nThis makes it easier to store riffs, build songs over time, and quickly find projects again later.",
+    },
+    {
+      id: "faq-8",
+      q: "Will new features be added?",
+      a: "Yes.\n\nTabStudio is an actively developing project and will continue evolving over time based on user feedback, feature requests, and real-world use.\n\nImprovements will focus on keeping the app simple, useful, and shaped by the needs of musicians.",
+    },
+    {
+      id: "faq-9",
+      q: "Is TabStudio mobile friendly?",
+      a: "TabStudio is currently designed primarily for desktop and laptop use.\n\nAt the moment, the editing experience is not intended for mobile phones or tablets. In a future version, we plan to make tabs viewable on mobile and tablet devices, with direct image export to phone for Content Creator workflows.",
+    },
+    {
+      id: "faq-10",
+      q: "Can I use TabStudio for teaching or content creation?",
+      a: "Yes.\n\nTabStudio is designed to help teachers and content creators create clean tab visuals for educational content.\n\nThe Content Creator subscription plan can export PNG tab images with adjustable backgrounds, font sizes, and styling, making it easier to overlay tab notation onto lesson videos, tutorials, and social media content.",
+    },
+    {
+      id: "faq-11",
+      q: "Do I need music theory knowledge to use TabStudio?",
+      a: "No.\n\nTabStudio is designed to be simple and intuitive, allowing guitarists to quickly write tabs without requiring advanced music theory knowledge.\n\nThe focus is on getting ideas into tab clearly and easily.",
+    },
+    {
+      id: "faq-12",
+      q: "Can I send feature requests or feedback?",
+      a: "Absolutely.\n\nUser feedback plays an important role in shaping the direction of TabStudio. Feature requests, bug reports, and general feedback are always welcome and help improve future versions of the app.",
+    },
+  ];
+  const normalizedFaqQuery = faqQuery.trim().toLowerCase();
+  const filteredFaqItems = useMemo(() => {
+    if (!normalizedFaqQuery) return faqItems;
+    return faqItems.filter((item) => {
+      const haystack = `${item.q}\n${item.a}`.toLowerCase();
+      return haystack.includes(normalizedFaqQuery);
+    });
+  }, [faqItems, normalizedFaqQuery]);
+  const hasFaqSearch = normalizedFaqQuery.length > 0;
+  const showFaqEmpty = filteredFaqItems.length === 0;
+  const supportMessagingAvailable = Boolean(supportPaidSubscriber);
+  const supportSubjectChars = supportSubject.length;
+  const supportMessageChars = supportMessage.length;
+  const tabbyBubbleVisible = tabbySupportThanksVisible || tabbySpeechVisible;
+  const tabbyBubbleText = tabbySupportThanksVisible
+    ? "Thank you! :)"
+    : tabbySpeechIndex === 0
+      ? "Hi, I'm Tabby 👋"
+      : tabbySpeechIndex === 1
+        ? "I help keep TabStudio improving."
+        : "Send feedback to help improve my home!";
+  const supportFieldStyle = (fieldName) => ({
+    width: "100%",
+    minHeight: 40,
+    borderRadius: 10,
+    border: `1px solid ${
+      supportFormErrors[fieldName]
+        ? withAlpha("#FF5A67", 0.72)
+        : supportFocusedField === fieldName
+          ? withAlpha(HELP_THEME.accent, 0.72)
+          : HELP_THEME.border
+    }`,
+    background: HELP_THEME.surface,
+    color: HELP_THEME.text,
+    padding: fieldName === "message" ? "10px 12px" : "0 12px",
+    fontSize: 14,
+    fontWeight: 700,
+    lineHeight: 1.4,
+    outline: "none",
+    boxSizing: "border-box",
+    boxShadow:
+      supportFocusedField === fieldName
+        ? `0 0 0 2px ${withAlpha(HELP_THEME.accent, isHelpDarkMode ? 0.14 : 0.1)}`
+        : "none",
+    transition: "border-color 140ms ease, box-shadow 140ms ease",
+  });
+  const supportEmailLooksValid = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
+  const smoothScrollHelpTo = (targetEl, extraOffset = 8) => {
+    try {
+      const scroller = helpScrollRef.current;
+      if (!scroller || !targetEl) return;
+      const scrollerRect = scroller.getBoundingClientRect();
+      const targetRect = targetEl.getBoundingClientRect();
+      const from = scroller.scrollTop;
+      const to = Math.max(0, from + (targetRect.top - scrollerRect.top) - extraOffset);
+      const distance = to - from;
+      const duration = 420;
+      const start = performance.now();
+      const easeInOutCubic = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+      const step = (now) => {
+        const elapsed = now - start;
+        const p = Math.min(1, elapsed / duration);
+        scroller.scrollTop = from + distance * easeInOutCubic(p);
+        if (p < 1) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    } catch {}
+  };
+  const beginSupportFormSwap = () => {
+    if (!supportMessagingAvailable || supportShowForm) return;
+    setSupportFormErrors({});
+    setSupportLeftVisible(false);
+    if (supportSwapTimerRef.current) window.clearTimeout(supportSwapTimerRef.current);
+    supportSwapTimerRef.current = window.setTimeout(() => {
+      setSupportShowForm(true);
+      setSupportLeftVisible(true);
+      smoothScrollHelpTo(supportRef.current, 8);
+      supportSwapTimerRef.current = null;
+    }, 220);
+  };
+  const onSubmitSupportMessage = (e) => {
+    e.preventDefault();
+    if (!supportMessagingAvailable || supportSending) return;
+    const nextErrors = {};
+    const nextEmail = String(supportSenderEmail || "").trim();
+    const nextSubject = String(supportSubject || "").trim();
+    const nextMessage = String(supportMessage || "").trim();
+    if (!supportEmailLooksValid(nextEmail)) nextErrors.email = "Please enter a valid email address.";
+    if (!nextSubject) nextErrors.subject = "Please add a subject.";
+    if (nextSubject.length > 120) nextErrors.subject = "Subject must be 120 characters or less.";
+    if (!nextMessage) nextErrors.message = "Please add a message.";
+    if (nextMessage.length > 800) nextErrors.message = "Message must be 800 characters or less.";
+    setSupportFormErrors(nextErrors);
+    if (Object.keys(nextErrors).length) return;
+    setSupportSending(true);
+    const sentAt = new Date().toISOString();
+    const emailBody = [
+      "TabStudio support message",
+      "",
+      `Sender email: ${nextEmail}`,
+      `User ID: ${String(supportUserId || "N/A").trim() || "N/A"}`,
+      `Timestamp: ${sentAt}`,
+      "",
+      "Subject:",
+      nextSubject,
+      "",
+      "Message:",
+      nextMessage,
+    ].join("\n");
+    const mailtoHref = `mailto:support@tabstudio.app?subject=${encodeURIComponent(
+      `[TabStudio Support] ${nextSubject}`
+    )}&body=${encodeURIComponent(emailBody)}`;
+    try {
+      if (typeof window !== "undefined") window.location.href = mailtoHref;
+    } catch {}
+    setSupportSubject("");
+    setSupportMessage("");
+    setSupportFormErrors({});
+    setSupportSending(false);
+    setTabbySpeechVisible(false);
+    setTabbySpeechPlaying(false);
+    setTabbySpeechIndex(0);
+    setTabbySupportThanksVisible(true);
+    if (supportThanksTimerRef.current) window.clearTimeout(supportThanksTimerRef.current);
+    supportThanksTimerRef.current = window.setTimeout(() => {
+      setTabbySupportThanksVisible(false);
+      supportThanksTimerRef.current = null;
+    }, 3000);
+  };
+  const scrollToRef = (ref) => {
+    try {
+      const nextId = String(ref?.current?.id || "").toLowerCase();
+      if (nextId) setActiveHelpSection(nextId);
+      ref?.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch {}
+  };
+  return (
+    <div
+      style={{
+        height: "100dvh",
+        minHeight: "100dvh",
+        background: HELP_THEME.bg,
+        color: HELP_THEME.text,
+        fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
+        display: "grid",
+        gridTemplateRows: "auto auto minmax(0, 1fr)",
+        overflow: "hidden",
+        boxSizing: "border-box",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
+          position: "sticky",
+          top: 0,
+          zIndex: 50,
+          padding: "6px 18px",
+          background: HELP_THEME.bg,
+          borderBottom: `1px solid ${HELP_THEME.border}`,
+          boxShadow: "0 10px 24px rgba(0,0,0,0.06)",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            aria-label="Go to tab writer"
+            title="Go to tab writer"
+            onClick={onBack}
+            style={{
+              width: 210,
+              height: 62,
+              overflow: "hidden",
+              borderRadius: 4,
+              flexShrink: 0,
+              position: "relative",
+              top: 1,
+              cursor: "pointer",
+              border: "none",
+              background: "transparent",
+              padding: 0,
+            }}
+          >
+            <img
+              src={isHelpDarkMode ? logoDark : logoLight}
+              alt="TabStudio"
+              style={{
+                width: "100%",
+                height: "100%",
+                display: "block",
+                objectFit: "cover",
+                objectPosition: "center 50%",
+              }}
+            />
+          </button>
+          <div
+            style={{
+              marginLeft: 0,
+              width: 220,
+              minWidth: 220,
+              display: "inline-flex",
+              alignItems: "center",
+              alignSelf: "flex-end",
+              marginBottom: 11.25,
+              fontSize: 13,
+              fontWeight: 400,
+              color: HELP_THEME.text,
+              opacity: 0.75,
+              letterSpacing: 0.2,
+              lineHeight: 1.2,
+              whiteSpace: "nowrap",
+              overflow: "visible",
+            }}
+          >
+            Tabs, simplified.
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          <button type="button" onClick={onBack} style={{ ...navPillStyle, minHeight: 36, fontWeight: 900 }}>
+            Back to Editor
+          </button>
+          <button type="button" onClick={onGoProjects} style={{ ...navPillStyle, minHeight: 36, fontWeight: 900 }}>
+            Projects
+          </button>
+          <button type="button" onClick={onGoExport} style={{ ...navPillStyle, minHeight: 36, fontWeight: 900 }}>
+            Export
+          </button>
+          <button
+            type="button"
+            onClick={onGoSettings}
+            style={{ ...navPillStyle, minHeight: 36, width: 40, padding: 0, fontSize: 18, lineHeight: 1 }}
+            aria-label="Settings"
+            title="Settings"
+          >
+            ⛭
+          </button>
+        </div>
+      </div>
+      <div
+        style={{
+          position: "sticky",
+          top: 74,
+          zIndex: 45,
+          padding: "8px 18px",
+          background: HELP_THEME.bg,
+          borderBottom: `1px solid ${HELP_THEME.border}`,
+          boxShadow: "0 8px 20px rgba(0,0,0,0.04)",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          overflowX: "auto",
+        }}
+      >
+        <button type="button" onClick={() => scrollToRef(aboutRef)} style={navPillFor("about")}>
+          About
+        </button>
+        <button type="button" onClick={() => scrollToRef(featuresRef)} style={navPillFor("features")}>
+          Features
+        </button>
+        <button type="button" onClick={() => scrollToRef(developerRef)} style={navPillFor("developer")}>
+          Developer
+        </button>
+        <button type="button" onClick={() => scrollToRef(faqRef)} style={navPillFor("faq")}>
+          FAQs
+        </button>
+        <button type="button" onClick={() => scrollToRef(supportRef)} style={navPillFor("support")}>
+          Support
+        </button>
+      </div>
+      <div
+        style={{
+          width: "100%",
+          height: "100%",
+          minHeight: 0,
+          display: "grid",
+          placeItems: "center",
+          padding: 16,
+          boxSizing: "border-box",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          ref={helpScrollRef}
+          style={{
+          width: "calc(100vw - 32px)",
+          maxWidth: 1680,
+          borderRadius: 16,
+          border: `1px solid ${HELP_THEME.border}`,
+          background: HELP_THEME.surfaceWarm,
+          padding: 26,
+          boxSizing: "border-box",
+          display: "grid",
+          gap: 18,
+          minHeight: 0,
+          maxHeight: "100%",
+          overflowY: "auto",
+        }}
+      >
+        <div style={{ display: "grid", gap: 6 }}>
+          <h1 style={{ margin: 0, fontSize: 34, lineHeight: 1.1 }}>Help &amp; Information</h1>
+          <div style={{ fontSize: 15, color: HELP_THEME.textFaint, fontWeight: 700 }}>
+            Everything you need to know about TabStudio.
+          </div>
+        </div>
+
+        <section id="about" ref={aboutRef} style={sectionStyle("about")}>
+          <h2 style={{ margin: 0, fontSize: 28, lineHeight: 1.15 }}>About TabStudio</h2>
+          <div style={{ color: HELP_THEME.textFaint, lineHeight: 1.65, fontSize: 18 }}>
+            <p>TabStudio is a clean, focused tool for writing guitar tabs.</p>
+            <p>
+              Traditional tab software can often feel slow, cluttered, and overly complicated. TabStudio was created to simplify
+              the process, making it easy to capture ideas, organise songs, and export clear tab sheets without getting lost in
+              unnecessary features.
+            </p>
+            <p>
+              Whether you're writing quick riffs at home, structuring full songs with a band, creating lesson material for
+              students, or exporting tab images for content creators, TabStudio helps keep your ideas organised and easy to share.
+            </p>
+            <p>The goal is simple:</p>
+            <p style={{ margin: 0 }}>
+              • Write tabs quickly
+              <br />
+              • Organise songs clearly
+              <br />
+              • Export clean, readable tab sheets as PDF or PNG images
+            </p>
+            <p>Tabs, simplified.</p>
+          </div>
+        </section>
+
+        <section
+          id="features"
+          ref={featuresRef}
+          style={{
+            ...sectionStyle("features"),
+            padding: 12,
+            gap: 10,
+          }}
+        >
+          <h2 style={{ margin: 0, fontSize: 22, lineHeight: 1.1 }}>Key Features</h2>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: helpFeatureNarrow ? "minmax(0, 1fr)" : "minmax(240px, 310px) minmax(0, 1fr)",
+              gap: 8,
+            }}
+          >
+            <div
+              style={{
+                display: "grid",
+                gap: 6,
+                alignContent: "start",
+                minHeight: 0,
+              }}
+            >
+              <div style={{ fontSize: 12, fontWeight: 900, color: HELP_THEME.textFaint, letterSpacing: 0.3, padding: "2px 2px 0" }}>
+                Feature list
+              </div>
+              <div style={{ ...sectionCard, padding: 8, gap: 6 }}>
+                {featureCards.map((feature) => (
+                  <button
+                    key={feature.id}
+                    type="button"
+                    onClick={() => onSelectFeatureCard(feature)}
+                    onMouseEnter={() => setHoveredFeatureId(feature.id)}
+                    onMouseLeave={() => setHoveredFeatureId((prev) => (prev === feature.id ? "" : prev))}
+                    onFocus={() => setFocusedFeatureId(feature.id)}
+                    onBlur={() => setFocusedFeatureId((prev) => (prev === feature.id ? "" : prev))}
+                    style={{
+                      appearance: "none",
+                      width: "100%",
+                      textAlign: "left",
+                      outline: "none",
+                      WebkitTapHighlightColor: "transparent",
+                      borderRadius: 10,
+                      border: `1px solid ${
+                        displayedFeatureId === feature.id
+                          ? withAlpha(HELP_THEME.accent, 0.82)
+                          : focusedFeatureId === feature.id
+                            ? withAlpha(HELP_THEME.accent, 0.72)
+                            : hoveredFeatureId === feature.id
+                              ? withAlpha(HELP_THEME.accent, 0.62)
+                              : HELP_THEME.border
+                      }`,
+                      background: HELP_THEME.surfaceWarm,
+                      padding: "8px 10px",
+                      display: "grid",
+                      gap: 4,
+                      boxShadow:
+                        displayedFeatureId === feature.id
+                          ? `0 0 0 2px ${withAlpha(HELP_THEME.accent, isHelpDarkMode ? 0.18 : 0.12)}`
+                          : focusedFeatureId === feature.id
+                            ? `0 0 0 2px ${withAlpha(HELP_THEME.accent, isHelpDarkMode ? 0.16 : 0.1)}`
+                            : hoveredFeatureId === feature.id
+                              ? `0 0 0 1px ${withAlpha(HELP_THEME.accent, isHelpDarkMode ? 0.14 : 0.1)}`
+                              : "none",
+                      transition: "box-shadow 180ms ease, border-color 180ms ease, filter 160ms ease",
+                      filter: hoveredFeatureId === feature.id ? "brightness(1.02)" : "none",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span
+                        aria-hidden="true"
+                        style={{
+                          width: 20,
+                          height: 20,
+                          borderRadius: 999,
+                          border: `1px solid ${HELP_THEME.border}`,
+                          background: withAlpha(HELP_THEME.text, isHelpDarkMode ? 0.1 : 0.06),
+                          color: HELP_THEME.text,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontSize: 11,
+                          flexShrink: 0,
+                        }}
+                      >
+                        {feature.icon}
+                      </span>
+                      <div style={{ fontWeight: 900, fontSize: 12.5, lineHeight: 1.2 }}>{feature.title}</div>
+                    </div>
+                    <div
+                      style={{
+                        color: HELP_THEME.textFaint,
+                        lineHeight: 1.3,
+                        fontSize: 11.5,
+                        display: "-webkit-box",
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: "vertical",
+                        overflow: "hidden",
+                        paddingLeft: 28,
+                      }}
+                    >
+                      {feature.body.replace(/\n\n/g, " ")}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div
+              ref={featureSpotlightRef}
+              onMouseEnter={() => setSpotlightHovered(true)}
+              onMouseLeave={() => setSpotlightHovered(false)}
+              style={{
+                borderRadius: 14,
+                border: `1px solid ${withAlpha(HELP_THEME.accent, spotlightHovered ? 0.82 : 0.58)}`,
+                background: HELP_THEME.surfaceWarm,
+                boxShadow: spotlightHovered
+                  ? `0 0 0 2px ${withAlpha(HELP_THEME.accent, isHelpDarkMode ? 0.2 : 0.14)}, 0 14px 30px ${withAlpha(HELP_THEME.accent, isHelpDarkMode ? 0.3 : 0.18)}`
+                  : `0 0 0 1px ${withAlpha(HELP_THEME.accent, isHelpDarkMode ? 0.24 : 0.16)}, 0 12px 26px ${withAlpha(HELP_THEME.accent, isHelpDarkMode ? 0.2 : 0.12)}`,
+                transition: "box-shadow 190ms ease, border-color 190ms ease",
+                padding: 10,
+                display: "grid",
+                gridTemplateColumns: helpFeatureNarrow ? "minmax(0, 1fr)" : "minmax(300px, 1fr) minmax(340px, 1fr)",
+                gap: 10,
+                alignItems: "stretch",
+                minHeight: helpFeatureNarrow ? 300 : 360,
+              }}
+            >
+              <div
+                style={{
+                  display: "grid",
+                  gap: 8,
+                  alignContent: "start",
+                  opacity: spotlightVisible ? 1 : 0,
+                  transition: "opacity 190ms ease",
+                }}
+              >
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      width: 26,
+                      height: 26,
+                      borderRadius: 999,
+                      border: `1px solid ${HELP_THEME.border}`,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: 13,
+                    }}
+                  >
+                    {spotlightData.icon}
+                  </span>
+                  <div style={{ fontWeight: 900, fontSize: 12, color: HELP_THEME.textFaint, letterSpacing: 0.35 }}>
+                    Feature Spotlight
+                  </div>
+                </div>
+                <h3 style={{ margin: 0, fontSize: 22, lineHeight: 1.15 }}>{spotlightData.title}</h3>
+                <div
+                  style={{
+                    color: HELP_THEME.textFaint,
+                    lineHeight: 1.5,
+                    fontSize: 15,
+                  }}
+                >
+                  <p style={{ margin: 0 }}>{spotlightData.description}</p>
+                </div>
+              </div>
+              <div
+                style={{
+                  borderRadius: 12,
+                  border: `1px solid ${HELP_THEME.border}`,
+                  background: withAlpha(HELP_THEME.text, isHelpDarkMode ? 0.03 : 0.02),
+                  boxShadow: `0 8px 18px ${withAlpha("#000000", isHelpDarkMode ? 0.2 : 0.08)}`,
+                  minHeight: helpFeatureNarrow ? 210 : 280,
+                  display: "grid",
+                  placeItems: "center",
+                  color: HELP_THEME.textFaint,
+                  textAlign: "center",
+                  padding: 8,
+                  boxSizing: "border-box",
+                  opacity: spotlightVisible ? 1 : 0,
+                  transition: "opacity 190ms ease",
+                }}
+              >
+                {/* Replace this placeholder with a real TabStudio project organisation screenshot when available. */}
+                <div style={{ fontSize: 18, fontWeight: 800, lineHeight: 1.35 }}>{spotlightData.visualTitle}</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="developer" ref={developerRef} style={sectionStyle("developer")}>
+          <h2 style={{ margin: 0, fontSize: 28, lineHeight: 1.15 }}>About the Developer</h2>
+          <div
+            style={{
+              borderRadius: 12,
+              border: `1px solid ${HELP_THEME.border}`,
+              background: HELP_THEME.surfaceWarm,
+              padding: 14,
+              display: "grid",
+              gap: 10,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div
+                aria-label="Developer profile image placeholder"
+                style={{
+                  width: 54,
+                  height: 54,
+                  borderRadius: 999,
+                  border: `1px solid ${HELP_THEME.border}`,
+                  backgroundImage: `url(${developerPhoto})`,
+                  backgroundSize: "cover",
+                  backgroundPosition: "center",
+                  backgroundRepeat: "no-repeat",
+                  flexShrink: 0,
+                }}
+              />
+              <div>
+                <div style={{ fontSize: 20, fontWeight: 900, lineHeight: 1.2 }}>Harry Bolton</div>
+                <div style={{ marginTop: 2, fontSize: 12, color: HELP_THEME.textFaint, fontWeight: 800 }}>
+                  Creator of TabStudio
+                </div>
+              </div>
+            </div>
+            <div style={{ color: HELP_THEME.textFaint, lineHeight: 1.6, fontSize: 16 }}>
+              TabStudio started as a personal project after years of writing guitar tabs and feeling frustrated with how
+              complicated traditional tab software could be.
+              <br />
+              <br />
+              I wanted a simple place to quickly write ideas, store tabs, and easily find them again later, without relying on
+              scraps of paper, scattered notes, or clunky, outdated tab apps.
+              <br />
+              <br />
+              Like many guitarists, I would often write a riff I really liked, only to forget it the next time I picked up the
+              guitar. We don’t all play every day, and good ideas can disappear quickly if they’re not written down somewhere.
+              <br />
+              <br />
+              What began as a small tool for myself gradually evolved into TabStudio. After using it for my own tabs, it became
+              clear that other guitarists could benefit from a simple tab writing tool focused on speed and ease of use, no
+              complex music theory required, just getting ideas straight into tab.
+              <br />
+              <br />
+              My goal is to keep building a clean, focused tool shaped by feedback from real musicians and the guitar community.
+              <br />
+              <br />
+              TabStudio will continue evolving over time, with improvements guided by user feedback and feature requests wherever
+              possible.
+              <br />
+              <br />
+              If you have ideas, feature requests, or run into issues,{" "}
+              <button
+                type="button"
+                onClick={() => scrollToRef(supportRef)}
+                style={{
+                  display: "inline",
+                  padding: 0,
+                  border: "none",
+                  background: "transparent",
+                  color: HELP_THEME.accent,
+                  fontSize: "inherit",
+                  lineHeight: "inherit",
+                  fontWeight: 800,
+                  textDecoration: "underline",
+                  textUnderlineOffset: 2,
+                  cursor: "pointer",
+                }}
+              >
+                please send feedback
+              </button>
+              , it genuinely helps shape the future of the app.
+            </div>
+          </div>
+        </section>
+
+        <section id="faq" ref={faqRef} style={sectionStyle("faq")}>
+          <h2 style={{ margin: 0, fontSize: 28, lineHeight: 1.15 }}>Frequently Asked Questions</h2>
+          <div
+            style={{
+              display: "grid",
+              gap: 6,
+              borderRadius: 12,
+              border: `1px solid ${HELP_THEME.border}`,
+              background: HELP_THEME.surfaceWarm,
+              padding: 12,
+            }}
+          >
+            <label
+              htmlFor="faq-search"
+              style={{ fontSize: 13, fontWeight: 850, color: HELP_THEME.textFaint, letterSpacing: 0.2 }}
+            >
+              Search FAQs
+            </label>
+            <input
+              id="faq-search"
+              type="text"
+              value={faqQuery}
+              onChange={(e) => setFaqQuery(e.target.value)}
+              placeholder="Search by keyword, for example: export, PNG, subscription, mobile"
+              autoComplete="off"
+              spellCheck={false}
+              style={{
+                width: "100%",
+                minHeight: 42,
+                borderRadius: 10,
+                border: `1px solid ${withAlpha(HELP_THEME.accent, 0.35)}`,
+                background: HELP_THEME.surface,
+                color: HELP_THEME.text,
+                padding: "0 12px",
+                fontSize: 15,
+                outline: "none",
+                boxSizing: "border-box",
+              }}
+            />
+            <div style={{ color: HELP_THEME.textMuted, fontSize: 12, lineHeight: 1.45 }}>
+              Try terms like subscription, account, cancel subscription, renew subscription, export, PDF, PNG, auto-save, mobile, phone, or content creator.
+            </div>
+          </div>
+          <div style={{ display: "grid", gap: 10 }}>
+            {showFaqEmpty && (
+              <div
+                style={{
+                  borderRadius: 12,
+                  border: `1px solid ${HELP_THEME.border}`,
+                  background: HELP_THEME.surfaceWarm,
+                  padding: "12px 14px",
+                  color: HELP_THEME.textFaint,
+                  fontSize: 15,
+                  lineHeight: 1.55,
+                }}
+              >
+                No matching FAQs found. Try terms like export, subscription, PNG, mobile, or auto-save.
+              </div>
+            )}
+            {filteredFaqItems.map((item) => {
+              const open = hasFaqSearch || openFaqId === item.id;
+              return (
+                <div
+                  key={item.id}
+                  style={{
+                    borderRadius: 12,
+                    border: `1px solid ${open ? withAlpha(HELP_THEME.accent, 0.6) : HELP_THEME.border}`,
+                    background: HELP_THEME.surfaceWarm,
+                    overflow: "hidden",
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setOpenFaqId((prev) => (prev === item.id ? "" : item.id))}
+                    style={{
+                      width: "100%",
+                      minHeight: 48,
+                      padding: "10px 14px",
+                      border: "none",
+                      background: "transparent",
+                      color: HELP_THEME.text,
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 8,
+                      fontWeight: 850,
+                      fontSize: 17,
+                      textAlign: "left",
+                      cursor: "pointer",
+                      outline: "none",
+                      boxShadow: "none",
+                      WebkitTapHighlightColor: "transparent",
+                    }}
+                  >
+                    <span>{item.q}</span>
+                    <span style={{ fontSize: 12, opacity: 0.8, color: HELP_THEME.textFaint }}>{open ? "▲" : "▼"}</span>
+                  </button>
+                  {open && (
+                    <div
+                      style={{
+                        borderTop: `1px solid ${HELP_THEME.border}`,
+                        padding: "12px 14px",
+                        color: HELP_THEME.textFaint,
+                        lineHeight: 1.6,
+                        fontSize: 16,
+                        whiteSpace: "pre-line",
+                      }}
+                    >
+                      {item.a}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        <section id="support" ref={supportRef} style={sectionStyle("support")}>
+          <h2 style={{ margin: 0, fontSize: 28, lineHeight: 1.15 }}>Support</h2>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 2fr) minmax(0, 1fr)",
+              gap: 16,
+              alignItems: "center",
+            }}
+          >
+            <div
+              style={{
+                borderRadius: 12,
+                border: `1px solid ${HELP_THEME.border}`,
+                background: HELP_THEME.surfaceWarm,
+                padding: 14,
+                width: "100%",
+                minWidth: 0,
+                boxSizing: "border-box",
+                overflow: "hidden",
+                color: HELP_THEME.textFaint,
+                lineHeight: 1.6,
+                fontSize: 16,
+                minHeight: 336,
+                display: "grid",
+                alignContent: "center",
+              }}
+            >
+              <div
+                style={{
+                  width: "100%",
+                  minWidth: 0,
+                  boxSizing: "border-box",
+                  opacity: supportLeftVisible ? 1 : 0,
+                  transform: `translateY(${supportLeftVisible ? 0 : 4}px)`,
+                  transition: "opacity 220ms ease, transform 220ms ease",
+                }}
+              >
+                {!supportShowForm && (
+                  <div>
+                    <p>
+                      If you encounter a bug, have a question, or want to suggest a feature,
+                      <br />
+                      you can contact the TabStudio team directly.
+                    </p>
+                    <p>Your feedback helps improve the editor and shape future updates.</p>
+                    <p>
+                      We welcome:
+                      <br />
+                      • bug reports
+                      <br />
+                      • feature ideas
+                      <br />
+                      • workflow suggestions
+                      <br />
+                      • general feedback
+                    </p>
+                    <p style={{ marginBottom: 0 }}>TabStudio is an independent project.</p>
+                    <p style={{ marginTop: 8 }}>User feedback plays an important role in improving the experience.</p>
+                    {supportMessagingAvailable ? (
+                      <button
+                        type="button"
+                        onClick={beginSupportFormSwap}
+                        style={{
+                          marginTop: 2,
+                          minHeight: 38,
+                          padding: "0 14px",
+                          borderRadius: 999,
+                          border: `1px solid ${withAlpha(HELP_THEME.accent, 0.7)}`,
+                          background: withAlpha(HELP_THEME.accent, isHelpDarkMode ? 0.12 : 0.08),
+                          color: HELP_THEME.accent,
+                          fontSize: 14,
+                          fontWeight: 850,
+                          cursor: "pointer",
+                          transition: "filter 140ms ease, box-shadow 140ms ease",
+                          boxShadow: `0 0 0 1px ${withAlpha(HELP_THEME.accent, 0.18)}`,
+                        }}
+                      >
+                        Contact Support
+                      </button>
+                    ) : (
+                      <div
+                        style={{
+                          marginTop: 4,
+                          fontSize: 14,
+                          fontWeight: 800,
+                          color: HELP_THEME.text,
+                        }}
+                      >
+                        Support messaging is available for active TabStudio subscribers.
+                      </div>
+                    )}
+                  </div>
+                )}
+                {supportShowForm && (
+                  <form
+                    onSubmit={onSubmitSupportMessage}
+                    noValidate
+                    style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10, width: "100%", minWidth: 0, boxSizing: "border-box" }}
+                  >
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 800, color: HELP_THEME.textFaint, marginBottom: 6 }}>Sender Email</div>
+                      <input
+                        type="email"
+                        value={supportSenderEmail}
+                        onChange={(e) => {
+                          const next = e.target.value;
+                          setSupportSenderEmail(next);
+                          if (supportFormErrors.email) {
+                            setSupportFormErrors((prev) => {
+                              const updated = { ...prev };
+                              if (!next.trim() || supportEmailLooksValid(next)) delete updated.email;
+                              return updated;
+                            });
+                          }
+                        }}
+                        onFocus={() => setSupportFocusedField("email")}
+                        onBlur={() => {
+                          setSupportFocusedField((prev) => (prev === "email" ? "" : prev));
+                          const nextEmail = String(supportSenderEmail || "").trim();
+                          setSupportFormErrors((prev) => {
+                            const updated = { ...prev };
+                            if (nextEmail && !supportEmailLooksValid(nextEmail)) {
+                              updated.email = "Please enter a valid email address.";
+                            } else {
+                              delete updated.email;
+                            }
+                            return updated;
+                          });
+                        }}
+                        style={supportFieldStyle("email")}
+                        placeholder="you@example.com"
+                        autoComplete="email"
+                      />
+                      <div style={{ marginTop: 6, fontSize: 12, color: HELP_THEME.textMuted }}>We'll reply here if needed.</div>
+                      {supportFormErrors.email && (
+                        <div style={{ marginTop: 6, fontSize: 12, color: "#FF6E7A", fontWeight: 700 }}>{supportFormErrors.email}</div>
+                      )}
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 800, color: HELP_THEME.textFaint, marginBottom: 6 }}>Subject</div>
+                      <input
+                        type="text"
+                        value={supportSubject}
+                        onChange={(e) => setSupportSubject(e.target.value.slice(0, 120))}
+                        onFocus={() => setSupportFocusedField("subject")}
+                        onBlur={() => setSupportFocusedField((prev) => (prev === "subject" ? "" : prev))}
+                        style={supportFieldStyle("subject")}
+                        placeholder="Brief summary of your message"
+                        maxLength={120}
+                      />
+                      <div style={{ marginTop: 6, fontSize: 12, color: HELP_THEME.textMuted, textAlign: "right" }}>
+                        {supportSubjectChars} / 120
+                      </div>
+                      {supportFormErrors.subject && (
+                        <div style={{ marginTop: 2, fontSize: 12, color: "#FF6E7A", fontWeight: 700 }}>{supportFormErrors.subject}</div>
+                      )}
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 800, color: HELP_THEME.textFaint, marginBottom: 6 }}>Message</div>
+                      <textarea
+                        value={supportMessage}
+                        onChange={(e) => setSupportMessage(e.target.value.slice(0, 800))}
+                        onFocus={() => setSupportFocusedField("message")}
+                        onBlur={() => setSupportFocusedField((prev) => (prev === "message" ? "" : prev))}
+                        style={{
+                          ...supportFieldStyle("message"),
+                          minHeight: 132,
+                          resize: "vertical",
+                          fontFamily: "inherit",
+                        }}
+                        placeholder="Describe the issue, idea, or question…"
+                        maxLength={800}
+                      />
+                      <div style={{ marginTop: 6, fontSize: 12, color: HELP_THEME.textMuted }}>
+                        Include steps to reproduce bugs if possible.
+                      </div>
+                      <div style={{ marginTop: 6, fontSize: 12, color: HELP_THEME.textMuted, textAlign: "right" }}>
+                        {supportMessageChars} / 800
+                      </div>
+                      {supportFormErrors.message && (
+                        <div style={{ marginTop: 2, fontSize: 12, color: "#FF6E7A", fontWeight: 700 }}>{supportFormErrors.message}</div>
+                      )}
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "flex-start" }}>
+                      <button
+                        type="submit"
+                        disabled={supportSending}
+                        style={{
+                          minHeight: 38,
+                          padding: "0 14px",
+                          borderRadius: 999,
+                          border: `1px solid ${withAlpha(HELP_THEME.accent, 0.7)}`,
+                          background: withAlpha(HELP_THEME.accent, isHelpDarkMode ? 0.12 : 0.08),
+                          color: HELP_THEME.accent,
+                          fontSize: 14,
+                          fontWeight: 850,
+                          cursor: supportSending ? "default" : "pointer",
+                          opacity: supportSending ? 0.72 : 1,
+                        }}
+                      >
+                        {supportSending ? "Sending..." : "Send Message"}
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </div>
+            </div>
+            <div style={{ display: "grid", alignItems: "center", justifyItems: "center" }}>
+              <div
+                style={{
+                  position: "relative",
+                  transform: `translateY(${tabbyFloatUp ? -6 : 2}px)`,
+                  transition: "transform 2100ms cubic-bezier(0.42, 0, 0.28, 1)",
+                  width: 260,
+                  height: 260,
+                  display: "grid",
+                  placeItems: "center",
+                }}
+              >
+                <div
+                  aria-hidden="true"
+                  style={{
+                    position: "absolute",
+                    left: "50%",
+                    top: "50%",
+                    width: 236,
+                    height: 236,
+                    transform: "translate(-50%, -50%)",
+                    borderRadius: "50%",
+                    background: `radial-gradient(circle at center, ${withAlpha(HELP_THEME.accent, isHelpDarkMode ? 0.2 : 0.12)} 0%, ${withAlpha(HELP_THEME.accent, isHelpDarkMode ? 0.1 : 0.06)} 42%, transparent 74%)`,
+                    filter: "blur(1px)",
+                    pointerEvents: "none",
+                  }}
+                />
+                <div
+                  style={{
+                    position: "relative",
+                    width: "min(210px, 100%)",
+                  }}
+                >
+                  <div
+                    aria-hidden="true"
+                    style={{
+                      position: "absolute",
+                      left: "50%",
+                      top: "10%",
+                      width: 238,
+                      maxWidth: 238,
+                      borderRadius: 999,
+                      border: `1px solid ${withAlpha(HELP_THEME.accent, 0.58)}`,
+                      background: HELP_THEME.surfaceWarm,
+                      color: HELP_THEME.text,
+                      padding: "10px 14px",
+                      fontSize: 13,
+                      lineHeight: 1.3,
+                      fontWeight: 700,
+                      boxShadow: `0 8px 20px ${withAlpha("#000000", isHelpDarkMode ? 0.22 : 0.12)}`,
+                      opacity: tabbyBubbleVisible ? 1 : 0,
+                      transform: `translate(0, calc(-100% - ${tabbyBubbleVisible ? 30 : 10}px))`,
+                      transition: "opacity 460ms ease, transform 460ms ease",
+                      pointerEvents: "none",
+                      boxSizing: "border-box",
+                    }}
+                  >
+                    {tabbyBubbleText}
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        position: "absolute",
+                        left: 30,
+                        bottom: -18,
+                        width: 36,
+                        height: 20,
+                        pointerEvents: "none",
+                      }}
+                    >
+                      <svg
+                        width="36"
+                        height="20"
+                        viewBox="0 0 36 20"
+                        fill="none"
+                        xmlns="http://www.w3.org/2000/svg"
+                        style={{ display: "block" }}
+                      >
+                        <path
+                          d="M34 1.4C24 1.6 16.6 5.2 10.2 10.7L2 18.6L12.7 14.8C20.8 11.8 27.4 7.8 34 3.8V1.4Z"
+                          fill={HELP_THEME.surfaceWarm}
+                          stroke={withAlpha(HELP_THEME.accent, 0.58)}
+                          strokeWidth="1.1"
+                          strokeLinejoin="round"
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                    </span>
+                  </div>
+                  <img
+                    src={isHelpDarkMode ? tabbyDark : tabbyLight}
+                    alt="Tabby, the TabStudio support mascot"
+                    style={{
+                      width: "100%",
+                      height: "auto",
+                      opacity: isHelpDarkMode ? 0.99 : 0.94,
+                      borderRadius: 14,
+                      transform: `scaleY(${tabbyBlink ? 0.97 : 1})`,
+                      transformOrigin: "50% 58%",
+                      transition: "transform 100ms ease-out",
+                      filter: isHelpDarkMode
+                        ? `drop-shadow(0 12px 24px ${withAlpha("#000000", 0.3)}) brightness(1.1) contrast(1.06)`
+                        : `drop-shadow(0 9px 20px ${withAlpha("#000000", 0.14)})`,
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+      </div>
+    </div>
+  );
+}
+
+function MembershipPage({ onBack, onGoProjects, onGoExport, onGoSettings, onSelectPlan }) {
+  const [themeRefresh, setThemeRefresh] = useState(0);
+  const [billingCycle, setBillingCycle] = useState("monthly");
+  const [hoveredPlan, setHoveredPlan] = useState("");
+  const membershipScrollRef = useRef(null);
+  const membershipFeatureSpotlightRef = useRef(null);
+  const membershipSpotlightSwapTimerRef = useRef(null);
+  const [membershipFeatureNarrow, setMembershipFeatureNarrow] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth <= 1180 : false
+  );
+  const [displayedMembershipFeatureId, setDisplayedMembershipFeatureId] = useState("");
+  const [hoveredMembershipFeatureId, setHoveredMembershipFeatureId] = useState("");
+  const [focusedMembershipFeatureId, setFocusedMembershipFeatureId] = useState("");
+  const [membershipSpotlightHovered, setMembershipSpotlightHovered] = useState(false);
+  const [membershipSpotlightVisible, setMembershipSpotlightVisible] = useState(true);
+  const [membershipTabbyFloatUp, setMembershipTabbyFloatUp] = useState(false);
+  const [membershipTabbySpeechVisible, setMembershipTabbySpeechVisible] = useState(false);
+
+  const getSystemThemeForMembership = useCallback(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return "light";
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }, []);
+  const isMembershipDarkMode = useMemo(() => {
+    if (typeof window === "undefined") return true;
+    try {
+      const stored = window.localStorage.getItem(LS_THEME_MODE_KEY);
+      if (stored === "dark") return true;
+      if (stored === "light") return false;
+    } catch {}
+    return getSystemThemeForMembership() === "dark";
+  }, [getSystemThemeForMembership, themeRefresh]);
+  const membershipAccentId = useMemo(() => {
+    const fallback = isMembershipDarkMode ? "white" : "black";
+    if (typeof window === "undefined") return fallback;
+    try {
+      const stored = window.localStorage.getItem(LS_ACCENT_COLOR_KEY);
+      if (ACCENT_PRESETS.some((p) => p.id === stored)) {
+        if (isMembershipDarkMode && stored === "black") return fallback;
+        if (!isMembershipDarkMode && stored === "white") return fallback;
+        return stored;
+      }
+    } catch {}
+    return fallback;
+  }, [isMembershipDarkMode, themeRefresh]);
+  const membershipAccent = useMemo(
+    () => (ACCENT_PRESETS.find((preset) => preset.id === membershipAccentId) || ACCENT_PRESETS[0]).hex,
+    [membershipAccentId]
+  );
+  const MEMBERSHIP_THEME = useMemo(() => {
+    const base = isMembershipDarkMode ? DARK_THEME : LIGHT_THEME;
+    return {
+      ...base,
+      accent: membershipAccent,
+    };
+  }, [isMembershipDarkMode, membershipAccent]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const onStorage = (e) => {
+      if (!e?.key || e.key === LS_THEME_MODE_KEY || e.key === LS_ACCENT_COLOR_KEY) {
+        setThemeRefresh((v) => v + 1);
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    let mq;
+    const onSystemThemeChange = () => setThemeRefresh((v) => v + 1);
+    if (typeof window.matchMedia === "function") {
+      mq = window.matchMedia("(prefers-color-scheme: dark)");
+      if (typeof mq.addEventListener === "function") mq.addEventListener("change", onSystemThemeChange);
+      else if (typeof mq.addListener === "function") mq.addListener(onSystemThemeChange);
+    }
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      if (mq) {
+        if (typeof mq.removeEventListener === "function") mq.removeEventListener("change", onSystemThemeChange);
+        else if (typeof mq.removeListener === "function") mq.removeListener(onSystemThemeChange);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const onResize = () => setMembershipFeatureNarrow(window.innerWidth <= 1180);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  useEffect(() => {
+    const id = window.setInterval(() => setMembershipTabbyFloatUp((v) => !v), 2200);
+    return () => window.clearInterval(id);
+  }, []);
+  useEffect(() => {
+    setMembershipTabbySpeechVisible(true);
+    const t = window.setTimeout(() => setMembershipTabbySpeechVisible(false), 4000);
+    return () => window.clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (membershipSpotlightSwapTimerRef.current) window.clearTimeout(membershipSpotlightSwapTimerRef.current);
+    };
+  }, []);
+
+  const actionBtnStyle = {
+    minHeight: 36,
+    borderRadius: 999,
+    border: `1px solid ${MEMBERSHIP_THEME.border}`,
+    background: MEMBERSHIP_THEME.surfaceWarm,
+    color: MEMBERSHIP_THEME.text,
+    fontSize: 16,
+    fontWeight: 900,
+    padding: "0 14px",
+    cursor: "pointer",
+    transition: "border-color 140ms ease, box-shadow 140ms ease, background 140ms ease",
+  };
+  const cycleBtnStyle = (isActive) => ({
+    ...actionBtnStyle,
+    minHeight: 40,
+    borderColor: isActive ? withAlpha(MEMBERSHIP_THEME.accent, 0.78) : MEMBERSHIP_THEME.border,
+    background: isActive ? withAlpha(MEMBERSHIP_THEME.accent, isMembershipDarkMode ? 0.14 : 0.09) : MEMBERSHIP_THEME.surfaceWarm,
+    boxShadow: isActive ? `0 0 0 2px ${withAlpha(MEMBERSHIP_THEME.accent, isMembershipDarkMode ? 0.14 : 0.1)}` : "none",
+    fontSize: 15,
+  });
+
+  const plans = [
+    {
+      id: "player",
+      name: "TabStudio Player",
+      description:
+        "For guitarists, bands, and songwriters who want a clean and reliable way to write, organise, and keep their tabs safe.",
+      features: ["Full Tab Editor", "Save Tabs & Projects", "Automatic Saving", "Export Clean PDF Tab Sheets", "Member Support"],
+      monthly: "$4.99 / month",
+      yearly: "$47.99 / year",
+      cta: "Start Player Plan",
+    },
+    {
+      id: "creator",
+      name: "TabStudio Creator",
+      badge: "Most Popular",
+      description: "For content creators and teachers who share tabs in videos, lessons, and online content.",
+      features: ["Everything in Player", "High-Resolution PNG Export", "Overlay-Ready Tabs for Videos", "Creator Export Tools"],
+      monthly: "$9.99 / month",
+      yearly: "$95.99 / year",
+      cta: "Start Creator Plan",
+      highlighted: true,
+    },
+  ];
+  const helpKeyFeatures = [
+    {
+      id: "fast",
+      icon: "⚡",
+      title: "Write Tabs Instantly",
+      body:
+        "Capture riffs and song ideas quickly with a clean tab editor built specifically for guitar.\n\nNo clutter. No complicated music software.",
+      spotlightVisualTitle: "Fast Guitar Tab Grid",
+    },
+    {
+      id: "creator-export",
+      icon: "🎥",
+      title: "Tabs for Content Creators",
+      body:
+        "Export tabs as PNG images designed for overlaying onto YouTube, TikTok, or lesson videos.\n\nPerfect for guitar teachers and online creators.",
+      spotlightVisualTitle: "PNG Export for Creator Overlays",
+    },
+    {
+      id: "techniques",
+      icon: "🎸",
+      title: "Built-In Guitar Techniques",
+      body:
+        "Insert slides, bends and other guitar techniques directly into your tabs so other musicians can read them clearly.",
+      spotlightVisualTitle: "Technique Notation Tools",
+    },
+    {
+      id: "export-pdf",
+      icon: "📄",
+      title: "Export Clean Tab Sheets",
+      body:
+        "Export your tabs as clear PDF tab sheets ready for printing, rehearsals, or sharing with bandmates.",
+      spotlightVisualTitle: "Printable PDF Export",
+    },
+    {
+      id: "autosave",
+      icon: "💾",
+      title: "Never Lose Your Ideas",
+      body:
+        "TabStudio automatically saves your work while you write so unfinished riffs and tabs are never lost.",
+      spotlightVisualTitle: "Auto-Save Protection",
+    },
+    {
+      id: "guitarists",
+      icon: "🎯",
+      title: "Designed by a Guitarist",
+      body:
+        "TabStudio was created by a guitarist who wanted a simpler way to write and organise tabs.\n\nNo music theory required.",
+      spotlightVisualTitle: "Built with Guitar Workflow in Mind",
+    },
+    {
+      id: "themes",
+      icon: "🎨",
+      title: "Customise Your Workspace",
+      body: "Switch between dark and light mode and adjust theme colours to suit your writing style.",
+      spotlightVisualTitle: "Dark / Light + Accent Themes",
+    },
+    {
+      id: "listening",
+      icon: "💬",
+      title: "We're Listening",
+      body:
+        "Your feedback directly shapes what ships next in TabStudio.\n\nFeature ideas and workflow notes help prioritise meaningful updates.",
+      spotlightVisualTitle: "Community-Led Improvements",
+    },
+  ];
+  const membershipDefaultSpotlight = {
+    icon: "📂",
+    title: "Keep Your Songs Organised",
+    description:
+      "Manage multiple songs and riff ideas in one place without losing track of your work. TabStudio keeps your tabs organised so you can focus on writing.",
+    visualTitle: "Artist → Album → Song Organisation",
+  };
+  const selectedMembershipSpotlightFeature = useMemo(
+    () => helpKeyFeatures.find((feature) => feature.id === displayedMembershipFeatureId) || null,
+    [helpKeyFeatures, displayedMembershipFeatureId]
+  );
+  const membershipSpotlightData = useMemo(() => {
+    if (!selectedMembershipSpotlightFeature) return membershipDefaultSpotlight;
+    return {
+      icon: selectedMembershipSpotlightFeature.icon,
+      title: selectedMembershipSpotlightFeature.title,
+      description: selectedMembershipSpotlightFeature.body.replace(/\n\n/g, " "),
+      visualTitle:
+        selectedMembershipSpotlightFeature.spotlightVisualTitle || selectedMembershipSpotlightFeature.title,
+    };
+  }, [selectedMembershipSpotlightFeature]);
+  const onSelectMembershipFeatureCard = (feature) => {
+    if (!feature?.id) return;
+    if (displayedMembershipFeatureId === feature.id && membershipSpotlightVisible) return;
+    try {
+      const scroller = membershipScrollRef.current;
+      const target = membershipFeatureSpotlightRef.current;
+      if (scroller && target) {
+        const scrollerRect = scroller.getBoundingClientRect();
+        const targetRect = target.getBoundingClientRect();
+        const from = scroller.scrollTop;
+        const to = from + (targetRect.top - scrollerRect.top) - 10;
+        const distance = to - from;
+        const duration = 420;
+        const start = performance.now();
+        const easeInOutCubic = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+        const step = (now) => {
+          const elapsed = now - start;
+          const p = Math.min(1, elapsed / duration);
+          scroller.scrollTop = from + distance * easeInOutCubic(p);
+          if (p < 1) requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
+      }
+    } catch {}
+    setMembershipSpotlightVisible(false);
+    if (membershipSpotlightSwapTimerRef.current) window.clearTimeout(membershipSpotlightSwapTimerRef.current);
+    membershipSpotlightSwapTimerRef.current = window.setTimeout(() => {
+      setDisplayedMembershipFeatureId(feature.id);
+      setMembershipSpotlightVisible(true);
+      membershipSpotlightSwapTimerRef.current = null;
+    }, 170);
+  };
+
+  return (
+    <div
+      style={{
+        height: "100dvh",
+        minHeight: "100dvh",
+        background: MEMBERSHIP_THEME.bg,
+        color: MEMBERSHIP_THEME.text,
+        fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
+        display: "grid",
+        gridTemplateRows: "auto minmax(0, 1fr)",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
+          position: "sticky",
+          top: 0,
+          zIndex: 50,
+          padding: "6px 18px",
+          background: MEMBERSHIP_THEME.bg,
+          borderBottom: `1px solid ${MEMBERSHIP_THEME.border}`,
+          boxShadow: "0 10px 24px rgba(0,0,0,0.06)",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={onBack}
+            aria-label="Go to tab writer"
+            title="Go to tab writer"
+            style={{
+              width: 210,
+              height: 62,
+              overflow: "hidden",
+              borderRadius: 4,
+              cursor: "pointer",
+              border: "none",
+              background: "transparent",
+              padding: 0,
+            }}
+          >
+            <img
+              src={isMembershipDarkMode ? logoDark : logoLight}
+              alt="TabStudio"
+              style={{ width: "100%", height: "100%", display: "block", objectFit: "cover", objectPosition: "center 50%" }}
+            />
+          </button>
+          <div
+            style={{
+              width: 220,
+              minWidth: 220,
+              display: "inline-flex",
+              alignItems: "center",
+              alignSelf: "flex-end",
+              marginBottom: 11.25,
+              fontSize: 13,
+              fontWeight: 400,
+              color: MEMBERSHIP_THEME.text,
+              opacity: 0.75,
+              letterSpacing: 0.2,
+              lineHeight: 1.2,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Tabs, simplified.
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          <button type="button" onClick={onBack} style={actionBtnStyle}>
+            Back to Editor
+          </button>
+          <button type="button" onClick={onGoProjects} style={actionBtnStyle}>
+            Projects
+          </button>
+          <button type="button" onClick={onGoExport} style={actionBtnStyle}>
+            Export
+          </button>
+          <button
+            type="button"
+            onClick={onGoSettings}
+            style={{ ...actionBtnStyle, width: 40, padding: 0, fontSize: 18, lineHeight: 1, display: "grid", placeItems: "center" }}
+            aria-label="Settings"
+            title="Settings"
+          >
+            ⛭
+          </button>
+        </div>
+      </div>
+
+      <div
+        style={{
+          width: "100%",
+          height: "100%",
+          minHeight: 0,
+          display: "grid",
+          placeItems: "center",
+          padding: 16,
+          boxSizing: "border-box",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          ref={membershipScrollRef}
+          style={{
+            width: "calc(100vw - 32px)",
+            maxWidth: 1680,
+            borderRadius: 16,
+            border: `1px solid ${MEMBERSHIP_THEME.border}`,
+            background: MEMBERSHIP_THEME.surfaceWarm,
+            padding: 24,
+            display: "grid",
+            gap: 20,
+            boxSizing: "border-box",
+            minHeight: 0,
+            maxHeight: "100%",
+            overflowY: "auto",
+          }}
+        >
+          <section
+            style={{
+              borderRadius: 16,
+              border: `1px solid ${MEMBERSHIP_THEME.border}`,
+              background: MEMBERSHIP_THEME.surfaceWarm,
+              padding: 22,
+              display: "grid",
+              gap: 18,
+            }}
+          >
+            <div style={{ display: "grid", justifyItems: "center", textAlign: "center" }}>
+              <h1
+                style={{
+                  margin: "0 auto 16px",
+                  maxWidth: 680,
+                  textAlign: "center",
+                  fontSize: "clamp(32px, 4vw, 42px)",
+                  fontWeight: 600,
+                  lineHeight: 1.25,
+                  letterSpacing: "-0.02em",
+                }}
+              >
+                Write, organise, and export your guitar tabs.
+              </h1>
+              <div
+                style={{
+                  color: MEMBERSHIP_THEME.textFaint,
+                  fontSize: 18,
+                  lineHeight: 1.45,
+                  opacity: 0.85,
+                  maxWidth: 640,
+                  margin: "0 auto 20px",
+                }}
+              >
+                Everything you need to write tabs, keep them organised, and export clean sheets for practice, lessons, or content.
+              </div>
+              <div
+                style={{
+                  color: MEMBERSHIP_THEME.textFaint,
+                  fontSize: 14,
+                  opacity: 0.7,
+                  marginBottom: 24,
+                  textAlign: "center",
+                }}
+              >
+                Cancel anytime. Your tabs remain safely stored in your account.
+              </div>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "center", gap: 8, flexWrap: "wrap", marginTop: 24, marginBottom: 40 }}>
+              <button type="button" onClick={() => setBillingCycle("monthly")} style={cycleBtnStyle(billingCycle === "monthly")}>
+                Monthly
+              </button>
+              <button type="button" onClick={() => setBillingCycle("yearly")} style={cycleBtnStyle(billingCycle === "yearly")}>
+                Yearly (Save 20%)
+              </button>
+            </div>
+
+            <div
+              style={{
+                display: "grid",
+                gap: 14,
+                gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+                alignItems: "stretch",
+                marginBottom: 40,
+              }}
+            >
+              {plans.map((plan) => {
+                const isHovered = hoveredPlan === plan.id;
+                const isCreator = Boolean(plan.highlighted);
+                return (
+                  <div
+                    key={plan.id}
+                    onMouseEnter={() => setHoveredPlan(plan.id)}
+                    onMouseLeave={() => setHoveredPlan((prev) => (prev === plan.id ? "" : prev))}
+                    style={{
+                      borderRadius: 14,
+                      border: `1px solid ${
+                        isCreator
+                          ? withAlpha(MEMBERSHIP_THEME.accent, isHovered ? 0.9 : 0.72)
+                          : isHovered
+                            ? withAlpha(MEMBERSHIP_THEME.accent, 0.6)
+                            : MEMBERSHIP_THEME.border
+                      }`,
+                      background: MEMBERSHIP_THEME.surfaceWarm,
+                      padding: 18,
+                      display: "grid",
+                      gap: 12,
+                      boxSizing: "border-box",
+                      transition: "border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease",
+                      boxShadow: isCreator
+                        ? `0 0 0 2px ${withAlpha(MEMBERSHIP_THEME.accent, isMembershipDarkMode ? 0.16 : 0.1)}, 0 10px 20px ${withAlpha(MEMBERSHIP_THEME.accent, isMembershipDarkMode ? 0.18 : 0.1)}`
+                        : isHovered
+                          ? `0 0 0 2px ${withAlpha(MEMBERSHIP_THEME.accent, isMembershipDarkMode ? 0.12 : 0.08)}`
+                          : "none",
+                      transform: isHovered ? "translateY(-2px)" : "translateY(0)",
+                    }}
+                  >
+                    <div style={{ display: "grid", gap: 6 }}>
+                      {plan.badge ? (
+                        <div
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            width: "fit-content",
+                            minHeight: 24,
+                            borderRadius: 999,
+                            border: `1px solid ${withAlpha(MEMBERSHIP_THEME.accent, 0.7)}`,
+                            background: withAlpha(MEMBERSHIP_THEME.accent, isMembershipDarkMode ? 0.14 : 0.09),
+                            color: MEMBERSHIP_THEME.accent,
+                            padding: "0 10px",
+                            fontSize: 12,
+                            fontWeight: 900,
+                            letterSpacing: 0.2,
+                          }}
+                        >
+                          {plan.badge}
+                        </div>
+                      ) : null}
+                      <h2 style={{ margin: 0, fontSize: 28, lineHeight: 1.1 }}>{plan.name}</h2>
+                      <div style={{ color: MEMBERSHIP_THEME.textFaint, fontSize: 15, lineHeight: 1.45 }}>{plan.description}</div>
+                    </div>
+                    <ul style={{ margin: 0, padding: "0 0 0 18px", display: "grid", gap: 4, color: MEMBERSHIP_THEME.textFaint, fontSize: 15 }}>
+                      {plan.features.map((feature) => (
+                        <li key={feature}>{feature}</li>
+                      ))}
+                    </ul>
+                    <div style={{ display: "grid", gap: 2 }}>
+                      <div style={{ fontSize: 34, fontWeight: 950, letterSpacing: -0.4 }}>
+                        {billingCycle === "yearly" ? plan.yearly : plan.monthly}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onSelectPlan?.(plan.id)}
+                      style={{
+                        minHeight: 44,
+                        borderRadius: 11,
+                        border: `1px solid ${withAlpha(MEMBERSHIP_THEME.accent, 0.72)}`,
+                        background: withAlpha(MEMBERSHIP_THEME.accent, isMembershipDarkMode ? 0.16 : 0.1),
+                        color: MEMBERSHIP_THEME.accent,
+                        fontSize: 16,
+                        fontWeight: 900,
+                        cursor: "pointer",
+                        transition: "box-shadow 160ms ease, border-color 160ms ease, background 160ms ease",
+                        boxShadow: isHovered ? `0 0 0 2px ${withAlpha(MEMBERSHIP_THEME.accent, isMembershipDarkMode ? 0.12 : 0.08)}` : "none",
+                      }}
+                    >
+                      {plan.cta}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={{ textAlign: "center", color: MEMBERSHIP_THEME.textFaint, fontSize: 14, fontWeight: 700 }}>
+              Cancel anytime from your account settings. Your saved tabs remain safe in your account.
+            </div>
+          </section>
+
+          <section
+            style={{
+              borderRadius: 16,
+              border: `1px solid ${MEMBERSHIP_THEME.border}`,
+              background: MEMBERSHIP_THEME.surfaceWarm,
+              padding: 12,
+              display: "grid",
+              gap: 10,
+            }}
+          >
+            <h2 style={{ margin: 0, fontSize: 22, lineHeight: 1.1 }}>Key Features</h2>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: membershipFeatureNarrow ? "minmax(0, 1fr)" : "minmax(240px, 310px) minmax(0, 1fr)",
+                gap: 8,
+              }}
+            >
+              <div style={{ display: "grid", gap: 6, alignContent: "start", minHeight: 0 }}>
+                <div
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 900,
+                    color: MEMBERSHIP_THEME.textFaint,
+                    letterSpacing: 0.3,
+                    padding: "2px 2px 0",
+                  }}
+                >
+                  Feature list
+                </div>
+                <div
+                  style={{
+                    borderRadius: 12,
+                    border: `1px solid ${MEMBERSHIP_THEME.border}`,
+                    background: MEMBERSHIP_THEME.surfaceWarm,
+                    padding: 8,
+                    display: "grid",
+                    gap: 6,
+                  }}
+                >
+                  {helpKeyFeatures.map((feature) => (
+                    <button
+                      key={feature.id}
+                      type="button"
+                      onClick={() => onSelectMembershipFeatureCard(feature)}
+                      onMouseEnter={() => setHoveredMembershipFeatureId(feature.id)}
+                      onMouseLeave={() => setHoveredMembershipFeatureId((prev) => (prev === feature.id ? "" : prev))}
+                      onFocus={() => setFocusedMembershipFeatureId(feature.id)}
+                      onBlur={() => setFocusedMembershipFeatureId((prev) => (prev === feature.id ? "" : prev))}
+                      style={{
+                        appearance: "none",
+                        width: "100%",
+                        textAlign: "left",
+                        outline: "none",
+                        WebkitTapHighlightColor: "transparent",
+                        borderRadius: 10,
+                        border: `1px solid ${
+                          displayedMembershipFeatureId === feature.id
+                            ? withAlpha(MEMBERSHIP_THEME.accent, 0.82)
+                            : focusedMembershipFeatureId === feature.id
+                              ? withAlpha(MEMBERSHIP_THEME.accent, 0.72)
+                              : hoveredMembershipFeatureId === feature.id
+                                ? withAlpha(MEMBERSHIP_THEME.accent, 0.62)
+                                : MEMBERSHIP_THEME.border
+                        }`,
+                        background: MEMBERSHIP_THEME.surfaceWarm,
+                        padding: "8px 10px",
+                        display: "grid",
+                        gap: 4,
+                        boxShadow:
+                          displayedMembershipFeatureId === feature.id
+                            ? `0 0 0 2px ${withAlpha(MEMBERSHIP_THEME.accent, isMembershipDarkMode ? 0.18 : 0.12)}`
+                            : focusedMembershipFeatureId === feature.id
+                              ? `0 0 0 2px ${withAlpha(MEMBERSHIP_THEME.accent, isMembershipDarkMode ? 0.16 : 0.1)}`
+                              : hoveredMembershipFeatureId === feature.id
+                                ? `0 0 0 1px ${withAlpha(MEMBERSHIP_THEME.accent, isMembershipDarkMode ? 0.14 : 0.1)}`
+                                : "none",
+                        transition: "box-shadow 180ms ease, border-color 180ms ease, filter 160ms ease",
+                        filter: hoveredMembershipFeatureId === feature.id ? "brightness(1.02)" : "none",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span
+                          aria-hidden="true"
+                          style={{
+                            width: 20,
+                            height: 20,
+                            borderRadius: 999,
+                            border: `1px solid ${MEMBERSHIP_THEME.border}`,
+                            background: withAlpha(MEMBERSHIP_THEME.text, isMembershipDarkMode ? 0.1 : 0.06),
+                            color: MEMBERSHIP_THEME.text,
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            fontSize: 11,
+                            flexShrink: 0,
+                          }}
+                        >
+                          {feature.icon}
+                        </span>
+                        <div style={{ fontWeight: 900, fontSize: 12.5, lineHeight: 1.2 }}>{feature.title}</div>
+                      </div>
+                      <div
+                        style={{
+                          color: MEMBERSHIP_THEME.textFaint,
+                          lineHeight: 1.3,
+                          fontSize: 11.5,
+                          display: "-webkit-box",
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: "vertical",
+                          overflow: "hidden",
+                          paddingLeft: 28,
+                        }}
+                      >
+                        {feature.body.replace(/\n\n/g, " ")}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div
+                ref={membershipFeatureSpotlightRef}
+                onMouseEnter={() => setMembershipSpotlightHovered(true)}
+                onMouseLeave={() => setMembershipSpotlightHovered(false)}
+                style={{
+                  borderRadius: 14,
+                  border: `1px solid ${withAlpha(MEMBERSHIP_THEME.accent, membershipSpotlightHovered ? 0.82 : 0.58)}`,
+                  background: MEMBERSHIP_THEME.surfaceWarm,
+                  boxShadow: membershipSpotlightHovered
+                    ? `0 0 0 2px ${withAlpha(MEMBERSHIP_THEME.accent, isMembershipDarkMode ? 0.2 : 0.14)}, 0 14px 30px ${withAlpha(MEMBERSHIP_THEME.accent, isMembershipDarkMode ? 0.3 : 0.18)}`
+                    : `0 0 0 1px ${withAlpha(MEMBERSHIP_THEME.accent, isMembershipDarkMode ? 0.24 : 0.16)}, 0 12px 26px ${withAlpha(MEMBERSHIP_THEME.accent, isMembershipDarkMode ? 0.2 : 0.12)}`,
+                  padding: 12,
+                  display: "grid",
+                  gridTemplateColumns: membershipFeatureNarrow ? "minmax(0, 1fr)" : "minmax(300px, 1fr) minmax(340px, 1fr)",
+                  gap: 12,
+                  minHeight: membershipFeatureNarrow ? 300 : 360,
+                  transition: "box-shadow 180ms ease, border-color 180ms ease",
+                  overflow: "hidden",
+                }}
+              >
+                <div
+                  style={{
+                    display: "grid",
+                    gap: 10,
+                    alignContent: "start",
+                    opacity: membershipSpotlightVisible ? 1 : 0,
+                    transform: `translateY(${membershipSpotlightVisible ? 0 : 4}px)`,
+                    transition: "opacity 180ms ease, transform 180ms ease",
+                  }}
+                >
+                  <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        width: 22,
+                        height: 22,
+                        borderRadius: 999,
+                        border: `1px solid ${MEMBERSHIP_THEME.border}`,
+                        background: withAlpha(MEMBERSHIP_THEME.text, isMembershipDarkMode ? 0.1 : 0.06),
+                        color: MEMBERSHIP_THEME.text,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: 12,
+                      }}
+                    >
+                      {membershipSpotlightData.icon}
+                    </span>
+                    <div style={{ fontWeight: 900, fontSize: 12, color: MEMBERSHIP_THEME.textFaint, letterSpacing: 0.35 }}>
+                      Feature Spotlight
+                    </div>
+                  </div>
+                  <h3 style={{ margin: 0, fontSize: 22, lineHeight: 1.15 }}>{membershipSpotlightData.title}</h3>
+                  <div style={{ color: MEMBERSHIP_THEME.textFaint, lineHeight: 1.5, fontSize: 15 }}>
+                    <p style={{ margin: 0 }}>{membershipSpotlightData.description}</p>
+                  </div>
+                </div>
+                <div
+                  style={{
+                    borderRadius: 12,
+                    border: `1px solid ${MEMBERSHIP_THEME.border}`,
+                    background: withAlpha(MEMBERSHIP_THEME.text, isMembershipDarkMode ? 0.03 : 0.02),
+                    boxShadow: `0 8px 18px ${withAlpha("#000000", isMembershipDarkMode ? 0.2 : 0.08)}`,
+                    minHeight: membershipFeatureNarrow ? 210 : 280,
+                    display: "grid",
+                    placeItems: "center",
+                    padding: 12,
+                    color: MEMBERSHIP_THEME.textFaint,
+                    fontSize: 18,
+                    fontWeight: 800,
+                    lineHeight: 1.35,
+                    textAlign: "center",
+                    opacity: membershipSpotlightVisible ? 1 : 0,
+                    transform: `translateY(${membershipSpotlightVisible ? 0 : 4}px)`,
+                    transition: "opacity 180ms ease, transform 180ms ease",
+                  }}
+                >
+                  {membershipSpotlightData.visualTitle}
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div style={{ position: "fixed", right: 20, bottom: 18, width: 220, height: 220, pointerEvents: "none", zIndex: 60 }}>
+          {membershipTabbySpeechVisible ? (
+            <div
+              style={{
+                position: "absolute",
+                right: 118,
+                bottom: 160,
+                minWidth: 250,
+                maxWidth: 300,
+                borderRadius: 16,
+                border: `1px solid ${MEMBERSHIP_THEME.border}`,
+                background: MEMBERSHIP_THEME.surfaceWarm,
+                color: MEMBERSHIP_THEME.text,
+                padding: "10px 14px",
+                fontSize: 14,
+                fontWeight: 900,
+                lineHeight: 1.3,
+                boxShadow: "0 14px 26px rgba(0,0,0,0.2)",
+                opacity: 1,
+                transition: "opacity 280ms ease",
+              }}
+            >
+              Hi, I&apos;m Tabby 👋
+              <br />I help keep TabStudio improving.
+              <br />Take a look at our membership options.
+            </div>
+          ) : null}
+          <div
+            style={{
+              position: "absolute",
+              right: 0,
+              bottom: 0,
+              width: 200,
+              height: 200,
+              display: "grid",
+              placeItems: "center",
+              transform: `translateY(${membershipTabbyFloatUp ? -5 : 0}px)`,
+              transition: "transform 1800ms ease-in-out",
+            }}
+          >
+            <div
+              aria-hidden="true"
+              style={{
+                position: "absolute",
+                width: 170,
+                height: 170,
+                borderRadius: "50%",
+                background: `radial-gradient(circle, ${withAlpha(membershipAccent, isMembershipDarkMode ? 0.24 : 0.16)} 0%, ${withAlpha(membershipAccent, 0)} 72%)`,
+                filter: "blur(4px)",
+              }}
+            />
+            <img
+              src={isMembershipDarkMode ? tabbyLight : tabbyDark}
+              alt="Tabby"
+              style={{ width: 132, height: 132, objectFit: "contain", filter: "drop-shadow(0 8px 18px rgba(0,0,0,0.24))" }}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SignupPage({ onBack, onContinue, selectedPlan = "player" }) {
+  const [themeRefresh, setThemeRefresh] = useState(0);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [errors, setErrors] = useState({});
+  const [isCheckoutCtaHover, setIsCheckoutCtaHover] = useState(false);
+
+  const getSystemThemeForSignup = useCallback(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return "light";
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }, []);
+  const isSignupDarkMode = useMemo(() => {
+    if (typeof window === "undefined") return true;
+    try {
+      const stored = window.localStorage.getItem(LS_THEME_MODE_KEY);
+      if (stored === "dark") return true;
+      if (stored === "light") return false;
+    } catch {}
+    return getSystemThemeForSignup() === "dark";
+  }, [getSystemThemeForSignup, themeRefresh]);
+  const signupAccentId = useMemo(() => {
+    const fallback = isSignupDarkMode ? "white" : "black";
+    if (typeof window === "undefined") return fallback;
+    try {
+      const stored = window.localStorage.getItem(LS_ACCENT_COLOR_KEY);
+      if (ACCENT_PRESETS.some((p) => p.id === stored)) {
+        if (isSignupDarkMode && stored === "black") return fallback;
+        if (!isSignupDarkMode && stored === "white") return fallback;
+        return stored;
+      }
+    } catch {}
+    return fallback;
+  }, [isSignupDarkMode, themeRefresh]);
+  const signupAccent = useMemo(
+    () => (ACCENT_PRESETS.find((preset) => preset.id === signupAccentId) || ACCENT_PRESETS[0]).hex,
+    [signupAccentId]
+  );
+  const SIGNUP_THEME = useMemo(() => {
+    const base = isSignupDarkMode ? DARK_THEME : LIGHT_THEME;
+    return { ...base, accent: signupAccent };
+  }, [isSignupDarkMode, signupAccent]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const onStorage = (e) => {
+      if (!e?.key || e.key === LS_THEME_MODE_KEY || e.key === LS_ACCENT_COLOR_KEY) setThemeRefresh((v) => v + 1);
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  const planMeta = getPlanMeta(selectedPlan);
+
+  const actionBtnStyle = {
+    minHeight: 36,
+    borderRadius: 999,
+    border: `1px solid ${SIGNUP_THEME.border}`,
+    background: SIGNUP_THEME.surfaceWarm,
+    color: SIGNUP_THEME.text,
+    fontSize: 16,
+    fontWeight: 900,
+    padding: "0 14px",
+    cursor: "pointer",
+  };
+  const inputStyle = {
+    width: "100%",
+    minHeight: 44,
+    borderRadius: 10,
+    border: `1px solid ${SIGNUP_THEME.border}`,
+    background: SIGNUP_THEME.surfaceWarm,
+    color: SIGNUP_THEME.text,
+    fontSize: 16,
+    fontWeight: 700,
+    padding: "0 12px",
+    boxSizing: "border-box",
+    outline: "none",
+  };
+
+  const handleContinue = (e) => {
+    e.preventDefault();
+    const nextErrors = {};
+    const cleanEmail = String(email || "").trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) nextErrors.email = "Please enter a valid email.";
+    if (String(password || "").length < 8) nextErrors.password = "Password must be at least 8 characters.";
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length) return;
+    onContinue?.({ email: cleanEmail, password, selectedPlan });
+  };
+
+  return (
+    <div
+      style={{
+        height: "100dvh",
+        minHeight: "100dvh",
+        background: SIGNUP_THEME.bg,
+        color: SIGNUP_THEME.text,
+        fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
+        display: "grid",
+        gridTemplateRows: "auto minmax(0, 1fr)",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
+          position: "sticky",
+          top: 0,
+          zIndex: 50,
+          padding: "6px 18px",
+          background: SIGNUP_THEME.bg,
+          borderBottom: `1px solid ${SIGNUP_THEME.border}`,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <button
+            type="button"
+            onClick={onBack}
+            aria-label="Back to editor"
+            style={{ width: 210, height: 62, overflow: "hidden", borderRadius: 4, border: "none", background: "transparent", padding: 0, cursor: "pointer" }}
+          >
+            <img
+              src={isSignupDarkMode ? logoDark : logoLight}
+              alt="TabStudio"
+              style={{ width: "100%", height: "100%", display: "block", objectFit: "cover", objectPosition: "center 50%" }}
+            />
+          </button>
+          <div style={{ width: 220, minWidth: 220, alignSelf: "flex-end", marginBottom: 11.25, fontSize: 13, color: SIGNUP_THEME.text, opacity: 0.75, whiteSpace: "nowrap" }}>
+            Tabs, simplified.
+          </div>
+        </div>
+        <button type="button" onClick={onBack} style={actionBtnStyle}>
+          Back to Editor
+        </button>
+      </div>
+      <div style={{ minHeight: 0, overflow: "auto", display: "grid", placeItems: "center", padding: 16, boxSizing: "border-box" }}>
+        <div
+          style={{
+            width: "min(1180px, calc(100vw - 32px))",
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+            gap: 16,
+            alignItems: "stretch",
+          }}
+        >
+          <div style={{ width: "100%", maxWidth: 620, justifySelf: "center", borderRadius: 16, border: `1px solid ${SIGNUP_THEME.border}`, background: SIGNUP_THEME.surfaceWarm, padding: 22, boxSizing: "border-box", display: "grid", gap: 16 }}>
+            <div style={{ display: "grid", gap: 8, textAlign: "center" }}>
+              <h1 style={{ margin: 0, fontSize: 36, lineHeight: 1.1 }}>Create your TabStudio account</h1>
+              <div style={{ color: SIGNUP_THEME.textFaint, fontSize: 16, fontWeight: 700 }}>Complete your account to start your membership.</div>
+              <div style={{ color: SIGNUP_THEME.accent, fontSize: 15, fontWeight: 900 }}>
+                You selected: {planMeta.label} ({planMeta.monthly})
+              </div>
+            </div>
+
+            <form onSubmit={handleContinue} style={{ display: "grid", gap: 12 }}>
+              <div style={{ display: "grid", gap: 6 }}>
+                <label style={{ fontSize: 13, color: SIGNUP_THEME.textFaint, fontWeight: 800 }}>Email</label>
+                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} style={inputStyle} />
+                {errors.email ? <div style={{ fontSize: 12, color: "#FF6E7A", fontWeight: 800 }}>{errors.email}</div> : null}
+              </div>
+              <div style={{ display: "grid", gap: 6 }}>
+                <label style={{ fontSize: 13, color: SIGNUP_THEME.textFaint, fontWeight: 800 }}>Password</label>
+                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={inputStyle} />
+                {errors.password ? <div style={{ fontSize: 12, color: "#FF6E7A", fontWeight: 800 }}>{errors.password}</div> : null}
+              </div>
+              <button
+                type="submit"
+                onMouseEnter={() => setIsCheckoutCtaHover(true)}
+                onMouseLeave={() => setIsCheckoutCtaHover(false)}
+                onFocus={() => setIsCheckoutCtaHover(true)}
+                onBlur={() => setIsCheckoutCtaHover(false)}
+                style={{
+                  minHeight: 46,
+                  borderRadius: 11,
+                  border: "1px solid #3B82F6",
+                  background: isCheckoutCtaHover ? "#4B93FF" : "#3B82F6",
+                  color: "#FFFFFF",
+                  fontSize: 17,
+                  fontWeight: 900,
+                  cursor: "pointer",
+                  transition: "background 140ms ease",
+                }}
+              >
+                Continue to Checkout
+              </button>
+              <div style={{ textAlign: "center", fontSize: 13, color: SIGNUP_THEME.textFaint, fontWeight: 700 }}>
+                Secure checkout • Cancel anytime
+              </div>
+            </form>
+          </div>
+
+          <div style={{ width: "100%", borderRadius: 16, border: `1px solid ${SIGNUP_THEME.border}`, background: SIGNUP_THEME.surface, padding: 22, boxSizing: "border-box", display: "grid", gap: 16, alignContent: "start" }}>
+            <div style={{ display: "grid", gap: 10 }}>
+              <h2 style={{ margin: 0, fontSize: 24, lineHeight: 1.2 }}>Your membership includes</h2>
+              {[
+                "Full TabStudio editor",
+                "Save and organise unlimited tabs",
+                "Automatic saving while you write",
+                "Export clean PDF tab sheets",
+                "Member support",
+              ].map((item) => (
+                <div key={item} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 16, color: SIGNUP_THEME.textFaint, fontWeight: 700 }}>
+                  <span style={{ color: SIGNUP_THEME.accent, fontWeight: 900 }}>✓</span>
+                  <span style={{ color: SIGNUP_THEME.text }}>{item}</span>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ borderRadius: 14, border: `1px solid ${SIGNUP_THEME.border}`, background: SIGNUP_THEME.surfaceWarm, padding: 14, boxSizing: "border-box", display: "grid", gap: 10 }}>
+              <div style={{ fontSize: 12, color: SIGNUP_THEME.textFaint, fontWeight: 800, letterSpacing: 0.3 }}>Editor preview</div>
+              <div style={{ borderRadius: 10, border: `1px solid ${SIGNUP_THEME.border}`, background: SIGNUP_THEME.bg, overflow: "hidden" }}>
+                <div style={{ height: 26, borderBottom: `1px solid ${SIGNUP_THEME.border}`, background: SIGNUP_THEME.surface, display: "flex", alignItems: "center", padding: "0 10px", gap: 6 }}>
+                  <span style={{ width: 6, height: 6, borderRadius: 999, background: withAlpha(SIGNUP_THEME.textFaint, 0.45) }} />
+                  <span style={{ width: 6, height: 6, borderRadius: 999, background: withAlpha(SIGNUP_THEME.textFaint, 0.35) }} />
+                  <span style={{ width: 6, height: 6, borderRadius: 999, background: withAlpha(SIGNUP_THEME.textFaint, 0.25) }} />
+                </div>
+                <div style={{ padding: 10, display: "grid", gap: 6 }}>
+                  <div style={{ height: 12, borderRadius: 5, background: withAlpha(SIGNUP_THEME.textFaint, 0.16) }} />
+                  <div style={{ height: 10, borderRadius: 5, width: "72%", background: withAlpha(SIGNUP_THEME.textFaint, 0.12) }} />
+                  <div style={{ marginTop: 6, display: "grid", gridTemplateColumns: "repeat(12, minmax(0, 1fr))", gap: 5 }}>
+                    {Array.from({ length: 36 }).map((_, i) => (
+                      <span key={i} style={{ height: 14, borderRadius: 5, background: withAlpha(SIGNUP_THEME.textFaint, 0.12) }} />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ borderTop: `1px solid ${SIGNUP_THEME.border}`, paddingTop: 12, display: "grid", gap: 6, fontSize: 13, color: SIGNUP_THEME.textFaint, fontWeight: 700 }}>
+              <div>Secure checkout powered by Stripe</div>
+              <div>Cancel anytime from your account settings</div>
+              <div>Your tabs remain safely stored in your account</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SigninPage({ onBack, onAuthSuccess }) {
+  const [themeRefresh, setThemeRefresh] = useState(0);
+  const [mode, setMode] = useState("signin"); // signin | create | forgot
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [errors, setErrors] = useState({});
+  const [tabbyFloatUp, setTabbyFloatUp] = useState(false);
+  const [tabbySpeechVisible, setTabbySpeechVisible] = useState(false);
+
+  const getSystemTheme = useCallback(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return "light";
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }, []);
+  const isDark = useMemo(() => {
+    if (typeof window === "undefined") return true;
+    try {
+      const stored = window.localStorage.getItem(LS_THEME_MODE_KEY);
+      if (stored === "dark") return true;
+      if (stored === "light") return false;
+    } catch {}
+    return getSystemTheme() === "dark";
+  }, [getSystemTheme, themeRefresh]);
+  const accentId = useMemo(() => {
+    const fallback = isDark ? "white" : "black";
+    if (typeof window === "undefined") return fallback;
+    try {
+      const stored = window.localStorage.getItem(LS_ACCENT_COLOR_KEY);
+      if (ACCENT_PRESETS.some((p) => p.id === stored)) {
+        if (isDark && stored === "black") return fallback;
+        if (!isDark && stored === "white") return fallback;
+        return stored;
+      }
+    } catch {}
+    return fallback;
+  }, [isDark, themeRefresh]);
+  const accent = useMemo(() => (ACCENT_PRESETS.find((p) => p.id === accentId) || ACCENT_PRESETS[0]).hex, [accentId]);
+  const THEME = useMemo(() => ({ ...(isDark ? DARK_THEME : LIGHT_THEME), accent }), [isDark, accent]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const onStorage = (e) => {
+      if (!e?.key || e.key === LS_THEME_MODE_KEY || e.key === LS_ACCENT_COLOR_KEY) setThemeRefresh((v) => v + 1);
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setTabbyFloatUp((v) => !v), 2200);
+    return () => window.clearInterval(id);
+  }, []);
+  useEffect(() => {
+    setTabbySpeechVisible(true);
+    const t = window.setTimeout(() => setTabbySpeechVisible(false), 4000);
+    return () => window.clearTimeout(t);
+  }, []);
+
+  const inputStyle = {
+    width: "100%",
+    minHeight: 44,
+    borderRadius: 10,
+    border: `1px solid ${THEME.border}`,
+    background: THEME.surface,
+    color: THEME.text,
+    fontSize: 16,
+    fontWeight: 700,
+    padding: "0 12px",
+    boxSizing: "border-box",
+    outline: "none",
+  };
+  const actionBtnStyle = {
+    minHeight: 46,
+    borderRadius: 11,
+    border: `1px solid ${withAlpha(THEME.accent, 0.74)}`,
+    background: withAlpha(THEME.accent, isDark ? 0.16 : 0.1),
+    color: THEME.accent,
+    fontSize: 17,
+    fontWeight: 900,
+    cursor: "pointer",
+  };
+  const textLinkStyle = {
+    border: "none",
+    background: "transparent",
+    color: THEME.accent,
+    fontSize: 13,
+    fontWeight: 800,
+    cursor: "pointer",
+    padding: 0,
+  };
+
+  const submitLabel = mode === "create" ? "Create Account" : mode === "forgot" ? "Send Reset Link" : "Sign In";
+  const validate = () => {
+    const nextErrors = {};
+    const cleanEmail = String(email || "").trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) nextErrors.email = "Please enter a valid email.";
+    if (mode !== "forgot" && String(password || "").length < 8) nextErrors.password = "Password must be at least 8 characters.";
+    setErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  };
+  const onSubmit = (e) => {
+    e.preventDefault();
+    if (!validate()) return;
+    onAuthSuccess?.({ email: String(email || "").trim(), mode });
+  };
+
+  return (
+    <div
+      style={{
+        height: "100dvh",
+        minHeight: "100dvh",
+        background: THEME.bg,
+        color: THEME.text,
+        fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
+        display: "grid",
+        gridTemplateRows: "auto minmax(0, 1fr)",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
+          position: "sticky",
+          top: 0,
+          zIndex: 50,
+          padding: "6px 18px",
+          background: THEME.bg,
+          borderBottom: `1px solid ${THEME.border}`,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <button
+            type="button"
+            onClick={onBack}
+            aria-label="Back to editor"
+            style={{ width: 210, height: 62, overflow: "hidden", borderRadius: 4, border: "none", background: "transparent", padding: 0, cursor: "pointer" }}
+          >
+            <img
+              src={isDark ? logoDark : logoLight}
+              alt="TabStudio"
+              style={{ width: "100%", height: "100%", display: "block", objectFit: "cover", objectPosition: "center 50%" }}
+            />
+          </button>
+          <div style={{ width: 220, minWidth: 220, alignSelf: "flex-end", marginBottom: 11.25, fontSize: 13, color: THEME.text, opacity: 0.75, whiteSpace: "nowrap" }}>
+            Tabs, simplified.
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onBack}
+          style={{
+            minHeight: 36,
+            borderRadius: 999,
+            border: `1px solid ${THEME.border}`,
+            background: THEME.surfaceWarm,
+            color: THEME.text,
+            fontSize: 16,
+            fontWeight: 900,
+            padding: "0 14px",
+            cursor: "pointer",
+          }}
+        >
+          Back to Editor
+        </button>
+      </div>
+
+      <div style={{ minHeight: 0, overflow: "auto", display: "grid", placeItems: "center", padding: 16, boxSizing: "border-box", position: "relative" }}>
+        <div style={{ width: "min(560px, calc(100vw - 32px))", borderRadius: 16, border: `1px solid ${THEME.border}`, background: THEME.surfaceWarm, padding: 22, boxSizing: "border-box", display: "grid", gap: 16 }}>
+          <div style={{ display: "grid", gap: 8, textAlign: "center" }}>
+            <h1 style={{ margin: 0, fontSize: 36, lineHeight: 1.1 }}>Welcome to TabStudio</h1>
+            <div style={{ color: THEME.textFaint, fontSize: 16, fontWeight: 700 }}>
+              Sign in to access your saved tabs and projects.
+            </div>
+          </div>
+
+          <form onSubmit={onSubmit} style={{ display: "grid", gap: 12 }}>
+            <div style={{ display: "grid", gap: 6 }}>
+              <label style={{ fontSize: 13, color: THEME.textFaint, fontWeight: 800 }}>Email</label>
+              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} style={inputStyle} />
+              {errors.email ? <div style={{ fontSize: 12, color: "#FF6E7A", fontWeight: 800 }}>{errors.email}</div> : null}
+            </div>
+            {mode !== "forgot" ? (
+              <div style={{ display: "grid", gap: 6 }}>
+                <label style={{ fontSize: 13, color: THEME.textFaint, fontWeight: 800 }}>Password</label>
+                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={inputStyle} />
+                {errors.password ? <div style={{ fontSize: 12, color: "#FF6E7A", fontWeight: 800 }}>{errors.password}</div> : null}
+              </div>
+            ) : null}
+            <button type="submit" style={actionBtnStyle}>
+              {submitLabel}
+            </button>
+          </form>
+
+          {mode === "signin" ? (
+            <div style={{ display: "flex", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
+              <button type="button" onClick={() => { setMode("create"); setErrors({}); }} style={textLinkStyle}>Create account</button>
+              <button type="button" onClick={() => { setMode("forgot"); setErrors({}); }} style={textLinkStyle}>Forgot password</button>
+            </div>
+          ) : mode === "create" ? (
+            <div style={{ textAlign: "center" }}>
+              <button type="button" onClick={() => { setMode("signin"); setErrors({}); }} style={textLinkStyle}>
+                Already have an account? Sign in
+              </button>
+            </div>
+          ) : (
+            <div style={{ textAlign: "center" }}>
+              <button type="button" onClick={() => { setMode("signin"); setErrors({}); }} style={textLinkStyle}>
+                Back to Sign In
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div style={{ position: "fixed", right: 20, bottom: 18, width: 220, height: 220, pointerEvents: "none", zIndex: 60 }}>
+          {tabbySpeechVisible ? (
+            <div
+              style={{
+                position: "absolute",
+                right: 118,
+                bottom: 160,
+                minWidth: 220,
+                maxWidth: 280,
+                borderRadius: 16,
+                border: `1px solid ${THEME.border}`,
+                background: THEME.surfaceWarm,
+                color: THEME.text,
+                padding: "10px 14px",
+                fontSize: 14,
+                fontWeight: 900,
+                lineHeight: 1.3,
+                boxShadow: "0 14px 26px rgba(0,0,0,0.2)",
+                opacity: 1,
+                transition: "opacity 280ms ease",
+              }}
+            >
+              Welcome back!
+              <br />
+              Sign in to access your saved tabs.
+            </div>
+          ) : null}
+          <div
+            style={{
+              position: "absolute",
+              right: 0,
+              bottom: 0,
+              width: 200,
+              height: 200,
+              display: "grid",
+              placeItems: "center",
+              transform: `translateY(${tabbyFloatUp ? -5 : 0}px)`,
+              transition: "transform 1800ms ease-in-out",
+            }}
+          >
+            <div
+              aria-hidden="true"
+              style={{
+                position: "absolute",
+                width: 170,
+                height: 170,
+                borderRadius: "50%",
+                background: `radial-gradient(circle, ${withAlpha(THEME.accent, isDark ? 0.24 : 0.16)} 0%, ${withAlpha(THEME.accent, 0)} 72%)`,
+                filter: "blur(4px)",
+              }}
+            />
+            <img
+              src={isDark ? tabbyLight : tabbyDark}
+              alt="Tabby"
+              style={{ width: 132, height: 132, objectFit: "contain", filter: "drop-shadow(0 8px 18px rgba(0,0,0,0.24))" }}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CheckoutPlaceholderPage({ onBack, onActivateMembership, selectedPlan = "player" }) {
+  const [themeRefresh, setThemeRefresh] = useState(0);
+  const getSystemTheme = useCallback(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return "light";
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }, []);
+  const isDark = useMemo(() => {
+    if (typeof window === "undefined") return true;
+    try {
+      const stored = window.localStorage.getItem(LS_THEME_MODE_KEY);
+      if (stored === "dark") return true;
+      if (stored === "light") return false;
+    } catch {}
+    return getSystemTheme() === "dark";
+  }, [getSystemTheme, themeRefresh]);
+  const accentId = useMemo(() => {
+    const fallback = isDark ? "white" : "black";
+    if (typeof window === "undefined") return fallback;
+    try {
+      const stored = window.localStorage.getItem(LS_ACCENT_COLOR_KEY);
+      if (ACCENT_PRESETS.some((p) => p.id === stored)) {
+        if (isDark && stored === "black") return fallback;
+        if (!isDark && stored === "white") return fallback;
+        return stored;
+      }
+    } catch {}
+    return fallback;
+  }, [isDark, themeRefresh]);
+  const accent = useMemo(() => (ACCENT_PRESETS.find((preset) => preset.id === accentId) || ACCENT_PRESETS[0]).hex, [accentId]);
+  const THEME = useMemo(() => ({ ...(isDark ? DARK_THEME : LIGHT_THEME), accent }), [isDark, accent]);
+  const planMeta = getPlanMeta(selectedPlan);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const onStorage = (e) => {
+      if (!e?.key || e.key === LS_THEME_MODE_KEY || e.key === LS_ACCENT_COLOR_KEY) setThemeRefresh((v) => v + 1);
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  return (
+    <div
+      style={{
+        height: "100dvh",
+        minHeight: "100dvh",
+        background: THEME.bg,
+        color: THEME.text,
+        fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
+        display: "grid",
+        placeItems: "center",
+        padding: 16,
+        boxSizing: "border-box",
+      }}
+    >
+      <div style={{ width: "min(620px, calc(100vw - 32px))", borderRadius: 16, border: `1px solid ${THEME.border}`, background: THEME.surfaceWarm, padding: 22, display: "grid", gap: 14 }}>
+        <h1 style={{ margin: 0, fontSize: 34, lineHeight: 1.1 }}>Checkout coming soon (Stripe integration).</h1>
+        <div style={{ color: THEME.textFaint, fontSize: 16, fontWeight: 700 }}>
+          Selected plan: {planMeta.label} ({planMeta.monthly})
+        </div>
+        <button
+          type="button"
+          onClick={onActivateMembership}
+          style={{
+            minHeight: 46,
+            borderRadius: 11,
+            border: `1px solid ${withAlpha(THEME.accent, 0.74)}`,
+            background: withAlpha(THEME.accent, isDark ? 0.16 : 0.1),
+            color: THEME.accent,
+            fontSize: 17,
+            fontWeight: 900,
+            cursor: "pointer",
+          }}
+        >
+          Activate Membership (Developer Mode)
+        </button>
+        <button
+          type="button"
+          onClick={onBack}
+          style={{
+            minHeight: 40,
+            borderRadius: 10,
+            border: `1px solid ${THEME.border}`,
+            background: THEME.surfaceWarm,
+            color: THEME.text,
+            fontSize: 15,
+            fontWeight: 800,
+            cursor: "pointer",
+          }}
+        >
+          Back
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SuccessPage({ onBackToEditor, onGoBilling, selectedPlan = "player" }) {
+  const [themeRefresh, setThemeRefresh] = useState(0);
+  const getSystemTheme = useCallback(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return "light";
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }, []);
+  const isDark = useMemo(() => {
+    if (typeof window === "undefined") return true;
+    try {
+      const stored = window.localStorage.getItem(LS_THEME_MODE_KEY);
+      if (stored === "dark") return true;
+      if (stored === "light") return false;
+    } catch {}
+    return getSystemTheme() === "dark";
+  }, [getSystemTheme, themeRefresh]);
+  const accentId = useMemo(() => {
+    const fallback = isDark ? "white" : "black";
+    if (typeof window === "undefined") return fallback;
+    try {
+      const stored = window.localStorage.getItem(LS_ACCENT_COLOR_KEY);
+      if (ACCENT_PRESETS.some((p) => p.id === stored)) return stored;
+    } catch {}
+    return fallback;
+  }, [isDark, themeRefresh]);
+  const accent = useMemo(() => (ACCENT_PRESETS.find((preset) => preset.id === accentId) || ACCENT_PRESETS[0]).hex, [accentId]);
+  const THEME = useMemo(() => ({ ...(isDark ? DARK_THEME : LIGHT_THEME), accent }), [isDark, accent]);
+  const planMeta = getPlanMeta(selectedPlan);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const onStorage = (e) => {
+      if (!e?.key || e.key === LS_THEME_MODE_KEY || e.key === LS_ACCENT_COLOR_KEY) setThemeRefresh((v) => v + 1);
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  return (
+    <div
+      style={{
+        height: "100dvh",
+        minHeight: "100dvh",
+        background: THEME.bg,
+        color: THEME.text,
+        fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
+        display: "grid",
+        placeItems: "center",
+        padding: 16,
+        boxSizing: "border-box",
+      }}
+    >
+      <div
+        style={{
+          width: "min(640px, calc(100vw - 32px))",
+          borderRadius: 16,
+          border: `1px solid ${THEME.border}`,
+          background: THEME.surfaceWarm,
+          padding: 24,
+          display: "grid",
+          gap: 14,
+        }}
+      >
+        <h1 style={{ margin: 0, fontSize: 34, lineHeight: 1.1 }}>Membership is active.</h1>
+        <div style={{ color: THEME.textFaint, fontSize: 16, fontWeight: 700 }}>
+          {planMeta.label} is now enabled for this account.
+        </div>
+        <div style={{ color: THEME.textMuted, fontSize: 14 }}>
+          You can return to the editor now. If a draft tab exists, it will be restored automatically.
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+          <button
+            type="button"
+            onClick={onBackToEditor}
+            style={{
+              minHeight: 44,
+              padding: "0 16px",
+              borderRadius: 10,
+              border: `1px solid ${withAlpha(THEME.accent, 0.74)}`,
+              background: withAlpha(THEME.accent, isDark ? 0.16 : 0.1),
+              color: THEME.accent,
+              fontSize: 15,
+              fontWeight: 900,
+              cursor: "pointer",
+            }}
+          >
+            Go to Editor
+          </button>
+          <button
+            type="button"
+            onClick={onGoBilling}
+            style={{
+              minHeight: 44,
+              padding: "0 16px",
+              borderRadius: 10,
+              border: `1px solid ${THEME.border}`,
+              background: THEME.surfaceWarm,
+              color: THEME.text,
+              fontSize: 15,
+              fontWeight: 800,
+              cursor: "pointer",
+            }}
+          >
+            Open Billing
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BillingPage({ onBackToEditor, userState }) {
+  const [themeRefresh, setThemeRefresh] = useState(0);
+  const getSystemTheme = useCallback(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return "light";
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }, []);
+  const isDark = useMemo(() => {
+    if (typeof window === "undefined") return true;
+    try {
+      const stored = window.localStorage.getItem(LS_THEME_MODE_KEY);
+      if (stored === "dark") return true;
+      if (stored === "light") return false;
+    } catch {}
+    return getSystemTheme() === "dark";
+  }, [getSystemTheme, themeRefresh]);
+  const accentId = useMemo(() => {
+    const fallback = isDark ? "white" : "black";
+    if (typeof window === "undefined") return fallback;
+    try {
+      const stored = window.localStorage.getItem(LS_ACCENT_COLOR_KEY);
+      if (ACCENT_PRESETS.some((p) => p.id === stored)) return stored;
+    } catch {}
+    return fallback;
+  }, [isDark, themeRefresh]);
+  const accent = useMemo(() => (ACCENT_PRESETS.find((preset) => preset.id === accentId) || ACCENT_PRESETS[0]).hex, [accentId]);
+  const THEME = useMemo(() => ({ ...(isDark ? DARK_THEME : LIGHT_THEME), accent }), [isDark, accent]);
+  const activePlan = userState?.planType === "creator" ? "Creator Plan" : userState?.planType === "player" ? "Player Plan" : "No active plan";
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const onStorage = (e) => {
+      if (!e?.key || e.key === LS_THEME_MODE_KEY || e.key === LS_ACCENT_COLOR_KEY) setThemeRefresh((v) => v + 1);
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  return (
+    <div
+      style={{
+        height: "100dvh",
+        minHeight: "100dvh",
+        background: THEME.bg,
+        color: THEME.text,
+        fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
+        display: "grid",
+        placeItems: "center",
+        padding: 16,
+        boxSizing: "border-box",
+      }}
+    >
+      <div style={{ width: "min(760px, calc(100vw - 32px))", borderRadius: 16, border: `1px solid ${THEME.border}`, background: THEME.surfaceWarm, padding: 24, display: "grid", gap: 14 }}>
+        <h1 style={{ margin: 0, fontSize: 32, lineHeight: 1.1 }}>Billing & Subscription</h1>
+        <div style={{ color: THEME.textFaint, fontSize: 15 }}>This is a V1 placeholder for future Stripe billing portal integration.</div>
+        <div style={{ border: `1px solid ${THEME.border}`, borderRadius: 12, padding: 14, display: "grid", gap: 8 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: THEME.textFaint }}>
+            Current plan
+          </div>
+          <div style={{ fontSize: 22, fontWeight: 900 }}>{activePlan}</div>
+          <div style={{ fontSize: 14, color: THEME.textMuted }}>
+            Account: {String(userState?.email || "").trim() || "Not set"}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onBackToEditor}
+          style={{
+            justifySelf: "start",
+            minHeight: 40,
+            padding: "0 14px",
+            borderRadius: 10,
+            border: `1px solid ${THEME.border}`,
+            background: THEME.surfaceWarm,
+            color: THEME.text,
+            fontSize: 15,
+            fontWeight: 800,
+            cursor: "pointer",
+          }}
+        >
+          Back to Editor
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export default function App() {
+  const HELP_EDITOR_PANEL_KEY = "tabstudio_help_editor_panel_v1";
+  const [userState, setUserState] = useState(() => loadUserStateFromStorage());
+  const helpSupportUserEmail = String(userState?.email || "");
+  const helpSupportUserId = "harry_bolton";
+  const helpSupportPaidSubscriber = Boolean(userState?.hasMembership);
+  const [path, setPath] = useState(() => {
+    if (typeof window === "undefined") return "/";
+    return window.location.pathname || "/";
+  });
+  const [pendingEditorPanel, setPendingEditorPanel] = useState(() => {
+    if (typeof window === "undefined") return "";
+    try {
+      return sessionStorage.getItem(HELP_EDITOR_PANEL_KEY) || "";
+    } catch {
+      return "";
+    }
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const onPop = () => setPath(window.location.pathname || "/");
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  const navigateTo = useCallback((to) => {
+    if (typeof window === "undefined") return;
+    const next = String(to || "/");
+    if (window.location.pathname !== next) {
+      window.history.pushState({}, "", next);
+      setPath(next);
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+      return;
+    }
+    setPath(next);
+  }, []);
+  const openEditorPanelFromHelp = useCallback((panel) => {
+    const next = String(panel || "").toLowerCase();
+    if (!next) return;
+    try {
+      sessionStorage.setItem(HELP_EDITOR_PANEL_KEY, next);
+    } catch {}
+    setPendingEditorPanel(next);
+    navigateTo("/");
+  }, [navigateTo]);
+  const clearPendingEditorPanel = useCallback(() => {
+    try {
+      sessionStorage.removeItem(HELP_EDITOR_PANEL_KEY);
+    } catch {}
+    setPendingEditorPanel("");
+  }, []);
+  const selectedPlan = useMemo(() => {
+    if (typeof window === "undefined") return "player";
+    try {
+      const raw = String(window.localStorage.getItem(LS_SELECTED_PLAN_KEY) || "").toLowerCase();
+      return raw === "creator" ? "creator" : "player";
+    } catch {
+      return "player";
+    }
+  }, [path]);
+  const updateUserState = useCallback((next) => {
+    const normalized = normalizeUserState(typeof next === "function" ? next(loadUserStateFromStorage()) : next);
+    setUserState(normalized);
+    persistUserStateToStorage(normalized);
+  }, []);
+  const startMembershipSignup = useCallback(
+    (planId) => {
+      const safePlan = planId === "creator" ? "creator" : "player";
+      try {
+        window.localStorage.setItem(LS_SELECTED_PLAN_KEY, safePlan);
+      } catch {}
+      navigateTo("/signup");
+    },
+    [navigateTo]
+  );
+  const continueToCheckout = useCallback(
+    ({ email, selectedPlan: planId }) => {
+      updateUserState((prev) => ({
+        ...prev,
+        isLoggedIn: true,
+        hasMembership: Boolean(prev?.hasMembership),
+        planType: prev?.hasMembership ? prev?.planType : null,
+        email: String(email || ""),
+      }));
+      try {
+        window.localStorage.setItem(LS_SELECTED_PLAN_KEY, planId === "creator" ? "creator" : "player");
+      } catch {}
+      navigateTo("/checkout");
+    },
+    [navigateTo, updateUserState]
+  );
+  const activateMembershipDevMode = useCallback(() => {
+    const plan = selectedPlan === "creator" ? "creator" : "player";
+    const existing = loadUserStateFromStorage();
+    const next = normalizeUserState({
+      ...existing,
+      isLoggedIn: true,
+      hasMembership: true,
+      planType: plan,
+    });
+    setUserState(next);
+    persistUserStateToStorage(next);
+    try {
+      window.localStorage.setItem(LS_RESTORE_DRAFT_AFTER_MEMBERSHIP_KEY, "true");
+    } catch {}
+    navigateTo("/success");
+  }, [navigateTo, selectedPlan]);
+  const completeSignin = useCallback(
+    ({ email: nextEmail = "" }) => {
+      updateUserState((prev) => ({
+        ...prev,
+        isLoggedIn: true,
+        email: String(nextEmail || "").trim(),
+      }));
+      try {
+        window.localStorage.setItem(LS_RESTORE_DRAFT_AFTER_SIGNIN_KEY, "true");
+      } catch {}
+      navigateTo("/editor");
+    },
+    [navigateTo, updateUserState]
+  );
+
+  const helpTargetSection = useMemo(() => {
+    if (typeof window === "undefined") return "about";
+    const hash = String(window.location.hash || "").replace(/^#/, "").toLowerCase();
+    if (hash === "faq" || hash === "support" || hash === "about") return hash;
+    if (path === "/faq") return "faq";
+    if (path === "/support") return "support";
+    return "about";
+  }, [path]);
+
+  if (path === "/help" || path === "/about" || path === "/faq" || path === "/support") {
+    return (
+      <HelpHubPage
+        onBack={() => navigateTo("/")}
+        onGoProjects={() => openEditorPanelFromHelp("projects")}
+        onGoExport={() => openEditorPanelFromHelp("export")}
+        onGoSettings={() => openEditorPanelFromHelp("settings")}
+        targetSection={helpTargetSection}
+        supportUserEmail={helpSupportUserEmail}
+        supportUserId={helpSupportUserId}
+        supportPaidSubscriber={helpSupportPaidSubscriber}
+      />
+    );
+  }
+
+  if (path === "/membership") {
+    return (
+      <MembershipPage
+        onBack={() => navigateTo("/")}
+        onGoProjects={() => openEditorPanelFromHelp("projects")}
+        onGoExport={() => openEditorPanelFromHelp("export")}
+        onGoSettings={() => openEditorPanelFromHelp("settings")}
+        onSelectPlan={startMembershipSignup}
+      />
+    );
+  }
+
+  if (path === "/signup") {
+    return (
+      <SignupPage
+        selectedPlan={selectedPlan}
+        onBack={() => navigateTo("/membership")}
+        onContinue={continueToCheckout}
+      />
+    );
+  }
+
+  if (path === "/signin") {
+    return (
+      <SigninPage
+        onBack={() => navigateTo("/editor")}
+        onAuthSuccess={completeSignin}
+      />
+    );
+  }
+
+  if (path === "/checkout") {
+    return (
+      <CheckoutPlaceholderPage
+        selectedPlan={selectedPlan}
+        onBack={() => navigateTo("/signup")}
+        onActivateMembership={activateMembershipDevMode}
+      />
+    );
+  }
+
+  if (path === "/success") {
+    return (
+      <SuccessPage
+        selectedPlan={selectedPlan}
+        onBackToEditor={() => navigateTo("/editor")}
+        onGoBilling={() => navigateTo("/billing")}
+      />
+    );
+  }
+
+  if (path === "/billing") {
+    return (
+      <BillingPage
+        userState={userState}
+        onBackToEditor={() => navigateTo("/editor")}
+      />
+    );
+  }
+
+  if (path === "/" || path === "/editor") {
+    return (
+      <EditorApp
+        navigateTo={navigateTo}
+        pendingOpenPanel={pendingEditorPanel}
+        onPendingPanelHandled={clearPendingEditorPanel}
+        userState={userState}
+      />
+    );
+  }
+
+  return (
+    <EditorApp
+      navigateTo={navigateTo}
+      pendingOpenPanel={pendingEditorPanel}
+      onPendingPanelHandled={clearPendingEditorPanel}
+      userState={userState}
+    />
+  );
+}
+
+const ACCENT_PRESETS = [
+  { id: "red", label: "Red", hex: "#FF5A67" },
+  { id: "yellow", label: "Yellow", hex: "#FFD166" },
+  { id: "orange", label: "Orange", hex: "#FF9B42" },
+  { id: "mint", label: "Mint", hex: "#5BD4A1" },
+  { id: "blue", label: "Blue", hex: "#4D8DFF" },
+  { id: "purple", label: "Purple", hex: "#9B7BFF" },
+  { id: "pink", label: "Pink", hex: "#FF4DB8" },
+  { id: "white", label: "White", hex: "#F5F5F5" },
+  { id: "black", label: "Black (Best in Light Mode)", hex: "#1E1E1E" },
+];
+
+function normNote(s) {
+  return String(s ?? "").trim().toLowerCase();
+}
+
+function isStandardTuning(tuning) {
+  if (!Array.isArray(tuning) || tuning.length !== 6) return false;
+  return tuning.map(normNote).join("|") === DEFAULT_TUNING.map(normNote).join("|");
+}
+
+// Frets: allow blank, 0–24
+function clampFret(text) {
+  if (text === "") return "";
+  const n = Number(text);
+  if (!Number.isFinite(n)) return "";
+  if (n < 0) return "0";
+  if (n > 24) return "24";
+  return String(n);
+}
+
+function makeBlankGrid(rows, cols) {
+  return Array.from({ length: rows }, () => Array.from({ length: cols }, () => ""));
+}
+function clone2D(a) {
+  return a.map((r) => r.slice());
+}
+
+function normalizeTuningNote(value) {
+  return String(value ?? "")
+    .trim()
+    .replace(/[a-z]/g, (ch) => ch.toUpperCase());
+}
+
+function lowToHighToApp(lowToHigh) {
+  // input LOW→HIGH like ["E","A","D","G","B","E"] -> app HIGH→LOW
+  return (lowToHigh ?? []).slice().reverse().map((s) => normalizeTuningNote(s));
+}
+function appToLowToHigh(appTuning) {
+  return (appTuning ?? []).slice().reverse().map((s) => normalizeTuningNote(s));
+}
+function formatLowToHighString(arr) {
+  return (arr ?? []).map((s) => normalizeTuningNote(s)).join(" ");
+}
+
+function hexToRgb(hex) {
+  const clean = String(hex ?? "").trim().replace(/^#/, "");
+  if (!/^[0-9a-fA-F]{6}$/.test(clean)) return null;
+  const n = Number.parseInt(clean, 16);
+  return {
+    r: (n >> 16) & 255,
+    g: (n >> 8) & 255,
+    b: n & 255,
+  };
+}
+function withAlpha(hex, alpha) {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return `rgba(91,212,161,${alpha})`;
+  return `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha})`;
+}
+function clampColsValue(value, fallback = DEFAULT_COLS) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(MIN_COLS, Math.min(MAX_COLS, Math.round(n)));
+}
+function clampColsAutoDelayMs(value, fallback = DEFAULT_COLS_AUTO_DELAY_MS) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(MIN_COLS_AUTO_DELAY_MS, Math.min(MAX_COLS_AUTO_DELAY_MS, Math.round(n)));
+}
+function readLocalStorageBool(key, fallback = false) {
+  try {
+    const raw = String(localStorage.getItem(key) ?? "").trim().toLowerCase();
+    if (raw === "true") return true;
+    if (raw === "false") return false;
+  } catch {}
+  return fallback;
+}
+function readLocalStorageObject(key, fallback = {}) {
+  try {
+    const raw = localStorage.getItem(key);
+    const parsed = JSON.parse(String(raw ?? "{}"));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+  } catch {}
+  return fallback;
+}
+function readMilestonesTriggered() {
+  try {
+    const raw = localStorage.getItem(LS_TABS_MILESTONES_TRIGGERED_KEY);
+    const parsed = JSON.parse(String(raw ?? "[]"));
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((n) => Number(n))
+      .filter((n) => Number.isFinite(n))
+      .sort((a, b) => a - b);
+  } catch {
+    return [];
+  }
+}
+function countTabsInLibraryData(data) {
+  let total = 0;
+  const artists = data?.artists && typeof data.artists === "object" ? data.artists : {};
+  for (const artistName of Object.keys(artists)) {
+    const albums = artists?.[artistName]?.albums && typeof artists[artistName].albums === "object" ? artists[artistName].albums : {};
+    for (const albumName of Object.keys(albums)) {
+      const songs = albums?.[albumName]?.songs && typeof albums[albumName].songs === "object" ? albums[albumName].songs : {};
+      for (const songName of Object.keys(songs)) {
+        total += getTabCountForSongEntry(songs[songName]);
+      }
+    }
+  }
+  const unsortedAlbums =
+    data?.unsorted?.albums && typeof data.unsorted.albums === "object" ? data.unsorted.albums : {};
+  for (const albumName of Object.keys(unsortedAlbums)) {
+    const songs =
+      unsortedAlbums?.[albumName]?.songs && typeof unsortedAlbums[albumName].songs === "object"
+        ? unsortedAlbums[albumName].songs
+        : {};
+    for (const songName of Object.keys(songs)) {
+      total += getTabCountForSongEntry(songs[songName]);
+    }
+  }
+  return total;
+}
+function makeEmptyLibrary() {
+  return { artists: {}, unsorted: { albums: { [NO_ALBUM_NAME]: { songs: {} } } } };
+}
+function normalizeLibraryData(raw) {
+  const base = makeEmptyLibrary();
+  if (!raw || typeof raw !== "object") return base;
+
+  const result = {
+    artists: {},
+    unsorted: {
+      albums: {},
+    },
+  };
+
+  const artists = raw?.artists && typeof raw.artists === "object" ? raw.artists : {};
+  for (const artistName of Object.keys(artists)) {
+    const cleanArtistName = String(artistName || "").trim();
+    if (!cleanArtistName) continue;
+    const artistData = artists[artistName];
+    const artistAlbums =
+      artistData?.albums && typeof artistData.albums === "object" && !Array.isArray(artistData.albums)
+        ? artistData.albums
+        : {};
+    const normalizedAlbums = {};
+    for (const albumName of Object.keys(artistAlbums)) {
+      const cleanAlbumName = String(albumName || "").trim() || NO_ALBUM_NAME;
+      const albumData = artistAlbums[albumName];
+      const songs =
+        albumData?.songs && typeof albumData.songs === "object" && !Array.isArray(albumData.songs)
+          ? albumData.songs
+          : {};
+      normalizedAlbums[cleanAlbumName] = { songs: { ...songs } };
+    }
+    if (!normalizedAlbums[NO_ALBUM_NAME]) normalizedAlbums[NO_ALBUM_NAME] = { songs: {} };
+    result.artists[cleanArtistName] = { albums: normalizedAlbums };
+  }
+
+  const unsortedAlbums =
+    raw?.unsorted?.albums && typeof raw.unsorted.albums === "object" && !Array.isArray(raw.unsorted.albums)
+      ? raw.unsorted.albums
+      : {};
+  for (const albumName of Object.keys(unsortedAlbums)) {
+    const cleanAlbumName = String(albumName || "").trim() || NO_ALBUM_NAME;
+    const albumData = unsortedAlbums[albumName];
+    const songs =
+      albumData?.songs && typeof albumData.songs === "object" && !Array.isArray(albumData.songs)
+        ? albumData.songs
+        : {};
+    result.unsorted.albums[cleanAlbumName] = { songs: { ...songs } };
+  }
+  if (!result.unsorted.albums[NO_ALBUM_NAME]) result.unsorted.albums[NO_ALBUM_NAME] = { songs: {} };
+  return result;
+}
+
+function isSongTabsContainer(entry) {
+  return Boolean(entry && typeof entry === "object" && entry.tabs && typeof entry.tabs === "object" && !Array.isArray(entry.tabs));
+}
+
+function getTabCountForSongEntry(entry) {
+  if (!isSongTabsContainer(entry)) return entry ? 1 : 0;
+  const tabIds = Object.keys(entry.tabs || {});
+  return tabIds.length || 1;
+}
+
+function getSongTabsModel(entry) {
+  if (isSongTabsContainer(entry)) {
+    const tabs = entry.tabs && typeof entry.tabs === "object" ? entry.tabs : {};
+    const knownIds = Object.keys(tabs);
+    const fromOrder = Array.isArray(entry.tabOrder) ? entry.tabOrder.map((id) => String(id || "")).filter(Boolean) : [];
+    const tabOrder = [];
+    for (const id of fromOrder) {
+      if (tabs[id] && !tabOrder.includes(id)) tabOrder.push(id);
+    }
+    for (const id of knownIds) {
+      if (!tabOrder.includes(id)) tabOrder.push(id);
+    }
+    return { tabs, tabOrder };
+  }
+  const fallbackId = "tab-1";
+  const fallbackTab = entry && typeof entry === "object" ? { ...entry } : {};
+  if (!fallbackTab.tabName) fallbackTab.tabName = "Tab 1";
+  return {
+    tabs: { [fallbackId]: fallbackTab },
+    tabOrder: [fallbackId],
+  };
+}
+
+function buildSongEntryWithTabs(baseEntry, tabs, tabOrder, nextActiveTabId = "") {
+  const source = baseEntry && typeof baseEntry === "object" ? baseEntry : {};
+  const nextTabs = tabs && typeof tabs === "object" ? tabs : {};
+  const nextOrder = Array.isArray(tabOrder) ? tabOrder.map((id) => String(id || "")).filter(Boolean) : Object.keys(nextTabs);
+  const ordered = [];
+  for (const id of nextOrder) {
+    if (nextTabs[id] && !ordered.includes(id)) ordered.push(id);
+  }
+  for (const id of Object.keys(nextTabs)) {
+    if (!ordered.includes(id)) ordered.push(id);
+  }
+  const activeTabId = ordered.includes(nextActiveTabId) ? nextActiveTabId : ordered[0] || "";
+  return {
+    songName: String(source.songName || ""),
+    artistName: String(source.artistName || ""),
+    albumName: String(source.albumName || ""),
+    createdAt: String(source.createdAt || ""),
+    updatedAt: String(source.updatedAt || ""),
+    tabs: nextTabs,
+    tabOrder: ordered,
+    activeTabId,
+  };
+}
+
+function getSloganText() {
+  return "Tabs, simplified";
+}
+
+function readLibraryData() {
+  try {
+    const raw = localStorage.getItem(LS_LIBRARY_V1_KEY);
+    const parsed = JSON.parse(String(raw ?? "{}"));
+    return normalizeLibraryData(parsed);
+  } catch {
+    return makeEmptyLibrary();
+  }
+}
+function formatTuningName(name) {
+  const raw = String(name ?? "").trim();
+  const m = /^(.*?)(?:\s*\(([^)]+)\))$/.exec(raw);
+  if (!m) return raw;
+  const base = String(m[1] ?? "").trim();
+  const inner = String(m[2] ?? "").trim();
+  // Remove note-list suffixes like "(E A D G)" from labels; keep non-note suffixes like "(Alt)".
+  if (/^[A-Ga-g](?:[#b])?(?:\s+[A-Ga-g](?:[#b])?)*$/.test(inner)) return base || raw;
+  return raw;
+}
+
+// -------- Instruments & Tunings --------
+
+const INSTRUMENTS = [
+  { id: "gtr6", group: "Guitar", label: "Guitar (6)", stringCount: 6 },
+  { id: "gtr7", group: "Guitar", label: "Guitar (7)", stringCount: 7 },
+
+  { id: "bass4", group: "Bass", label: "Bass (4)", stringCount: 4 },
+  { id: "bass5", group: "Bass", label: "Bass (5)", stringCount: 5 },
+  { id: "bass6", group: "Bass", label: "Bass (6)", stringCount: 6 },
+
+  { id: "banjo4", group: "Banjo", label: "Banjo (4)", stringCount: 4 },
+  { id: "banjo5", group: "Banjo", label: "Banjo (5)", stringCount: 5 },
+  { id: "banjo6", group: "Banjo", label: "Banjo (6)", stringCount: 6 },
+
+  { id: "uke4", group: "Ukulele", label: "Ukulele (4)", stringCount: 4 },
+];
+
+// 6-string guitar tunings (what you already had)
+const TUNING_PRESETS_GTR6 = [
+  { id: "standard", name: "Standard", lowToHigh: ["E", "A", "D", "G", "B", "E"] },
+
+  { id: "drop_d", name: "Drop D", lowToHigh: ["D", "A", "D", "G", "B", "E"] },
+  { id: "drop_csharp_alt", name: "Drop C# (Alt)", lowToHigh: ["C#", "A", "D", "G", "B", "E"] },
+  { id: "drop_csharp", name: "Drop C#", lowToHigh: ["C#", "G#", "C#", "F#", "A#", "D#"] },
+  { id: "drop_c", name: "Drop C", lowToHigh: ["C", "G", "C", "F", "A", "D"] },
+  { id: "drop_b", name: "Drop B", lowToHigh: ["B", "Gb", "B", "E", "Ab", "Db"] },
+  { id: "drop_a", name: "Drop A", lowToHigh: ["A", "E", "A", "D", "Gb", "B"] },
+
+  { id: "open_g", name: "Open G", lowToHigh: ["D", "G", "D", "G", "B", "D"] },
+  { id: "open_f", name: "Open F", lowToHigh: ["F", "A", "C", "F", "C", "F"] },
+  { id: "open_e", name: "Open E", lowToHigh: ["E", "B", "E", "G#", "B", "E"] },
+  { id: "open_d", name: "Open D", lowToHigh: ["D", "A", "D", "F#", "A", "D"] },
+  { id: "open_c", name: "Open C", lowToHigh: ["C", "G", "C", "G", "C", "E"] },
+  { id: "open_a", name: "Open A", lowToHigh: ["E", "A", "E", "A", "C#", "E"] },
+
+  { id: "half_up", name: "Half step up", lowToHigh: ["E#", "A#", "D#", "G#", "B#", "E#"] },
+  { id: "half_down", name: "Half step down", lowToHigh: ["Eb", "Ab", "Db", "Gb", "Bb", "Eb"] },
+  { id: "full_down", name: "Full step down", lowToHigh: ["D", "G", "C", "F", "A", "D"] },
+
+  { id: "dadgad", name: "DADGAD", lowToHigh: ["D", "A", "D", "G", "A", "D"] },
+];
+
+// 7-string guitar
+const TUNING_PRESETS_GTR7 = [
+  { id: "gtr7_standard", name: "Standard (B E A D G B E)", lowToHigh: ["B", "E", "A", "D", "G", "B", "E"] },
+  { id: "gtr7_drop_a", name: "Drop A (A E A D G B E)", lowToHigh: ["A", "E", "A", "D", "G", "B", "E"] },
+];
+
+// Bass
+const TUNING_PRESETS_BASS4 = [
+  { id: "bass4_standard", name: "Standard (E A D G)", lowToHigh: ["E", "A", "D", "G"] },
+  { id: "bass4_drop_d", name: "Drop D (D A D G)", lowToHigh: ["D", "A", "D", "G"] },
+  { id: "bass4_full_down", name: "Full step down (D G C F)", lowToHigh: ["D", "G", "C", "F"] },
+];
+
+const TUNING_PRESETS_BASS5 = [
+  { id: "bass5_standard", name: "Standard (B E A D G)", lowToHigh: ["B", "E", "A", "D", "G"] },
+  { id: "bass5_high_c", name: "High C (E A D G C)", lowToHigh: ["E", "A", "D", "G", "C"] },
+  { id: "bass5_drop_a", name: "Drop A (A E A D G)", lowToHigh: ["A", "E", "A", "D", "G"] },
+  { id: "bass5_drop_c", name: "Drop C (C G C F A)", lowToHigh: ["C", "G", "C", "F", "A"] },
+  { id: "bass5_drop_d", name: "Drop D (D E A D G)", lowToHigh: ["D", "E", "A", "D", "G"] },
+  { id: "bass5_eb_standard", name: "Eb Standard (Bb Eb Ab Db Gb)", lowToHigh: ["Bb", "Eb", "Ab", "Db", "Gb"] },
+];
+
+const TUNING_PRESETS_BASS6 = [
+  { id: "bass6_standard", name: "Standard (B E A D G C)", lowToHigh: ["B", "E", "A", "D", "G", "C"] },
+  { id: "bass6_high_f", name: "High F (E A D G C F)", lowToHigh: ["E", "A", "D", "G", "C", "F"] },
+];
+
+// Banjos
+const TUNING_PRESETS_BANJO4 = [
+  { id: "banjo4_tenor_c", name: "Tenor C (C G D A)", lowToHigh: ["C", "G", "D", "A"] },
+  { id: "banjo4_tenor_irish", name: "Tenor Irish (G D A E)", lowToHigh: ["G", "D", "A", "E"] },
+  { id: "banjo4_plectrum", name: "Plectrum (C G B D)", lowToHigh: ["C", "G", "B", "D"] },
+  { id: "banjo4_chicago", name: "Chicago (D G B E)", lowToHigh: ["D", "G", "B", "E"] },
+];
+
+const TUNING_PRESETS_BANJO5 = [
+  { id: "banjo5_open_g", name: "Open G (G D G B D)", lowToHigh: ["G", "D", "G", "B", "D"] },
+  { id: "banjo5_double_c", name: "Double C (G C G C D)", lowToHigh: ["G", "C", "G", "C", "D"] },
+  { id: "banjo5_sawmill", name: "Sawmill (G D G C D)", lowToHigh: ["G", "D", "G", "C", "D"] },
+  { id: "banjo5_open_d", name: "Open D (F# D F# A D)", lowToHigh: ["F#", "D", "F#", "A", "D"] },
+];
+
+const TUNING_PRESETS_BANJO6 = [
+  {
+    id: "banjo6_standard",
+    name: "Standard (E A D G B E)",
+    lowToHigh: ["E", "A", "D", "G", "B", "E"],
+  },
+  {
+    id: "banjo6_open_g",
+    name: "Open G (D G D G B D)",
+    lowToHigh: ["D", "G", "D", "G", "B", "D"],
+  },
+  {
+    id: "banjo6_five_string_style",
+    name: "5-string style (g G D G B D)",
+    lowToHigh: ["G", "G", "D", "G", "B", "D"],
+  },
+];
+
+// Ukulele
+const TUNING_PRESETS_UKE4 = [
+  { id: "uke_standard_high_g", name: "Standard (High G)", lowToHigh: ["G", "C", "E", "A"] },
+  { id: "uke_low_g", name: "Low G", lowToHigh: ["G", "C", "E", "A"] },
+  { id: "uke_d_tuning", name: "D tuning", lowToHigh: ["A", "D", "F#", "B"] },
+  { id: "uke_baritone", name: "Baritone", lowToHigh: ["D", "G", "B", "E"] },
+];
+
+// Built-in chord presets (for now: 6-string guitar standard only)
+const PRESET_CHORDS = [
+  { id: "preset_C", name: "C", frets: ["0", "1", "0", "2", "3", "x"] },
+  { id: "preset_Cm", name: "Cm", frets: ["3", "4", "5", "5", "3", "x"] },
+
+  { id: "preset_D", name: "D", frets: ["2", "3", "2", "0", "x", "x"] },
+  { id: "preset_Dm", name: "Dm", frets: ["1", "3", "2", "0", "x", "x"] },
+
+  { id: "preset_E", name: "E", frets: ["0", "0", "1", "2", "2", "0"] },
+  { id: "preset_Em", name: "Em", frets: ["0", "0", "0", "2", "2", "0"] },
+
+  { id: "preset_F", name: "F", frets: ["1", "1", "2", "3", "3", "1"] },
+
+  { id: "preset_G", name: "G", frets: ["3", "0", "0", "0", "2", "3"] },
+
+  { id: "preset_A", name: "A", frets: ["0", "2", "2", "2", "0", "x"] },
+  { id: "preset_Am", name: "Am", frets: ["0", "1", "2", "2", "0", "x"] },
+
+  { id: "preset_B", name: "B", frets: ["2", "4", "4", "4", "2", "x"] },
+  { id: "preset_Bm", name: "Bm", frets: ["2", "3", "4", "4", "2", "x"] },
+];
+
+const INSERT_OPTIONS = [
+  { label: "Muted note", insert: "x", mode: "cell" },
+  { label: "Palm mute", insert: "PM", mode: "cell" },
+  { label: "Slide up", insert: "/", mode: "cell" },
+  { label: "Slide down", insert: "\\", mode: "cell" },
+  { label: "Hammer-on", insert: "h", mode: "cell" },
+  { label: "Pull-off", insert: "p", mode: "cell" },
+  { label: "Vibrato", insert: "~", mode: "cell" },
+  { label: "Bend (b)", insert: "b", mode: "cell" },
+
+  { label: "End", insert: "|", mode: "column" },
+  { label: "Rest", insert: "-", mode: "column" },
+];
+
+const SHORTCUTS_REFERENCE = [
+  { action: "Undo", win: "Ctrl+Z", mac: "Cmd+Z", scope: "Global", description: "Undo the most recent change." },
+  {
+    action: "Redo",
+    win: "Ctrl+Shift+Z / Ctrl+Y",
+    mac: "Cmd+Shift+Z",
+    scope: "Global",
+    description: "Redo the last undone change.",
+  },
+  { action: "Save project", win: "Ctrl+S", mac: "Cmd+S", scope: "Global", description: "Save current song to library." },
+  { action: "Open Projects", win: "Ctrl+O", mac: "Cmd+O", scope: "Global", description: "Open Projects & Library." },
+  { action: "Export", win: "Ctrl+E", mac: "Cmd+E", scope: "Global", description: "Open export panel." },
+  {
+    action: "Open Settings",
+    win: "Ctrl+,",
+    mac: "Cmd+,",
+    scope: "Global",
+    description: "Open the Settings sidebar.",
+  },
+  {
+    action: "Open Shortcuts & Tips",
+    win: "Ctrl+/",
+    mac: "Cmd+/",
+    scope: "Global",
+    description: "Open Settings and expand Shortcuts & Tips.",
+  },
+  {
+    action: "Focus Song name",
+    win: "Ctrl+1",
+    mac: "Cmd+1",
+    scope: "Grid",
+    description: "Focus the Song name input from the editor.",
+  },
+  {
+    action: "Focus Artist",
+    win: "Ctrl+2",
+    mac: "Cmd+2",
+    scope: "Grid",
+    description: "Focus the Artist input from the editor.",
+  },
+  {
+    action: "Return focus to grid",
+    win: "Esc",
+    mac: "Esc",
+    scope: "Song inputs",
+    description: "Blur Song/Artist input and restore grid focus.",
+  },
+  {
+    action: "Move down one cell",
+    win: "Enter",
+    mac: "Enter",
+    scope: "Grid",
+    description: "Move down one string while keeping column.",
+  },
+  {
+    action: "Complete row + next string",
+    win: "Shift+Enter",
+    mac: "Shift+Enter",
+    scope: "Grid",
+    description: "Complete row and place cursor one string lower in new grid.",
+  },
+  {
+    action: "Clear current row",
+    win: "Ctrl+Backspace",
+    mac: "Cmd+Backspace",
+    scope: "Grid",
+    description: "Clear the current tab writer row (with confirm if not empty).",
+  },
+  {
+    action: "Open Instrument menu",
+    win: "Ctrl+Shift+I",
+    mac: "Cmd+Shift+I",
+    scope: "Grid",
+    description: "Toggle Instrument dropdown.",
+  },
+  {
+    action: "Open Tuning menu",
+    win: "Ctrl+Shift+T",
+    mac: "Cmd+Shift+T",
+    scope: "Grid",
+    description: "Toggle Tuning dropdown.",
+  },
+  {
+    action: "Open Capo menu",
+    win: "Ctrl+Shift+C",
+    mac: "Cmd+Shift+C",
+    scope: "Grid",
+    description: "Toggle Capo dropdown.",
+  },
+  {
+    action: "Open Chords menu",
+    win: "Ctrl+K",
+    mac: "Cmd+K",
+    scope: "Grid",
+    description: "Toggle Chords menu.",
+  },
+  {
+    action: "Open Insert menu",
+    win: "Ctrl+I",
+    mac: "Cmd+I",
+    scope: "Grid",
+    description: "Toggle Insert menu.",
+  },
+  {
+    action: "Insert key trigger: Bend",
+    win: "B",
+    mac: "B",
+    scope: "Insert menu",
+    description: "Insert bend symbol in selected cell(s).",
+  },
+  {
+    action: "Insert key trigger: Slide",
+    win: "S",
+    mac: "S",
+    scope: "Insert menu",
+    description: "Insert slide symbol in selected cell(s).",
+  },
+  {
+    action: "Insert key trigger: Hammer-on",
+    win: "H",
+    mac: "H",
+    scope: "Insert menu",
+    description: "Insert hammer-on symbol in selected cell(s).",
+  },
+  {
+    action: "Insert key trigger: Pull-off",
+    win: "P",
+    mac: "P",
+    scope: "Insert menu",
+    description: "Insert pull-off symbol in selected cell(s).",
+  },
+  {
+    action: "Insert key trigger: Vibrato",
+    win: "V",
+    mac: "V",
+    scope: "Insert menu",
+    description: "Insert vibrato symbol in selected cell(s).",
+  },
+  {
+    action: "Insert key trigger: Text marker",
+    win: "T",
+    mac: "T",
+    scope: "Insert menu",
+    description: "Insert text marker in selected cell(s).",
+  },
+  { action: "Move selection", win: "Arrow keys", mac: "Arrow keys", scope: "Grid", description: "Move between cells." },
+  {
+    action: "Extend selection",
+    win: "Shift+Arrow keys",
+    mac: "Shift+Arrow keys",
+    scope: "Grid",
+    description: "Extend current multi-cell selection.",
+  },
+  { action: "Move right", win: "Tab", mac: "Tab", scope: "Grid", description: "Move one column right." },
+  { action: "Move left", win: "Shift+Tab", mac: "Shift+Tab", scope: "Grid", description: "Move one column left." },
+  {
+    action: "Jump string row",
+    win: "Ctrl+Up / Ctrl+Down",
+    mac: "Cmd+Up / Cmd+Down",
+    scope: "Grid",
+    description: "Move up/down one string while keeping column.",
+  },
+  {
+    action: "Jump to String 1",
+    win: "Shift+1",
+    mac: "Shift+1",
+    scope: "Grid",
+    description: "Jump to string row 1 (top string) at the same column.",
+  },
+  {
+    action: "Jump to String 2",
+    win: "Shift+2",
+    mac: "Shift+2",
+    scope: "Grid",
+    description: "Jump to string row 2 at the same column.",
+  },
+  {
+    action: "Jump to String 3",
+    win: "Shift+3",
+    mac: "Shift+3",
+    scope: "Grid",
+    description: "Jump to string row 3 at the same column.",
+  },
+  {
+    action: "Jump to String 4",
+    win: "Shift+4",
+    mac: "Shift+4",
+    scope: "Grid",
+    description: "Jump to string row 4 at the same column.",
+  },
+  {
+    action: "Jump to String 5",
+    win: "Shift+5",
+    mac: "Shift+5",
+    scope: "Grid",
+    description: "Jump to string row 5 at the same column.",
+  },
+  {
+    action: "Jump to String 6",
+    win: "Shift+6",
+    mac: "Shift+6",
+    scope: "Grid",
+    description: "Jump to string row 6 at the same column.",
+  },
+  {
+    action: "Jump to String 7",
+    win: "Shift+7",
+    mac: "Shift+7",
+    scope: "Grid",
+    description: "Jump to string row 7 at the same column (7-string instruments only).",
+  },
+  {
+    action: "Enter fret values",
+    win: "0-9",
+    mac: "0-9",
+    scope: "Grid",
+    description: "Type fret numbers into selected cell(s).",
+  },
+  {
+    action: "Clear selected cells",
+    win: "Delete / Backspace",
+    mac: "Delete / Backspace",
+    scope: "Grid",
+    description: "Clear selected cell(s).",
+  },
+  {
+    action: "Copy selected cells",
+    win: "Ctrl+C",
+    mac: "Cmd+C",
+    scope: "Grid",
+    description: "Copy selected cells to clipboard.",
+  },
+  {
+    action: "Select all grid cells",
+    win: "Ctrl+A",
+    mac: "Cmd+A",
+    scope: "Grid",
+    description: "Select all cells in the current tab grid.",
+  },
+  {
+    action: "Add/remove random cells",
+    win: "Ctrl+Click",
+    mac: "Cmd+Click",
+    scope: "Grid",
+    description: "Toggle random multi-selection per cell.",
+  },
+  {
+    action: "Open Insert quickly",
+    win: "+",
+    mac: "+",
+    scope: "Grid",
+    description: "Open Insert menu.",
+  },
+  {
+    action: "Move selected completed row(s)",
+    win: "Ctrl+Up / Ctrl+Down",
+    mac: "Cmd+Up / Cmd+Down",
+    scope: "Completed Rows",
+    description: "Move selected completed row(s) up or down.",
+  },
+  {
+    action: "Duplicate selected completed row(s)",
+    win: "Ctrl+D",
+    mac: "Cmd+D",
+    scope: "Completed Rows",
+    description: "Duplicate selected completed row(s).",
+  },
+  {
+    action: "Delete selected completed row(s)",
+    win: "Ctrl+Delete / Ctrl+Backspace",
+    mac: "Cmd+Delete / Cmd+Backspace",
+    scope: "Completed Rows",
+    description: "Delete selected completed row(s).",
+  },
+  {
+    action: "Reset Columns to default",
+    win: "Triple-click Columns value",
+    mac: "Triple-click Columns value",
+    scope: "Toolbar",
+    description: "Reset column count to your default value.",
+  },
+  {
+    action: "Close open menu/modal",
+    win: "Esc",
+    mac: "Esc",
+    scope: "Global",
+    description: "Close top-most menu, modal, or panel.",
+  },
+];
+
+const SHORTCUTS_ACTION_ES = {
+  Undo: "Deshacer",
+  Redo: "Rehacer",
+  "Save project": "Guardar proyecto",
+  "Open Projects": "Abrir proyectos",
+  Export: "Exportar",
+  "Open Settings": "Abrir ajustes",
+  "Open Shortcuts & Tips": "Abrir atajos y consejos",
+  "Focus Song name": "Enfocar nombre de la canción",
+  "Focus Artist": "Enfocar artista",
+  "Return focus to grid": "Volver a la cuadrícula",
+  "Move down one cell": "Mover una celda abajo",
+  "Complete row + next string": "Completar fila + siguiente cuerda",
+  "Clear current row": "Limpiar fila actual",
+  "Open Instrument menu": "Abrir menú de instrumento",
+  "Open Tuning menu": "Abrir menú de afinación",
+  "Open Capo menu": "Abrir menú de cejilla",
+  "Open Chords menu": "Abrir menú de acordes",
+  "Open Insert menu": "Abrir menú Insertar",
+  "Insert key trigger: Bend": "Atajo Insertar: Bend",
+  "Insert key trigger: Slide": "Atajo Insertar: Slide",
+  "Insert key trigger: Hammer-on": "Atajo Insertar: Hammer-on",
+  "Insert key trigger: Pull-off": "Atajo Insertar: Pull-off",
+  "Insert key trigger: Vibrato": "Atajo Insertar: Vibrato",
+  "Insert key trigger: Text marker": "Atajo Insertar: Marcador de texto",
+  "Move selection": "Mover selección",
+  "Extend selection": "Extender selección",
+  "Move right": "Mover a la derecha",
+  "Move left": "Mover a la izquierda",
+  "Jump string row": "Saltar fila de cuerda",
+  "Enter fret values": "Introducir trastes",
+  "Clear selected cells": "Limpiar celdas seleccionadas",
+  "Copy selected cells": "Copiar celdas seleccionadas",
+  "Select all grid cells": "Seleccionar todas las celdas de la cuadrícula",
+  "Add/remove random cells": "Añadir/quitar celdas aleatorias",
+  "Open Insert quickly": "Abrir Insertar rápido",
+  "Move selected completed row(s)": "Mover filas completadas seleccionadas",
+  "Duplicate selected completed row(s)": "Duplicar filas completadas seleccionadas",
+  "Delete selected completed row(s)": "Eliminar filas completadas seleccionadas",
+  "Reset Columns to default": "Restablecer columnas por defecto",
+  "Close open menu/modal": "Cerrar menú/modal abierto",
+};
+
+const SHORTCUTS_SCOPE_ES = {
+  Global: "Global",
+  Grid: "Cuadrícula",
+  "Song inputs": "Campos de canción",
+  "Insert menu": "Menú Insertar",
+  "Completed Rows": "Filas completadas",
+  Toolbar: "Barra de herramientas",
+};
+
+const SHORTCUTS_DESC_ES = {
+  "Undo the most recent change.": "Deshacer el cambio más reciente.",
+  "Redo the last undone change.": "Rehacer el último cambio deshecho.",
+  "Save current song to library.": "Guardar la canción actual en la biblioteca.",
+  "Open Projects & Library.": "Abrir Proyectos y biblioteca.",
+  "Export current tab as PDF.": "Exportar la tablatura actual como PDF.",
+  "Open the Settings sidebar.": "Abrir la barra lateral de ajustes.",
+  "Open Settings and expand Shortcuts & Tips.": "Abrir Ajustes y desplegar Atajos y consejos.",
+  "Focus the Song name input from the editor.": "Enfocar el campo Nombre de la canción desde el editor.",
+  "Focus the Artist input from the editor.": "Enfocar el campo Artista desde el editor.",
+  "Blur Song/Artist input and restore grid focus.": "Quitar foco de Canción/Artista y volver a la cuadrícula.",
+  "Move down one string while keeping column.": "Mover abajo una cuerda manteniendo columna.",
+  "Complete row and place cursor one string lower in new grid.": "Completar la fila y mover el cursor una cuerda abajo.",
+  "Clear the current tab writer row (with confirm if not empty).": "Limpiar la fila actual (con confirmación si no está vacía).",
+  "Toggle Instrument dropdown.": "Alternar el menú de instrumento.",
+  "Toggle Tuning dropdown.": "Alternar el menú de afinación.",
+  "Toggle Capo dropdown.": "Alternar el menú de cejilla.",
+  "Toggle Chords menu.": "Alternar el menú de acordes.",
+  "Toggle Insert menu.": "Alternar el menú Insertar.",
+  "Insert bend symbol in selected cell(s).": "Insertar símbolo de bend en celdas seleccionadas.",
+  "Insert slide symbol in selected cell(s).": "Insertar símbolo de slide en celdas seleccionadas.",
+  "Insert hammer-on symbol in selected cell(s).": "Insertar símbolo de hammer-on en celdas seleccionadas.",
+  "Insert pull-off symbol in selected cell(s).": "Insertar símbolo de pull-off en celdas seleccionadas.",
+  "Insert vibrato symbol in selected cell(s).": "Insertar símbolo de vibrato en celdas seleccionadas.",
+  "Insert text marker in selected cell(s).": "Insertar marcador de texto en celdas seleccionadas.",
+  "Move between cells.": "Moverse entre celdas.",
+  "Extend current multi-cell selection.": "Extender la selección múltiple actual.",
+  "Move one column right.": "Mover una columna a la derecha.",
+  "Move one column left.": "Mover una columna a la izquierda.",
+  "Move up/down one string while keeping column.": "Mover arriba/abajo una cuerda manteniendo columna.",
+  "Type fret numbers into selected cell(s).": "Escribir números de traste en celdas seleccionadas.",
+  "Clear selected cell(s).": "Limpiar celda(s) seleccionada(s).",
+  "Copy selected cells to clipboard.": "Copiar celdas seleccionadas al portapapeles.",
+  "Select all cells in the current tab grid.": "Seleccionar todas las celdas de la cuadrícula actual.",
+  "Toggle random multi-selection per cell.": "Alternar selección aleatoria por celda.",
+  "Open Insert menu.": "Abrir menú Insertar.",
+  "Move selected completed row(s) up or down.": "Mover filas completadas seleccionadas arriba/abajo.",
+  "Duplicate selected completed row(s).": "Duplicar filas completadas seleccionadas.",
+  "Delete selected completed row(s).": "Eliminar filas completadas seleccionadas.",
+  "Reset column count to your default value.": "Restablecer número de columnas al valor por defecto.",
+  "Close top-most menu, modal, or panel.": "Cerrar menú, modal o panel superior.",
+};
+
+function centerPad(str, width, fill = " ") {
+  const s = String(str ?? "");
+  if (s.length >= width) return s;
+  const total = width - s.length;
+  const left = Math.floor(total / 2);
+  const right = total - left;
+  return fill.repeat(left) + s + fill.repeat(right);
+}
+
+function buildClassicTabText(appTuningHighToLow, grid, cols) {
+  const tuning = appTuningHighToLow;
+
+  // Compute column widths on the raw cell text so ASCII tab like "1b(1/2)" stays aligned.
+  const colWidths = Array.from({ length: cols }, (_, c) => {
+    let maxLen = 1;
+    let minLen = Number.POSITIVE_INFINITY;
+    let hasFilledCell = false;
+    for (let r = 0; r < tuning.length; r++) {
+      const raw = String(grid?.[r]?.[c] ?? "");
+      const trimmed = raw.trim();
+      if (trimmed === "") continue;
+      hasFilledCell = true;
+      const len = trimmed.length;
+      maxLen = Math.max(maxLen, len);
+      minLen = Math.min(minLen, len);
+    }
+    // Mixed-width columns (e.g. 7 and 11) need one extra slot to center nicely.
+    if (hasFilledCell && minLen < maxLen && maxLen > 1) return maxLen + 1;
+    return maxLen;
+  });
+
+  return tuning
+    .map((label, r) => {
+      const cells = Array.from({ length: cols }, (_, c) => {
+        const raw = String(grid?.[r]?.[c] ?? "");
+        const trimmed = raw.trim();
+        const w = colWidths[c];
+
+        if (trimmed === "") {
+          return "-".repeat(w);
+        }
+        return centerPad(trimmed, w, "-");
+      });
+      // Keep a guard dash at both edges so tabs always render as: Tuning|-...-|
+      return `${normalizeTuningNote(label)}|-${cells.join("-")}-|`;
+    })
+    .join("\n");
+}
+
+
+function buildRowTabWithRepeat(row) {
+  if (!row || row.kind === "note") {
+    return "";
+  }
+  const base = buildClassicTabText(row.tuningAtTime, row.grid, row.colsAtTime);
+  const count = row.repeatCount && row.repeatCount > 1 ? row.repeatCount : 1;
+  if (count === 1) return base;
+
+  const lines = String(base ?? "").split("\n");
+  if (!lines.length) return base;
+
+  // Append a small repeat block like |x4| on the right side of the tab.
+  const mid = Math.floor(lines.length / 2);
+  const label = `x${count}`;
+  const minBlockWidth = 2;
+  const blockWidth = Math.max(minBlockWidth, label.length);
+
+  function padLabel(text) {
+    if (text.length >= blockWidth) return text.slice(0, blockWidth);
+    const left = Math.floor((blockWidth - text.length) / 2);
+    const right = blockWidth - text.length - left;
+    return "-".repeat(left) + text + "-".repeat(right);
+  }
+
+  const updatedLines = lines.map((line, idx) => {
+    const inner = idx === mid ? padLabel(label) : "-".repeat(blockWidth);
+    let baseLine = String(line ?? "");
+    // Avoid doubling the trailing bar: base lines already end with '|'
+    if (baseLine.endsWith("|")) {
+      baseLine = baseLine.slice(0, -1);
+    }
+    return `${baseLine}|${inner}|`;
+  });
+
+  return updatedLines.join("\n");
+}
+
+function safeLoadUserTunings() {
+  try {
+    const raw = localStorage.getItem(LS_USER_TUNINGS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (t) =>
+          t &&
+          typeof t.id === "string" &&
+          typeof t.name === "string" &&
+          Array.isArray(t.lowToHigh) &&
+          t.lowToHigh.length === 6
+      )
+      .map((t) => ({
+        id: t.id,
+        name: t.name,
+        lowToHigh: t.lowToHigh.map((x) => String(x ?? "").trim()),
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function safeLoadUserChords() {
+  try {
+    const raw = localStorage.getItem(LS_USER_CHORDS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (c) =>
+          c &&
+          typeof c.id === "string" &&
+          typeof c.name === "string" &&
+          Array.isArray(c.frets) &&
+          c.frets.length === 6
+      )
+      .map((c) => ({
+        id: c.id,
+        name: c.name,
+        frets: c.frets.map((x) => String(x ?? "").trim()),
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function safeLoadChordOverrides() {
+  try {
+    const raw = localStorage.getItem(LS_CHORD_OVERRIDES_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    const out = {};
+    for (const [id, v] of Object.entries(parsed)) {
+      if (!v || !Array.isArray(v.frets) || v.frets.length !== 6) continue;
+      out[id] = {
+        frets: v.frets.map((x) => String(x ?? "").trim()),
+      };
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function eventPathIncludes(e, node) {
+  if (!node) return false;
+  const path = typeof e.composedPath === "function" ? e.composedPath() : null;
+  if (path && Array.isArray(path)) return path.includes(node);
+  let cur = e.target;
+  while (cur) {
+    if (cur === node) return true;
+    cur = cur.parentNode;
+  }
+  return false;
+}
+
+/** -------- PDF helpers (unchanged from previous version) -------- */
+
+function toAsciiSafe(str) {
+  const s = String(str ?? "");
+  const normalized = s
+    .replaceAll("–", "-")
+    .replaceAll("—", "-")
+    .replaceAll("“", '"')
+    .replaceAll("”", '"')
+    .replaceAll("‘", "'")
+    .replaceAll("’", "'");
+
+  let out = "";
+  for (let i = 0; i < normalized.length; i++) {
+    const code = normalized.charCodeAt(i);
+    // Normalize whitespace: keep spaces, but turn tabs/newlines into single spaces.
+    if (code === 9 || code === 10 || code === 13) {
+      out += " ";
+    } else if (code >= 32 && code <= 126) {
+      // Standard printable ASCII.
+      out += normalized[i];
+    } else if (code === 0xbd || code === 0xb9) {
+      // Allow a couple of extended glyphs we actually use:
+      // 0xbd: "½"  (half bend)
+      // 0xb9: "¹"  (superscript 1 for full bend)
+      out += normalized[i];
+    } else {
+      // Fallback for truly unsupported characters.
+      out += "?";
+    }
+  }
+  return out;
+}function pdfEscapeLiteral(str) {
+  const s = toAsciiSafe(str);
+  return s.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+}
+
+function wrapMonospaceLine(line, maxChars) {
+  const s = String(line ?? "");
+  if (maxChars <= 10) return [s];
+  if (s.length <= maxChars) return [s];
+  const out = [];
+  let i = 0;
+  while (i < s.length) {
+    out.push(s.slice(i, i + maxChars));
+    i += maxChars;
+  }
+  return out;
+}
+
+function strToBytesLatin1(s) {
+  const text = String(s ?? "");
+  const out = new Uint8Array(text.length);
+  for (let i = 0; i < text.length; i++) out[i] = text.charCodeAt(i) & 0xff;
+  return out;
+}
+
+function concatBytes(chunks) {
+  const total = chunks.reduce((n, c) => n + c.length, 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) {
+    out.set(c, off);
+    off += c.length;
+  }
+  return out;
+}
+
+function buildPdfPageLayout({
+  title,
+  artist,
+  albumName,
+  instrumentLabel,
+  tuningLabel,
+  capoEnabled,
+  capoFret,
+  tempoEnabled,
+  tempoBpm,
+  completedRows,
+  showSong = true,
+  showArtist = true,
+  showAlbum = true,
+  showInstrument = true,
+  showTuning = true,
+  showCapo = true,
+  showTempo = true,
+  showHeaderBranding = true,
+  rowGrouping = "fill",
+}) {
+  const pageW = 595.28;
+  const pageH = 841.89;
+  const margin = 56;
+
+  const fontSize = 11;
+  const lineH = 14;
+
+  const usableW = pageW - margin * 2;
+  const maxChars = Math.max(40, Math.floor(usableW / (fontSize * 0.6)));
+
+  function wrapLineToObjects(text, font = "F1") {
+    const wrapped = wrapMonospaceLine(String(text ?? ""), maxChars);
+    return wrapped.map((w) => ({ text: w, font }));
+  }
+
+  const blocks = [];
+
+  {
+    const b = [];
+
+    if (showHeaderBranding) {
+      b.push(...wrapLineToObjects("TabStudio", "F2"));
+      b.push(...wrapLineToObjects(EXPORT_BRANDING_TEXT, "F1"));
+      b.push(...wrapLineToObjects("", "F1"));
+    }
+
+    const cleanTitle = String(title ?? "").trim();
+    const cleanArtist = String(artist ?? "").trim();
+    const cleanAlbum = String(albumName ?? "").trim();
+    const metaParts = [];
+    if (showArtist && cleanArtist) metaParts.push(`Artist: ${cleanArtist}`);
+    if (showAlbum && cleanAlbum && cleanAlbum !== NO_ALBUM_NAME) metaParts.push(`Album: ${cleanAlbum}`);
+    if (showSong && cleanTitle) metaParts.push(`Song: ${cleanTitle}`);
+    if (metaParts.length > 0) b.push(...wrapLineToObjects(metaParts.join(" | "), "F1"));
+
+    const cleanInstrument = String(instrumentLabel ?? "").trim();
+    const cleanTuning = String(tuningLabel ?? "").trim();
+    const infoParts = [];
+    if (showInstrument && cleanInstrument) infoParts.push(`Instrument: ${cleanInstrument}`);
+    if (showTuning && cleanTuning) infoParts.push(`Tuning: ${cleanTuning}`);
+    if (showCapo && hasConfiguredCapo(capoEnabled, capoFret)) infoParts.push(`Capo: ${String(capoFret || "").trim()}`);
+    if (showTempo && hasConfiguredTempo(tempoEnabled, tempoBpm)) infoParts.push(`Tempo: ${String(tempoBpm || "").trim()} BPM`);
+    if (infoParts.length > 0) b.push(...wrapLineToObjects(infoParts.join(" | "), "F1"));
+
+    b.push(...wrapLineToObjects("", "F1"));
+    blocks.push({ lines: b, kind: "header" });
+  }
+
+  if (!completedRows || completedRows.length === 0) {
+    blocks.push({ lines: wrapLineToObjects("(No completed rows yet)", "F1"), kind: "row" });
+  } else {
+    for (const row of completedRows) {
+      const b = [];
+      const isNote = row.kind === "note";
+      const rowTitle = row?.name ? String(row.name) : isNote ? "Note" : "Row";
+      b.push(...wrapLineToObjects(rowTitle, "F2"));
+
+      if (isNote) {
+        const noteText = String(row.noteText ?? "");
+        const noteLines = noteText.length === 0 ? [""] : noteText.split(/\r?\n/);
+        for (const line of noteLines) b.push(...wrapLineToObjects(line, "F1"));
+      } else {
+        const tabText = buildRowTabWithRepeat(row);
+        const tabLines = String(tabText ?? "").split("\n");
+        for (const l of tabLines) b.push(...wrapLineToObjects(l, "F1"));
+      }
+
+      b.push(...wrapLineToObjects("", "F1"));
+      blocks.push({ lines: b, kind: "row" });
+    }
+  }
+
+  const linesPerPageRaw = Math.max(10, Math.floor((pageH - margin * 2) / lineH));
+  const contentLinesPerPage = Math.max(1, linesPerPageRaw - 1);
+
+  const contentPages = [];
+  let current = [];
+  let used = 0;
+  let currentRowCount = 0;
+  const rowBlocks = blocks.filter((b) => b.kind === "row");
+  let rowIndexCursor = 0;
+
+  function flushPage() {
+    contentPages.push({ lines: current, rowCount: currentRowCount });
+    current = [];
+    used = 0;
+    currentRowCount = 0;
+  }
+
+  for (let bi = 0; bi < blocks.length; bi += 1) {
+    const block = blocks[bi];
+    const blockLines = block.lines;
+    const blockLen = blockLines.length;
+    const isRowBlock = block.kind === "row";
+
+    if (used > 0 && used + blockLen > contentLinesPerPage) flushPage();
+
+    if (blockLen > contentLinesPerPage) {
+      let i = 0;
+      while (i < blockLines.length) {
+        const slice = blockLines.slice(i, i + contentLinesPerPage);
+        if (used > 0) flushPage();
+        current.push(...slice);
+        used += slice.length;
+        if (isRowBlock) currentRowCount += 1;
+        i += contentLinesPerPage;
+        flushPage();
+      }
+      if (isRowBlock) rowIndexCursor += 1;
+      continue;
+    }
+
+    if (rowGrouping === "grouped" && isRowBlock) {
+      const remainingRowsIncludingCurrent = rowBlocks.length - rowIndexCursor;
+      const addingWouldLeaveSingleRowForNextPage = remainingRowsIncludingCurrent > 1 && remainingRowsIncludingCurrent - 1 === 1;
+      const canDeferToNextPage = currentRowCount >= 1 && used > 0;
+      if (addingWouldLeaveSingleRowForNextPage && canDeferToNextPage) {
+        flushPage();
+      }
+    }
+
+    current.push(...blockLines);
+    used += blockLen;
+    if (isRowBlock) {
+      currentRowCount += 1;
+      rowIndexCursor += 1;
+    }
+  }
+
+  if (current.length) contentPages.push({ lines: current, rowCount: currentRowCount });
+  if (contentPages.length === 0) contentPages.push({ lines: [], rowCount: 0 });
+
+  const pages = contentPages.map((pageData, pageIndex) => {
+    const footerText = `tabstudio.app • ${EXPORT_BRANDING_TEXT} • Page ${pageIndex + 1} / ${contentPages.length}`;
+    const lines = pageData.lines.slice();
+    while (lines.length < contentLinesPerPage) lines.push({ text: "", font: "F1" });
+    lines.push({ text: footerText, font: "F1" });
+    return lines;
+  });
+
+  return {
+    pageW,
+    pageH,
+    margin,
+    fontSize,
+    lineH,
+    pages,
+  };
+}
+
+function buildPdfBytes({
+  title,
+  artist,
+  albumName,
+  instrumentLabel,
+  tuningLabel,
+  capoEnabled,
+  capoFret,
+  tempoEnabled,
+  tempoBpm,
+  completedRows,
+  showSong = true,
+  showArtist = true,
+  showAlbum = true,
+  showInstrument = true,
+  showTuning = true,
+  showCapo = true,
+  showTempo = true,
+  showHeaderBranding = true,
+  rowGrouping = "fill",
+  thickness = "B",
+}) {
+  const { pageW, pageH, margin, fontSize, lineH, pages } = buildPdfPageLayout({
+    title,
+    artist,
+    albumName,
+    instrumentLabel,
+    tuningLabel,
+    capoEnabled,
+    capoFret,
+    tempoEnabled,
+    tempoBpm,
+    completedRows,
+    showSong,
+    showArtist,
+    showAlbum,
+    showInstrument,
+    showTuning,
+    showCapo,
+    showTempo,
+    showHeaderBranding,
+    rowGrouping,
+  });
+
+  const pageStreams = pages.map((pageLines, pageIndex) => {
+    const x = margin;
+    const yStart = pageH - margin;
+
+    const contentLines = pageLines;
+
+    let stream = "";
+    stream += "BT\n";
+    stream += `/F1 ${fontSize} Tf\n`;
+    stream += `1 0 0 1 ${x.toFixed(2)} ${yStart.toFixed(2)} Tm\n`;
+
+    let currentFont = "F1";
+    const resolvedThickness = ["A", "B", "C"].includes(String(thickness || "").toUpperCase())
+      ? String(thickness || "").toUpperCase()
+      : "B";
+    for (let i = 0; i < contentLines.length; i++) {
+      const ln = contentLines[i] || { text: "", font: "F1" };
+      let targetFont = ln.font || "F1";
+      if (resolvedThickness === "A") targetFont = "F1";
+      else if (resolvedThickness === "C") targetFont = "F2";
+      if (targetFont !== currentFont) {
+        currentFont = targetFont;
+        stream += `/${currentFont} ${fontSize} Tf\n`;
+      }
+      const safe = pdfEscapeLiteral(ln.text ?? "");
+      stream += `(${safe}) Tj\n`;
+      if (i !== contentLines.length - 1) stream += `0 ${(-lineH).toFixed(2)} Td\n`;
+    }
+    stream += "ET\n";
+    return stream;
+  });
+
+  const objects = [];
+  const addObj = (body) => {
+    objects.push(body);
+    return objects.length;
+  };
+
+  const fontObjNum1 = addObj(`<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>`);
+  const fontObjNum2 = addObj(`<< /Type /Font /Subtype /Type1 /BaseFont /Courier-Bold >>`);
+
+  const pagesObjNum = addObj(`<< /Type /Pages /Kids [] /Count 0 >>`);
+  const catalogObjNum = addObj(`<< /Type /Catalog /Pages ${pagesObjNum} 0 R >>`);
+
+  const pageObjNums = [];
+
+  for (let i = 0; i < pageStreams.length; i++) {
+    const streamText = pageStreams[i];
+    const streamBytes = strToBytesLatin1(streamText);
+
+    const contentObjNum = addObj(`<< /Length ${streamBytes.length} >>\nstream\n${streamText}\nendstream`);
+
+    const pageObjNum = addObj(
+      `<< /Type /Page /Parent ${pagesObjNum} 0 R /MediaBox [0 0 ${pageW.toFixed(
+        2
+      )} ${pageH.toFixed(
+        2
+      )}] /Resources << /Font << /F1 ${fontObjNum1} 0 R /F2 ${fontObjNum2} 0 R >> >> /Contents ${contentObjNum} 0 R >>`
+    );
+
+    pageObjNums.push(pageObjNum);
+  }
+
+  const kids = pageObjNums.map((n) => `${n} 0 R`).join(" ");
+  objects[pagesObjNum - 1] = `<< /Type /Pages /Kids [ ${kids} ] /Count ${pageObjNums.length} >>`;
+
+  const chunks = [];
+  chunks.push(strToBytesLatin1("%PDF-1.4\n"));
+  chunks.push(new Uint8Array([0x25, 0xe2, 0xe3, 0xcf, 0xd3, 0x0a]));
+
+  const offsets = [0];
+  let bytePos = chunks.reduce((n, c) => n + c.length, 0);
+
+  for (let i = 0; i < objects.length; i++) {
+    offsets.push(bytePos);
+    const objNum = i + 1;
+    const objChunk = strToBytesLatin1(`${objNum} 0 obj\n${objects[i]}\nendobj\n`);
+    chunks.push(objChunk);
+    bytePos += objChunk.length;
+  }
+
+  const xrefStart = bytePos;
+
+  let xref = `xref\n0 ${objects.length + 1}\n`;
+  xref += `0000000000 65535 f \n`;
+  for (let i = 1; i < offsets.length; i++) {
+    const off = String(offsets[i]).padStart(10, "0");
+    xref += `${off} 00000 n \n`;
+  }
+
+  const trailer =
+    `trailer\n<< /Size ${objects.length + 1} /Root ${catalogObjNum} 0 R >>\n` +
+    `startxref\n${xrefStart}\n%%EOF`;
+
+  chunks.push(strToBytesLatin1(xref));
+  chunks.push(strToBytesLatin1(trailer));
+
+  return concatBytes(chunks);
+}
+
+function downloadPdf(bytes, filename) {
+  const blob = new Blob([bytes], { type: "application/pdf" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+function downloadBlobFile(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+function sanitizeExportFileBase(str) {
+  return String(str || "")
+    .trim()
+    .replace(/[^\w\- ]+/g, "")
+    .replace(/\s+/g, " ");
+}
+
+function escapeHtml(str) {
+  return String(str ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function normalizeHexColorOrFallback(value, fallback) {
+  const clean = String(value ?? "").trim();
+  return /^#[0-9a-fA-F]{6}$/.test(clean) ? clean : fallback;
+}
+
+function isLightHexColor(hex) {
+  const safe = normalizeHexColorOrFallback(hex, "#000000");
+  const r = parseInt(safe.slice(1, 3), 16);
+  const g = parseInt(safe.slice(3, 5), 16);
+  const b = parseInt(safe.slice(5, 7), 16);
+  // Perceived brightness (WCAG-style luma approximation)
+  const luma = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  return luma >= 0.56;
+}
+
+function getHexLuma(hex) {
+  const safe = normalizeHexColorOrFallback(hex, "#000000");
+  const r = parseInt(safe.slice(1, 3), 16);
+  const g = parseInt(safe.slice(3, 5), 16);
+  const b = parseInt(safe.slice(5, 7), 16);
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+}
+
+function getAutoContrastedTextColor(bgHex, textHex) {
+  const bg = normalizeHexColorOrFallback(bgHex, "#000000");
+  const text = normalizeHexColorOrFallback(textHex, "#ffffff");
+  const bgLuma = getHexLuma(bg);
+  const textLuma = getHexLuma(text);
+  // Keep chosen color unless the pair is too close in brightness.
+  if (Math.abs(bgLuma - textLuma) >= 0.38) return text;
+  return bgLuma >= 0.56 ? "#111111" : "#f2f2f2";
+}
+
+function getTransparentPreviewSurface(textColor = "#ffffff") {
+  const lightText = isLightHexColor(textColor);
+  const cellA = lightText ? "#2f3238" : "#ececec";
+  const cellB = lightText ? "#24272d" : "#f8f8f8";
+  return {
+    backgroundColor: cellA,
+    backgroundImage:
+      `linear-gradient(45deg, ${cellB} 25%, transparent 25%), ` +
+      `linear-gradient(-45deg, ${cellB} 25%, transparent 25%), ` +
+      `linear-gradient(45deg, transparent 75%, ${cellB} 75%), ` +
+      `linear-gradient(-45deg, transparent 75%, ${cellB} 75%)`,
+    backgroundSize: "24px 24px",
+    backgroundPosition: "0 0, 0 12px, 12px -12px, -12px 0",
+  };
+}
+
+function makeExportRowLabel(row, idx) {
+  const base = String(row?.name || "").trim();
+  if (base) return base;
+  return row?.kind === "note" ? `Note ${idx + 1}` : `Row ${idx + 1}`;
+}
+
+function getExportRowText(row, idx) {
+  if (!row) return "";
+  if (row.kind === "note") {
+    const noteText = String(row.noteText ?? "");
+    return noteText.length ? noteText : makeExportRowLabel(row, idx);
+  }
+  return buildRowTabWithRepeat(row);
+}
+
+function hasConfiguredCapo(capoEnabled, capoFret) {
+  if (!capoEnabled) return false;
+  const raw = String(capoFret ?? "").trim();
+  if (!raw) return false;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 1 && n <= 24;
+}
+
+function hasConfiguredTempo(tempoEnabled, tempoBpm) {
+  if (!tempoEnabled) return false;
+  const raw = String(tempoBpm ?? "").trim();
+  if (!raw) return false;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 30 && n <= 300;
+}
+
+function buildImageExportMetaLines({
+  row,
+  songTitle,
+  artist,
+  albumName,
+  capoEnabled,
+  capoFret,
+  tempoEnabled,
+  tempoBpm,
+  showSong = false,
+  showArtist = false,
+  showAlbum = false,
+  showInstrument = false,
+  showTuning = false,
+  showCapo = false,
+  showTempo = false,
+}) {
+  const lines = [];
+  if (showSong) {
+    const v = String(songTitle || "").trim();
+    if (v) lines.push(`Song: ${v}`);
+  }
+  if (showArtist) {
+    const v = String(artist || "").trim();
+    if (v) lines.push(`Artist: ${v}`);
+  }
+  if (showAlbum) {
+    const v = String(albumName || "").trim();
+    if (v && v !== NO_ALBUM_NAME) lines.push(`Album: ${v}`);
+  }
+  if (showInstrument) {
+    const v = String(row?.instrumentLabelAtTime || "").trim();
+    if (v) lines.push(`Instrument: ${v}`);
+  }
+  if (showTuning) {
+    const arr = Array.isArray(row?.tuningAtTime) ? row.tuningAtTime : [];
+    const v = arr.map((x) => normalizeTuningNote(x)).filter(Boolean).join(" ");
+    if (v) lines.push(`Tuning: ${v}`);
+  }
+  if (showCapo && hasConfiguredCapo(capoEnabled, capoFret)) {
+    const v = String(capoFret || "").trim();
+    if (v) lines.push(`Capo: ${v}`);
+  }
+  if (showTempo && hasConfiguredTempo(tempoEnabled, tempoBpm)) {
+    const v = String(tempoBpm || "").trim();
+    if (v) lines.push(`Tempo: ${v} BPM`);
+  }
+  return lines;
+}
+
+function getThicknessPresetStyle(preset = "B") {
+  if (preset === "A") return { fontWeight: 500, strokeWidth: 0 };
+  if (preset === "C") return { fontWeight: 900, strokeWidth: 1.4 };
+  return { fontWeight: 700, strokeWidth: 0.7 };
+}
+
+function getTextOutlinePreset(mode = "off") {
+  if (mode === "strong") {
+    return {
+      canvasStrokeWidth: 2.6,
+      canvasStrokeColor: "rgba(0,0,0,0.92)",
+      previewShadow: "0 0 3px rgba(0,0,0,0.92), 0 0 6px rgba(0,0,0,0.72)",
+    };
+  }
+  if (mode === "subtle") {
+    return {
+      canvasStrokeWidth: 1.25,
+      canvasStrokeColor: "rgba(0,0,0,0.82)",
+      previewShadow: "0 0 2px rgba(0,0,0,0.8)",
+    };
+  }
+  return {
+    canvasStrokeWidth: 0,
+    canvasStrokeColor: "rgba(0,0,0,0)",
+    previewShadow: "",
+  };
+}
+
+function getImagePreviewTextShadow(thickness = "B", outlineMode = "off", textColor = "#ffffff") {
+  const parts = [];
+  const thick = getThicknessPresetStyle(thickness);
+  if (thick.strokeWidth > 1) parts.push(`0 0 0 ${textColor}`, `0 0 1px ${textColor}`);
+  else if (thick.strokeWidth > 0) parts.push(`0 0 0 ${textColor}`);
+  const outline = getTextOutlinePreset(outlineMode);
+  if (outline.previewShadow) parts.push(outline.previewShadow);
+  return parts.length ? parts.join(", ") : "none";
+}
+
+async function renderRowTextToPngBlob({
+  rowText,
+  rowLabel,
+  showRowLabel = true,
+  metaLines = [],
+  textColor = "#ffffff",
+  bgMode = "transparent",
+  bgColor = "#000000",
+  thickness = "B",
+  textOutline = "off",
+  includeBranding = true,
+  brandingText = EXPORT_BRANDING_TEXT,
+  pixelRatio = 2,
+}) {
+  const lines = String(rowText ?? "").split(/\r?\n/);
+  const safeLines = lines.length ? lines : [""];
+  const family = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
+  const { fontWeight, strokeWidth } = getThicknessPresetStyle(thickness);
+  const outline = getTextOutlinePreset(textOutline);
+
+  const fontSize = 24;
+  const lineHeight = Math.round(fontSize * 1.35);
+  const padX = 34;
+  const padY = 28;
+  const metaGap = 6;
+  const metaBlockGap = 10;
+  const labelGap = 18;
+  const labelFontSize = 16;
+  const metaFontSize = 13;
+  const brandingGap = 12;
+  const brandingFontSize = 12;
+
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas context unavailable.");
+
+  ctx.font = `${fontWeight} ${fontSize}px ${family}`;
+  const maxLineWidth = safeLines.reduce((m, ln) => Math.max(m, ctx.measureText(String(ln)).width), 0);
+  ctx.font = `700 ${labelFontSize}px ${family}`;
+  const hasRowLabel = !!(showRowLabel && rowLabel);
+  const labelWidth = hasRowLabel ? ctx.measureText(rowLabel).width : 0;
+  ctx.font = `600 ${metaFontSize}px ${family}`;
+  const safeMetaLines = Array.isArray(metaLines) ? metaLines.map((x) => String(x || "")) : [];
+  const maxMetaWidth = safeMetaLines.reduce((m, ln) => Math.max(m, ctx.measureText(ln).width), 0);
+
+  const contentW = Math.max(maxLineWidth, labelWidth, maxMetaWidth);
+  const cleanBrandingText = String(brandingText || "").trim();
+  const hasBranding = includeBranding && cleanBrandingText.length > 0;
+  ctx.font = `600 ${brandingFontSize}px ${family}`;
+  const brandingWidth = hasBranding ? ctx.measureText(cleanBrandingText).width : 0;
+  const metaBlockHeight = safeMetaLines.length ? safeMetaLines.length * (metaFontSize + metaGap) - metaGap : 0;
+  const topBlockHeight = metaBlockHeight + (safeMetaLines.length && hasRowLabel ? metaBlockGap : 0) + (hasRowLabel ? labelFontSize + labelGap : 0);
+  const width = Math.ceil(Math.max(contentW, brandingWidth) + padX * 2);
+  const brandingHeight = hasBranding ? brandingGap + brandingFontSize : 0;
+  const height = Math.ceil(padY * 2 + topBlockHeight + safeLines.length * lineHeight + brandingHeight);
+
+  canvas.width = Math.max(1, Math.round(width * pixelRatio));
+  canvas.height = Math.max(1, Math.round(height * pixelRatio));
+  ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+
+  if (bgMode === "solid") {
+    ctx.fillStyle = bgColor;
+    ctx.fillRect(0, 0, width, height);
+  }
+
+  ctx.fillStyle = textColor;
+  let yCursor = padY;
+  if (safeMetaLines.length) {
+    ctx.font = `600 ${metaFontSize}px ${family}`;
+    ctx.textBaseline = "top";
+    safeMetaLines.forEach((line, i) => {
+      const y = yCursor + i * (metaFontSize + metaGap);
+      if (outline.canvasStrokeWidth > 0) {
+        ctx.strokeStyle = outline.canvasStrokeColor;
+        ctx.lineWidth = outline.canvasStrokeWidth;
+        ctx.strokeText(String(line), padX, y);
+      }
+      ctx.fillText(String(line), padX, y);
+    });
+    yCursor += metaBlockHeight;
+  }
+
+  if (hasRowLabel) {
+    if (safeMetaLines.length) yCursor += metaBlockGap;
+    ctx.font = `700 ${labelFontSize}px ${family}`;
+    ctx.textBaseline = "top";
+    if (outline.canvasStrokeWidth > 0) {
+      ctx.strokeStyle = outline.canvasStrokeColor;
+      ctx.lineWidth = outline.canvasStrokeWidth;
+      ctx.strokeText(rowLabel, padX, yCursor);
+    }
+    ctx.fillText(rowLabel, padX, yCursor);
+    yCursor += labelFontSize + labelGap;
+  }
+
+  ctx.font = `${fontWeight} ${fontSize}px ${family}`;
+  ctx.textBaseline = "top";
+  ctx.lineJoin = "round";
+  ctx.miterLimit = 2;
+  ctx.strokeStyle = textColor;
+  ctx.lineWidth = strokeWidth;
+  const yStart = yCursor;
+  safeLines.forEach((line, i) => {
+    const y = yStart + i * lineHeight;
+    if (outline.canvasStrokeWidth > 0) {
+      ctx.strokeStyle = outline.canvasStrokeColor;
+      ctx.lineWidth = outline.canvasStrokeWidth;
+      ctx.strokeText(String(line), padX, y);
+    }
+    ctx.strokeStyle = textColor;
+    ctx.lineWidth = strokeWidth;
+    if (strokeWidth > 0) ctx.strokeText(String(line), padX, y);
+    ctx.fillText(String(line), padX, y);
+  });
+
+  if (hasBranding) {
+    const brandY = yStart + safeLines.length * lineHeight + brandingGap;
+    const brandingColor = getAutoContrastedTextColor(bgMode === "solid" ? bgColor : "#000000", textColor);
+    ctx.font = `600 ${brandingFontSize}px ${family}`;
+    ctx.fillStyle = withAlpha(brandingColor, 0.8);
+    if (outline.canvasStrokeWidth > 0) {
+      ctx.strokeStyle = withAlpha(outline.canvasStrokeColor, 0.75);
+      ctx.lineWidth = Math.max(0.8, outline.canvasStrokeWidth * 0.6);
+      ctx.strokeText(cleanBrandingText, padX, brandY);
+    }
+    ctx.fillText(cleanBrandingText, padX, brandY);
+  }
+
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+  if (!blob) throw new Error("Failed to encode PNG.");
+  return blob;
+}
+
+async function renderRowsTextToPngBlob({
+  rows,
+  showRowLabels = true,
+  textColor = "#ffffff",
+  bgMode = "transparent",
+  bgColor = "#000000",
+  thickness = "B",
+  textOutline = "off",
+  includeBranding = true,
+  brandingText = EXPORT_BRANDING_TEXT,
+  pixelRatio = 2,
+}) {
+  const safeRows = Array.isArray(rows) && rows.length ? rows : [{ rowLabel: "", rowText: "" }];
+  const family = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
+  const { fontWeight, strokeWidth } = getThicknessPresetStyle(thickness);
+  const outline = getTextOutlinePreset(textOutline);
+
+  const fontSize = 24;
+  const lineHeight = Math.round(fontSize * 1.35);
+  const padX = 34;
+  const padY = 28;
+  const metaGap = 6;
+  const metaBlockGap = 10;
+  const labelGap = 18;
+  const labelFontSize = 16;
+  const metaFontSize = 13;
+  const rowGap = 24;
+  const brandingGap = 12;
+  const brandingFontSize = 12;
+
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas context unavailable.");
+
+  const blocks = safeRows.map((row) => {
+    const rowLabel = showRowLabels ? String(row?.rowLabel ?? "").trim() : "";
+    const metaLines = Array.isArray(row?.metaLines) ? row.metaLines.map((x) => String(x || "")) : [];
+    const lines = String(row?.rowText ?? "").split(/\r?\n/);
+    const safeLines = lines.length ? lines : [""];
+    return { rowLabel, metaLines, safeLines };
+  });
+
+  let contentW = 0;
+  ctx.font = `${fontWeight} ${fontSize}px ${family}`;
+  blocks.forEach((block) => {
+    const maxLineWidth = block.safeLines.reduce((m, ln) => Math.max(m, ctx.measureText(String(ln)).width), 0);
+    contentW = Math.max(contentW, maxLineWidth);
+  });
+  ctx.font = `700 ${labelFontSize}px ${family}`;
+  blocks.forEach((block) => {
+    if (!block.rowLabel) return;
+    contentW = Math.max(contentW, ctx.measureText(block.rowLabel).width);
+  });
+  ctx.font = `600 ${metaFontSize}px ${family}`;
+  blocks.forEach((block) => {
+    block.metaLines.forEach((line) => {
+      contentW = Math.max(contentW, ctx.measureText(String(line)).width);
+    });
+  });
+
+  const blocksH = blocks.reduce((sum, block) => {
+    const metaBlockHeight = block.metaLines.length ? block.metaLines.length * (metaFontSize + metaGap) - metaGap : 0;
+    const blockTop =
+      metaBlockHeight + (metaBlockHeight && block.rowLabel ? metaBlockGap : 0) + (block.rowLabel ? labelFontSize + labelGap : 0);
+    return sum + blockTop + block.safeLines.length * lineHeight;
+  }, 0);
+  const totalGap = rowGap * Math.max(0, blocks.length - 1);
+  const cleanBrandingText = String(brandingText || "").trim();
+  const hasBranding = includeBranding && cleanBrandingText.length > 0;
+  ctx.font = `600 ${brandingFontSize}px ${family}`;
+  const brandingWidth = hasBranding ? ctx.measureText(cleanBrandingText).width : 0;
+  const brandingHeight = hasBranding ? brandingGap + brandingFontSize : 0;
+
+  const width = Math.ceil(Math.max(contentW, brandingWidth) + padX * 2);
+  const height = Math.ceil(padY * 2 + blocksH + totalGap + brandingHeight);
+
+  canvas.width = Math.max(1, Math.round(width * pixelRatio));
+  canvas.height = Math.max(1, Math.round(height * pixelRatio));
+  ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+
+  if (bgMode === "solid") {
+    ctx.fillStyle = bgColor;
+    ctx.fillRect(0, 0, width, height);
+  }
+
+  ctx.lineJoin = "round";
+  ctx.miterLimit = 2;
+  ctx.strokeStyle = textColor;
+  ctx.lineWidth = strokeWidth;
+  ctx.fillStyle = textColor;
+  ctx.textBaseline = "top";
+
+  let yCursor = padY;
+  blocks.forEach((block, blockIndex) => {
+    if (block.metaLines.length) {
+      ctx.font = `600 ${metaFontSize}px ${family}`;
+      block.metaLines.forEach((line, i) => {
+        const y = yCursor + i * (metaFontSize + metaGap);
+        if (outline.canvasStrokeWidth > 0) {
+          ctx.strokeStyle = outline.canvasStrokeColor;
+          ctx.lineWidth = outline.canvasStrokeWidth;
+          ctx.strokeText(String(line), padX, y);
+        }
+        ctx.fillText(String(line), padX, y);
+      });
+      yCursor += block.metaLines.length * (metaFontSize + metaGap) - metaGap;
+    }
+
+    if (block.rowLabel) {
+      if (block.metaLines.length) yCursor += metaBlockGap;
+      ctx.font = `700 ${labelFontSize}px ${family}`;
+      if (outline.canvasStrokeWidth > 0) {
+        ctx.strokeStyle = outline.canvasStrokeColor;
+        ctx.lineWidth = outline.canvasStrokeWidth;
+        ctx.strokeText(block.rowLabel, padX, yCursor);
+      }
+      ctx.fillText(block.rowLabel, padX, yCursor);
+      yCursor += labelFontSize + labelGap;
+    }
+
+    ctx.font = `${fontWeight} ${fontSize}px ${family}`;
+    block.safeLines.forEach((line) => {
+      if (outline.canvasStrokeWidth > 0) {
+        ctx.strokeStyle = outline.canvasStrokeColor;
+        ctx.lineWidth = outline.canvasStrokeWidth;
+        ctx.strokeText(String(line), padX, yCursor);
+      }
+      ctx.strokeStyle = textColor;
+      ctx.lineWidth = strokeWidth;
+      if (strokeWidth > 0) ctx.strokeText(String(line), padX, yCursor);
+      ctx.fillText(String(line), padX, yCursor);
+      yCursor += lineHeight;
+    });
+
+    if (blockIndex < blocks.length - 1) yCursor += rowGap;
+  });
+
+  if (hasBranding) {
+    const brandingColor = getAutoContrastedTextColor(bgMode === "solid" ? bgColor : "#000000", textColor);
+    const brandY = yCursor + brandingGap;
+    ctx.font = `600 ${brandingFontSize}px ${family}`;
+    ctx.fillStyle = withAlpha(brandingColor, 0.8);
+    if (outline.canvasStrokeWidth > 0) {
+      ctx.strokeStyle = withAlpha(outline.canvasStrokeColor, 0.75);
+      ctx.lineWidth = Math.max(0.8, outline.canvasStrokeWidth * 0.6);
+      ctx.strokeText(cleanBrandingText, padX, brandY);
+    }
+    ctx.fillText(cleanBrandingText, padX, brandY);
+  }
+
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+  if (!blob) throw new Error("Failed to encode PNG.");
+  return blob;
+}
+
+function crc32Bytes(bytes) {
+  let c = -1;
+  for (let i = 0; i < bytes.length; i += 1) {
+    c ^= bytes[i];
+    for (let k = 0; k < 8; k += 1) {
+      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+  }
+  return (c ^ -1) >>> 0;
+}
+
+function u16le(n) {
+  const b = new Uint8Array(2);
+  const v = new DataView(b.buffer);
+  v.setUint16(0, n & 0xffff, true);
+  return b;
+}
+
+function u32le(n) {
+  const b = new Uint8Array(4);
+  const v = new DataView(b.buffer);
+  v.setUint32(0, n >>> 0, true);
+  return b;
+}
+
+async function buildStoredZipBlob(files) {
+  const encoder = new TextEncoder();
+  const localParts = [];
+  const centralParts = [];
+  let offset = 0;
+
+  for (const file of files) {
+    const filenameBytes = encoder.encode(String(file.name || "file.bin"));
+    const data = new Uint8Array(await file.blob.arrayBuffer());
+    const crc = crc32Bytes(data);
+    const size = data.length;
+
+    const localHeader = concatBytes([
+      u32le(0x04034b50),
+      u16le(20),
+      u16le(0x0800),
+      u16le(0),
+      u16le(0),
+      u16le(0),
+      u32le(crc),
+      u32le(size),
+      u32le(size),
+      u16le(filenameBytes.length),
+      u16le(0),
+      filenameBytes,
+    ]);
+    localParts.push(localHeader, data);
+
+    const centralHeader = concatBytes([
+      u32le(0x02014b50),
+      u16le(20),
+      u16le(20),
+      u16le(0x0800),
+      u16le(0),
+      u16le(0),
+      u16le(0),
+      u32le(crc),
+      u32le(size),
+      u32le(size),
+      u16le(filenameBytes.length),
+      u16le(0),
+      u16le(0),
+      u16le(0),
+      u16le(0),
+      u32le(0),
+      u32le(offset),
+      filenameBytes,
+    ]);
+    centralParts.push(centralHeader);
+
+    offset += localHeader.length + data.length;
+  }
+
+  const centralDir = concatBytes(centralParts);
+  const localDir = concatBytes(localParts);
+  const eocd = concatBytes([
+    u32le(0x06054b50),
+    u16le(0),
+    u16le(0),
+    u16le(files.length),
+    u16le(files.length),
+    u32le(centralDir.length),
+    u32le(localDir.length),
+    u16le(0),
+  ]);
+  return new Blob([localDir, centralDir, eocd], { type: "application/zip" });
+}
+
+function trimGridToContent(grid2d, minCols = 1) {
+  const g = clone2D(grid2d ?? []);
+  if (!g.length) return { cols: minCols, grid: g };
+
+  const rows = g.length;
+  const cols = Math.max(...g.map((r) => (Array.isArray(r) ? r.length : 0)), 0);
+
+  let last = -1;
+  for (let c = 0; c < cols; c++) {
+    let used = false;
+    for (let r = 0; r < rows; r++) {
+      const v = String(g?.[r]?.[c] ?? "").trim();
+      if (v !== "") {
+        used = true;
+        break;
+      }
+    }
+    if (used) last = c;
+  }
+
+  const keep = Math.max(minCols, last + 1);
+  const out = g.map((r) => (Array.isArray(r) ? r.slice(0, keep) : []));
+  return { cols: keep, grid: out };
+}
+
+const LIGHT_THEME = {
+  bg: "#F7F6F3",
+  surfaceWarm: "#FFFEFB",
+  border: "#D9D2C7",
+  text: "#161411",
+  textFaint: "rgba(22,20,17,0.72)",
+  textMuted: "rgba(22,20,17,0.64)",
+  accent: "#5BD4A1",
+  accentSoft: "rgba(91,212,161,0.16)",
+  danger: "#B00020",
+  dangerBg: "#FFEAEA",
+  starActive: "#F5C518",
+};
+
+const DARK_THEME = {
+  bg: "#080808",
+  surfaceWarm: "#141414",
+  border: "#2A2A2A",
+  text: "#F5F5F5",
+  textFaint: "rgba(245,245,245,0.72)",
+  textMuted: "rgba(245,245,245,0.64)",
+  accent: "#5BD4A1",
+  accentSoft: "rgba(91,212,161,0.16)",
+  danger: "#FF4B6A",
+  dangerBg: "rgba(255,75,106,0.12)",
+  starActive: "#F5C518",
+};
+
+function EditorApp({ navigateTo, pendingOpenPanel = "", onPendingPanelHandled, userState }) {
+  const getSystemTheme = () => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return "light";
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  };
+  const [themeMode, setThemeMode] = useState(() => {
+    if (typeof window === "undefined") return "system";
+    try {
+      const stored = window.localStorage.getItem(LS_THEME_MODE_KEY);
+      if (stored === "light" || stored === "dark" || stored === "system") return stored;
+    } catch {}
+    return "system";
+  });
+  const [resolvedTheme, setResolvedTheme] = useState(() => {
+    if (typeof window === "undefined") return "light";
+    try {
+      const stored = window.localStorage.getItem(LS_THEME_MODE_KEY);
+      if (stored === "light" || stored === "dark") return stored;
+    } catch {}
+    return getSystemTheme();
+  });
+  const isDarkMode = resolvedTheme === "dark";
+  const [accentColorId, setAccentColorId] = useState(() => {
+    try {
+      const stored = localStorage.getItem(LS_ACCENT_COLOR_KEY);
+      if (ACCENT_PRESETS.some((p) => p.id === stored)) return stored;
+    } catch {}
+    return isDarkMode ? "white" : "black";
+  });
+  const [defaultCols, setDefaultCols] = useState(() => {
+    try {
+      const stored = localStorage.getItem(LS_DEFAULT_COLS_KEY);
+      // Migration guard: older/bad states persisted 1 as "default".
+      // Keep app default behavior at 32 unless user explicitly picks another sensible default.
+      if (Number(stored) === 1) return DEFAULT_COLS;
+      return clampColsValue(stored, DEFAULT_COLS);
+    } catch {
+      return DEFAULT_COLS;
+    }
+  });
+  const [defaultColsInput, setDefaultColsInput] = useState(String(defaultCols));
+  const [colsAutoDelayMs, setColsAutoDelayMs] = useState(() => {
+    try {
+      const stored = localStorage.getItem(LS_COLS_AUTO_DELAY_MS_KEY);
+      return clampColsAutoDelayMs(stored, DEFAULT_COLS_AUTO_DELAY_MS);
+    } catch {
+      return DEFAULT_COLS_AUTO_DELAY_MS;
+    }
+  });
+  const [colsAutoDelayInput, setColsAutoDelayInput] = useState(String(Math.round(colsAutoDelayMs / 1000)));
+  const activeAccent = ACCENT_PRESETS.find((p) => p.id === accentColorId) || ACCENT_PRESETS[0];
+  const BASE_THEME = isDarkMode ? DARK_THEME : LIGHT_THEME;
+  const THEME = {
+    ...BASE_THEME,
+    accent: activeAccent.hex,
+    accentSoft: withAlpha(activeAccent.hex, isDarkMode ? 0.2 : 0.16),
+  };
+  const isLoggedIn = Boolean(userState?.isLoggedIn);
+  const editorHasMembership = Boolean(userState?.hasMembership);
+  const userPlanType = userState?.planType === "creator" ? "creator" : userState?.planType === "player" ? "player" : null;
+  const canUsePaidEditorFeatures = editorHasMembership;
+  const canUseCreatorExport = editorHasMembership && userPlanType === "creator";
+
+  useEffect(() => {
+    try {
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(LS_THEME_MODE_KEY, themeMode);
+      }
+    } catch {}
+    const nextResolvedTheme = themeMode === "system" ? getSystemTheme() : themeMode;
+    setResolvedTheme(nextResolvedTheme);
+  }, [themeMode]);
+
+  useEffect(() => {
+    if (themeMode !== "system" || typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = (event) => setResolvedTheme(event.matches ? "dark" : "light");
+    setResolvedTheme(media.matches ? "dark" : "light");
+    if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", onChange);
+      return () => media.removeEventListener("change", onChange);
+    }
+    media.addListener(onChange);
+    return () => media.removeListener(onChange);
+  }, [themeMode]);
+
+  useEffect(() => {
+    if (isDarkMode && accentColorId === "black") {
+      setAccentColorId("white");
+      return;
+    }
+    if (!isDarkMode && accentColorId === "white") {
+      setAccentColorId("black");
+    }
+  }, [isDarkMode, accentColorId]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_ACCENT_COLOR_KEY, accentColorId);
+    } catch {}
+  }, [accentColorId]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_DEFAULT_COLS_KEY, String(defaultCols));
+    } catch {}
+  }, [defaultCols]);
+  useEffect(() => setDefaultColsInput(String(defaultCols)), [defaultCols]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_COLS_AUTO_DELAY_MS_KEY, String(colsAutoDelayMs));
+    } catch {}
+  }, [colsAutoDelayMs]);
+  useEffect(() => setColsAutoDelayInput(String(Math.round(colsAutoDelayMs / 1000))), [colsAutoDelayMs]);
+
+  useEffect(() => {
+    const style = document.createElement("style");
+    style.setAttribute("data-tabstudio-global", "true");
+    style.textContent = `
+      html, body, #root { width: 100%; min-height: 100%; margin: 0; }
+      body { background: ${THEME.bg}; }
+      :root {
+        --tabstudio-accent: ${THEME.accent};
+        --tabstudio-focus-ring: ${withAlpha(THEME.accent, isDarkMode ? 0.62 : 0.5)};
+      }
+      .tab-cols-input { -moz-appearance: textfield; appearance: textfield; }
+      .tab-cols-input::-webkit-outer-spin-button,
+      .tab-cols-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+      .tab-grid-row-scroll {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+      }
+      .tab-grid-row-scroll::-webkit-scrollbar {
+        display: none;
+        width: 0;
+        height: 0;
+      }
+      .tabstudio-settings-scrollbar {
+        scrollbar-width: thin;
+        scrollbar-color: ${withAlpha(THEME.text, isDarkMode ? 0.4 : 0.3)} transparent;
+      }
+      .tabstudio-settings-scrollbar::-webkit-scrollbar {
+        width: 7px;
+      }
+      .tabstudio-settings-scrollbar::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      .tabstudio-settings-scrollbar::-webkit-scrollbar-thumb {
+        background: ${withAlpha(THEME.text, isDarkMode ? 0.4 : 0.3)};
+        border-radius: 999px;
+      }
+      .tabstudio-settings-scrollbar::-webkit-scrollbar-thumb:hover {
+        background: ${withAlpha(THEME.text, isDarkMode ? 0.54 : 0.44)};
+      }
+      .tab-editor-surface {
+        position: relative;
+        isolation: isolate;
+      }
+      button:focus,
+      input:focus,
+      textarea:focus,
+      select:focus {
+        outline: none !important;
+      }
+      button:focus-visible,
+      input:focus-visible,
+      textarea:focus-visible,
+      select:focus-visible {
+        outline: none !important;
+        border-color: var(--tabstudio-accent) !important;
+        box-shadow: 0 0 0 2px var(--tabstudio-focus-ring) !important;
+      }
+      @keyframes tabbyHeaderNudgeFloat {
+        0%,
+        100% {
+          transform: translateY(0);
+        }
+        50% {
+          transform: translateY(-3px);
+        }
+      }
+      @keyframes tabstudioConfettiBurst {
+        0% {
+          opacity: 0;
+          transform: translate(0, 0) rotate(0deg);
+        }
+        4% {
+          opacity: 1;
+        }
+        6% {
+          opacity: 1;
+          transform: translate(var(--xPeak), var(--yPeak)) rotate(var(--rotPeak, 160deg));
+        }
+        10% {
+          opacity: 0.98;
+          transform: translate(var(--xApexEase), var(--yApexEase)) rotate(var(--rotApexEase, 160deg));
+        }
+        22% {
+          opacity: 0.96;
+          transform: translate(var(--xMid1), var(--yMid1)) rotate(var(--rotMid1, 110deg));
+        }
+        44% {
+          opacity: 0.88;
+          transform: translate(var(--xMid2), var(--yMid2)) rotate(var(--rotMid2, 170deg));
+        }
+        66% {
+          opacity: 0.76;
+          transform: translate(var(--xMid3), var(--yMid3)) rotate(var(--rotMid3, 220deg));
+        }
+        84% {
+          opacity: 0.62;
+          transform: translate(var(--xNearFloor), var(--yNearFloor)) rotate(var(--rotNearFloor, 250deg));
+        }
+        93% {
+          opacity: 0.42;
+          transform: translate(var(--xFade), var(--yFade)) rotate(var(--rotFade, 280deg));
+        }
+        97% {
+          opacity: 0.18;
+        }
+        100% {
+          opacity: 0;
+          transform: translate(var(--xEnd), var(--yEnd)) rotate(var(--rotEnd, 300deg));
+        }
+      }
+      @keyframes tabstudioMilestoneToast {
+        0% { opacity: 0; transform: translateY(8px); }
+        15% { opacity: 1; transform: translateY(0); }
+        78% { opacity: 1; transform: translateY(0); }
+        100% { opacity: 0; transform: translateY(4px); }
+      }
+      @keyframes tabstudioFirstExportGlow {
+        0% { opacity: 0; }
+        15% { opacity: 1; }
+        80% { opacity: 0.92; }
+        100% { opacity: 0; }
+      }
+      @keyframes tabstudioFirstExportCellGlow {
+        0% { opacity: 0; }
+        24% { opacity: 0.6; }
+        42% { opacity: 0.76; }
+        56% { opacity: 0.62; }
+        80% { opacity: 0.28; }
+        100% { opacity: 0; }
+      }
+      @keyframes tabstudioTickToDotArc {
+        0% { transform: translateX(0px) translateY(0px) scale(1); }
+        22% { transform: translateX(-1px) translateY(-8px) scale(0.95); }
+        46% { transform: translateX(-5px) translateY(2px) scale(0.82); }
+        66% { transform: translateX(-7px) translateY(-2px) scale(0.72); }
+        100% { transform: translateX(-9px) translateY(0px) scale(0.6); }
+      }
+    `;
+    document.head.appendChild(style);
+    return () => style.remove();
+  }, [THEME.bg, THEME.accent, isDarkMode]);
+
+  useEffect(() => {
+    document.title = "TabStudio – tab editor";
+  }, []);
+
+  const [songTitle, setSongTitle] = useState("");
+  const [artist, setArtist] = useState("");
+  const [albumName, setAlbumName] = useState("");
+  const accountFullName = "Harry Bolton";
+  const accountTier = "Plus";
+  const accountEmail = "harry@tabstudio.app";
+  const accountMemberSince = "January 12, 2025";
+  const accountRenewalDate = "April 1, 2026";
+  const accountBillingCycle = "Monthly";
+  const [profileDisplayName, setProfileDisplayName] = useState("Harry Bolton");
+  const [profileHandle, setProfileHandle] = useState("@harrybolton");
+  const [profileBio, setProfileBio] = useState("Guitar-first songwriter and tab creator.");
+  const [profileWebsite, setProfileWebsite] = useState("https://tabstudio.app/harry");
+  const [securityEmail, setSecurityEmail] = useState(accountEmail);
+  const [securityTwoFactorEnabled, setSecurityTwoFactorEnabled] = useState(false);
+  const [subscriptionAutoRenew, setSubscriptionAutoRenew] = useState(true);
+  const [billingEmail, setBillingEmail] = useState(accountEmail);
+  const [defaultPaymentMethod, setDefaultPaymentMethod] = useState("Visa •••• 4242");
+  const recentSessions = [
+    { device: "MacBook Pro · Chrome", location: "Tokyo, JP", when: "Active now" },
+    { device: "iPhone · Safari", location: "Tokyo, JP", when: "2 hours ago" },
+    { device: "Windows Desktop · Edge", location: "London, UK", when: "4 days ago" },
+  ];
+  const recentInvoices = [
+    { id: "INV-1082", date: "March 1, 2026", amount: "$12.00", status: "Paid" },
+    { id: "INV-1114", date: "April 1, 2026", amount: "$12.00", status: "Upcoming" },
+    { id: "INV-1045", date: "February 1, 2026", amount: "$12.00", status: "Paid" },
+    { id: "INV-0997", date: "December 1, 2025", amount: "$12.00", status: "Refunded" },
+  ];
+
+  // Instruments
+  const [instrumentId, setInstrumentId] = useState("gtr6");
+  const [favInstrumentIds, setFavInstrumentIds] = useState(() => {
+    try {
+      const raw = localStorage.getItem(LS_INSTRUMENT_FAVS_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter((id) => typeof id === "string");
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_INSTRUMENT_FAVS_KEY, JSON.stringify(favInstrumentIds));
+    } catch {}
+  }, [favInstrumentIds]);
+
+  const currentInstrument = useMemo(
+    () => INSTRUMENTS.find((i) => i.id === instrumentId) || INSTRUMENTS[0],
+    [instrumentId]
+  );
+
+  const groupedInstruments = useMemo(() => {
+    const map = new Map();
+    for (const inst of INSTRUMENTS) {
+      if (!map.has(inst.group)) map.set(inst.group, []);
+      map.get(inst.group).push(inst);
+    }
+    return Array.from(map.entries()).map(([group, items]) => ({ group, items }));
+  }, []);
+
+  const favouriteInstruments = useMemo(
+    () => INSTRUMENTS.filter((i) => favInstrumentIds.includes(i.id)),
+    [favInstrumentIds]
+  );
+
+  const [instrumentOpen, setInstrumentOpen] = useState(false);
+  const instrumentBtnRef = useRef(null);
+  const instrumentPanelRef = useRef(null);
+  const customTuningModalRef = useRef(null);
+  const customNoteReplaceOnTypeRef = useRef(Array(DEFAULT_TUNING.length).fill(false));
+
+  // Which instrument family (Guitar / Bass / Banjo / Ukulele) is expanded in the picker
+  const [expandedInstrumentGroup, setExpandedInstrumentGroup] = useState(null);
+
+  useEffect(() => {
+    if (instrumentOpen) {
+      // When opening the panel, start with all groups collapsed for a cleaner first view
+      setExpandedInstrumentGroup(null);
+    }
+  }, [instrumentOpen]);
+
+  // Capo
+  const [capoEnabled, setCapoEnabled] = useState(false);
+  const [capoFret, setCapoFret] = useState("");
+  const [capoOpen, setCapoOpen] = useState(false);
+  const [capoFretFocused, setCapoFretFocused] = useState(false);
+  const [capoReplaceOnType, setCapoReplaceOnType] = useState(false);
+  const [showCapoControl, setShowCapoControl] = useState(true);
+  const [showTempoControl, setShowTempoControl] = useState(false);
+  const [tempoBpm, setTempoBpm] = useState("120");
+  const [tempoFocused, setTempoFocused] = useState(false);
+  const [tempoReplaceOnType, setTempoReplaceOnType] = useState(false);
+  const capoBtnRef = useRef(null);
+  const capoPanelRef = useRef(null);
+  const capoInputRef = useRef(null);
+  const capoReplaceOnTypeRef = useRef(false);
+  const repeatOverwriteRef = useRef(false);
+
+
+  // Tunings
+  const [userTunings, setUserTunings] = useState(() => safeLoadUserTunings());
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_USER_TUNINGS_KEY, JSON.stringify(userTunings));
+    } catch {}
+  }, [userTunings]);
+
+  const [userChords, setUserChords] = useState(() => safeLoadUserChords());
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_USER_CHORDS_KEY, JSON.stringify(userChords));
+    } catch {}
+  }, [userChords]);
+
+  const [presetChordOverrides, setPresetChordOverrides] = useState(() => safeLoadChordOverrides());
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_CHORD_OVERRIDES_KEY, JSON.stringify(presetChordOverrides));
+    } catch {}
+  }, [presetChordOverrides]);
+
+  function getInstrumentTuningPresets(instId) {
+    switch (instId) {
+      case "gtr6":
+        return TUNING_PRESETS_GTR6;
+      case "gtr7":
+        return TUNING_PRESETS_GTR7;
+      case "bass4":
+        return TUNING_PRESETS_BASS4;
+      case "bass5":
+        return TUNING_PRESETS_BASS5;
+      case "bass6":
+        return TUNING_PRESETS_BASS6;
+      case "banjo4":
+        return TUNING_PRESETS_BANJO4;
+      case "banjo5":
+        return TUNING_PRESETS_BANJO5;
+      case "banjo6":
+        return TUNING_PRESETS_BANJO6;
+      case "uke4":
+        return TUNING_PRESETS_UKE4;
+      default:
+        return TUNING_PRESETS_GTR6;
+    }
+  }
+
+  const orderedPresetTunings = useMemo(() => {
+    const base = getInstrumentTuningPresets(instrumentId);
+    if (instrumentId === "gtr6") {
+      const preferred = ["standard", "drop_d", "open_g", "open_d"];
+      const map = new Map(base.map((t) => [t.id, t]));
+      const top = preferred.map((id) => map.get(id)).filter(Boolean);
+      const rest = base.filter((t) => !preferred.includes(t.id));
+      return [...top, ...rest];
+    }
+    return base;
+  }, [instrumentId]);
+
+  const allTunings = useMemo(() => {
+    const extras =
+      currentInstrument.stringCount === 6
+        ? userTunings
+        : []; // custom tunings currently for 6-string only
+    return [...orderedPresetTunings, ...extras];
+  }, [orderedPresetTunings, userTunings, currentInstrument.stringCount]);
+
+  const [tuning, setTuning] = useState(DEFAULT_TUNING);
+  const [tuningLabel, setTuningLabel] = useState("Standard");
+  const [tuningOpen, setTuningOpen] = useState(false);
+
+  const [cols, setCols] = useState(() => {
+    const initial = clampColsValue(defaultCols, DEFAULT_COLS);
+    return initial <= MIN_COLS ? DEFAULT_COLS : initial;
+  });
+  const [colsInput, setColsInput] = useState(() => {
+    const initial = clampColsValue(defaultCols, DEFAULT_COLS);
+    return String(initial <= MIN_COLS ? DEFAULT_COLS : initial);
+  });
+  const [colsReplaceOnType, setColsReplaceOnType] = useState(false);
+  const [grid, setGrid] = useState(() => {
+    const initial = clampColsValue(defaultCols, DEFAULT_COLS);
+    const nextCols = initial <= MIN_COLS ? DEFAULT_COLS : initial;
+    return makeBlankGrid(6, nextCols);
+  });
+  const [cursor, setCursor] = useState({ r: 0, c: 0 });
+  const [gridTargetingActive, setGridTargetingActive] = useState(false);
+  const [pressedBtnId, setPressedBtnId] = useState("");
+  const [headerHoverBtn, setHeaderHoverBtn] = useState("");
+  const [microHoverBtnId, setMicroHoverBtnId] = useState("");
+
+  const [overwriteNext, setOverwriteNext] = useState(false);
+  const overwriteNextRef = useRef(false);
+  useEffect(() => void (overwriteNextRef.current = overwriteNext), [overwriteNext]);
+
+  const [completedRows, setCompletedRows] = useState([]);
+  const [selectedRowIds, setSelectedRowIds] = useState(() => new Set());
+  const [completedRowsOpen, setCompletedRowsOpen] = useState(true);
+  const [rowDeleteConfirmIds, setRowDeleteConfirmIds] = useState(null);
+  const [rowDeleteConfirmSource, setRowDeleteConfirmSource] = useState("");
+  const [songDeleteConfirmTarget, setSongDeleteConfirmTarget] = useState(null);
+  const [libraryDeleteConfirmTarget, setLibraryDeleteConfirmTarget] = useState(null);
+  const [chordDeleteConfirmId, setChordDeleteConfirmId] = useState("");
+  const [tapSyncOpen, setTapSyncOpen] = useState(false);
+  const [tapSyncMode, setTapSyncMode] = useState("note"); // note | row
+  const [tapSyncRecording, setTapSyncRecording] = useState(false);
+  const [tapSyncReplayRunning, setTapSyncReplayRunning] = useState(false);
+  const [tapSyncStatusText, setTapSyncStatusText] = useState("Ready to sync.");
+  const [tapSyncShowTimestamps, setTapSyncShowTimestamps] = useState(true);
+  const [tapSyncReplayDuration, setTapSyncReplayDuration] = useState("medium"); // short | medium | long
+  const [tapSyncReplaceOnClick, setTapSyncReplaceOnClick] = useState(true);
+  const [tapSyncAutoScroll, setTapSyncAutoScroll] = useState(false);
+  const [tapSyncNoteTimings, setTapSyncNoteTimings] = useState(() => ({})); // { "r:c": ms }
+  const [tapSyncRowTimings, setTapSyncRowTimings] = useState(() => ({})); // { rowId: ms }
+  const [tapSyncReplayItemId, setTapSyncReplayItemId] = useState("");
+
+  const [insertOpen, setInsertOpen] = useState(false);
+  const insertBtnRef = useRef(null);
+  const insertPanelRef = useRef(null);
+  const [insertPanelShiftX, setInsertPanelShiftX] = useState(0);
+
+  const [chordsOpen, setChordsOpen] = useState(false);
+  const chordsBtnRef = useRef(null);
+  const chordsPanelRef = useRef(null);
+  const [chordsPanelShiftX, setChordsPanelShiftX] = useState(0);
+  const [chordsSection, setChordsSection] = useState(() => {
+    try {
+      const raw = String(localStorage.getItem(LS_CHORDS_SECTION_KEY) ?? "").trim().toLowerCase();
+      return raw === "custom" ? "custom" : "presets";
+    } catch {
+      return "presets";
+    }
+  });
+  const [chordName, setChordName] = useState("");
+  const [selectedChordId, setSelectedChordId] = useState("");
+  const [lastAppliedChordId, setLastAppliedChordId] = useState("");
+
+  // Edit chord modal
+  const [editChordModalOpen, setEditChordModalOpen] = useState(false);
+  const [editChordTargetId, setEditChordTargetId] = useState("");
+  const [editChordIsPreset, setEditChordIsPreset] = useState(false);
+  const [editChordNameHeader, setEditChordNameHeader] = useState("");
+  const [editChordFrets, setEditChordFrets] = useState(() => ["", "", "", "", "", ""]);
+
+  // Custom tuning modal
+  const [customOpen, setCustomOpen] = useState(false);
+  const [customName, setCustomName] = useState("");
+  const [customLowToHigh, setCustomLowToHigh] = useState(() => ["E", "A", "D", "G", "B", "E"]); // storage
+
+  const [renamingRowId, setRenamingRowId] = useState(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const renameInputRef = useRef(null);
+
+  const lastAddedNoteIdRef = useRef(null);
+  const noteTextAreaRefs = useRef({});
+  const clearRowSelectionOnNextPointerRef = useRef(false);
+
+
+
+  const keyCaptureRef = useRef(null);
+  const colsInputRef = useRef(null);
+  const colsAutoCommitTimerRef = useRef(null);
+  const colsRapidClickRef = useRef({ count: 0, lastTs: 0 });
+  const colsReplaceOnTypeRef = useRef(false);
+  const colsDragRef = useRef({ active: false, pointerId: null, lastY: 0, carry: 0 });
+  const tempoInputRef = useRef(null);
+  const tempoAutoCommitTimerRef = useRef(null);
+  const tempoReplaceOnTypeRef = useRef(false);
+  const tempoDragRef = useRef({ active: false, pointerId: null, lastY: 0, carry: 0 });
+  const gridRowScrollRefs = useRef([]);
+  const syncingRowScrollRef = useRef(false);
+  const tapSyncStartMsRef = useRef(0);
+  const tapSyncReplayTimersRef = useRef([]);
+
+  const cursorRef = useRef(cursor);
+  const colsRef = useRef(cols);
+  const gridRef = useRef(grid);
+  useEffect(() => void (cursorRef.current = cursor), [cursor]);
+  useEffect(() => void (colsRef.current = cols), [cols]);
+  useEffect(() => void (gridRef.current = grid), [grid]);
+  useEffect(() => void (colsReplaceOnTypeRef.current = colsReplaceOnType), [colsReplaceOnType]);
+  useEffect(() => void (capoReplaceOnTypeRef.current = capoReplaceOnType), [capoReplaceOnType]);
+  useEffect(() => void (tempoReplaceOnTypeRef.current = tempoReplaceOnType), [tempoReplaceOnType]);
+  useEffect(() => setColsInput(String(cols)), [cols]);
+  useEffect(() => {
+    // Fresh storage should always boot at 32 columns.
+    // Keep this guard startup-only so user-chosen values still work afterward.
+    try {
+      const hasStoredDefault = localStorage.getItem(LS_DEFAULT_COLS_KEY) != null;
+      if (!hasStoredDefault) {
+        setDefaultCols(DEFAULT_COLS);
+        setCols((prev) => (Number(prev) <= MIN_COLS ? DEFAULT_COLS : prev));
+      }
+    } catch {}
+  }, []);
+  useEffect(() => {
+    gridRowScrollRefs.current = gridRowScrollRefs.current.slice(0, tuning.length);
+  }, [tuning.length]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_CHORDS_SECTION_KEY, chordsSection === "custom" ? "custom" : "presets");
+    } catch {
+      // ignore storage errors
+    }
+  }, [chordsSection]);
+
+  useEffect(() => {
+    const id = lastAddedNoteIdRef.current;
+    if (!id) return;
+    const el = noteTextAreaRefs.current?.[id];
+    if (el && typeof el.focus === "function") {
+      // Small timeout to ensure layout has settled before scrolling.
+      setTimeout(() => {
+        try {
+          el.focus();
+          if (typeof el.scrollIntoView === "function") {
+            el.scrollIntoView({ block: "center", behavior: "smooth" });
+          }
+        } catch {}
+      }, 10);
+    }
+    // Clear the marker so we don't re-focus on unrelated renders.
+    lastAddedNoteIdRef.current = null;
+  }, [completedRows]);
+  useEffect(() => () => clearTapSyncReplayTimers(), []);
+
+  const tuningBtnRef = useRef(null);
+  const tuningPanelRef = useRef(null);
+
+  const standard = currentInstrument.id === "gtr6" && isStandardTuning(tuning);
+
+  const effectivePresetChords = useMemo(() => {
+    return PRESET_CHORDS.map((c) => {
+      const override = presetChordOverrides[c.id];
+      if (!override) return c;
+      return { ...c, frets: override.frets.slice() };
+    });
+  }, [presetChordOverrides]);
+
+  const allChords = useMemo(() => [...effectivePresetChords, ...userChords], [effectivePresetChords, userChords]);
+
+  const gridView = useMemo(
+    () =>
+      grid.map((row) => {
+        const copy = row.slice(0, cols);
+        while (copy.length < cols) copy.push("");
+        return copy;
+      }),
+    [grid, cols]
+  );
+  const hasGridContent = useMemo(
+    () => gridView.some((row) => row.some((cell) => String(cell ?? "").trim() !== "")),
+    [gridView]
+  );
+  const tapSyncCurrentTimings = tapSyncMode === "note" ? tapSyncNoteTimings : tapSyncRowTimings;
+  const tapSyncTimingCount = Object.keys(tapSyncCurrentTimings || {}).length;
+
+  useEffect(() => {
+    stopTapSyncReplay();
+    setTapSyncRecording(false);
+    if (tapSyncMode === "row" && completedRows.length === 0) {
+      setTapSyncStatusText("Complete at least one row to use Row Sync.");
+      return;
+    }
+    if (tapSyncMode === "note" && !hasGridContent) {
+      setTapSyncStatusText("Add some tab notes to use Note Sync.");
+      return;
+    }
+    if (tapSyncTimingCount > 0) {
+      setTapSyncStatusText("Sync captured. Replay to preview.");
+    } else {
+      setTapSyncStatusText("Ready to sync.");
+    }
+  }, [tapSyncMode, completedRows.length, hasGridContent, tapSyncTimingCount]);
+
+  function formatTapSyncTimestamp(ms) {
+    return `${(Number(ms || 0) / 1000).toFixed(2)}s`;
+  }
+
+  function getTapSyncHighlightDurationMs() {
+    if (tapSyncReplayDuration === "short") return 140;
+    if (tapSyncReplayDuration === "long") return 420;
+    return 260;
+  }
+
+  function clearTapSyncReplayTimers() {
+    tapSyncReplayTimersRef.current.forEach((id) => window.clearTimeout(id));
+    tapSyncReplayTimersRef.current = [];
+  }
+
+  function stopTapSyncReplay() {
+    clearTapSyncReplayTimers();
+    setTapSyncReplayRunning(false);
+    setTapSyncReplayItemId("");
+  }
+
+  function clearTapSyncForMode(mode = tapSyncMode) {
+    if (mode === "note") setTapSyncNoteTimings({});
+    else setTapSyncRowTimings({});
+    stopTapSyncReplay();
+    setTapSyncStatusText("No sync timings recorded yet.");
+  }
+
+  function startTapSyncRecording() {
+    if (tapSyncRecording) return;
+    if (tapSyncMode === "row" && completedRows.length === 0) {
+      setTapSyncStatusText("Complete at least one row to use Row Sync.");
+      return;
+    }
+    if (tapSyncMode === "note" && !hasGridContent) {
+      setTapSyncStatusText("Add some tab notes to use Note Sync.");
+      return;
+    }
+    stopTapSyncReplay();
+    tapSyncStartMsRef.current = Date.now();
+    setTapSyncRecording(true);
+    setTapSyncStatusText("Sync is recording...");
+  }
+
+  function stopTapSyncRecording() {
+    if (!tapSyncRecording) return;
+    setTapSyncRecording(false);
+    if (tapSyncTimingCount > 0) setTapSyncStatusText("Sync captured. Replay to preview.");
+    else setTapSyncStatusText("No sync timings recorded yet.");
+  }
+
+  function redoTapSync() {
+    clearTapSyncForMode(tapSyncMode);
+    tapSyncStartMsRef.current = Date.now();
+    setTapSyncRecording(true);
+    setTapSyncStatusText("Sync is recording...");
+  }
+
+  function maybeAutoScrollTapSyncReplay(mode, itemId) {
+    if (!tapSyncAutoScroll) return;
+    if (mode === "row") {
+      const node = document.querySelector(`[data-sync-row-id=\"${itemId}\"]`);
+      if (node && typeof node.scrollIntoView === "function") {
+        try {
+          node.scrollIntoView({ behavior: "smooth", block: "center" });
+        } catch {}
+      }
+      return;
+    }
+    const node = document.querySelector(`[data-sync-cell-id=\"${itemId}\"]`);
+    if (node && typeof node.scrollIntoView === "function") {
+      try {
+        node.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+      } catch {}
+    }
+  }
+
+  function replayTapSync() {
+    const source = tapSyncMode === "note" ? tapSyncNoteTimings : tapSyncRowTimings;
+    const entries = Object.entries(source || {})
+      .map(([itemId, timestampMs]) => ({ itemId, timestampMs: Number(timestampMs || 0) }))
+      .filter((x) => Number.isFinite(x.timestampMs))
+      .sort((a, b) => a.timestampMs - b.timestampMs);
+    if (!entries.length) {
+      setTapSyncStatusText("No sync timings recorded yet.");
+      return;
+    }
+    stopTapSyncReplay();
+    setTapSyncReplayRunning(true);
+    const highlightMs = getTapSyncHighlightDurationMs();
+    entries.forEach((entry) => {
+      const showId = window.setTimeout(() => {
+        setTapSyncReplayItemId(`${tapSyncMode}:${entry.itemId}`);
+        maybeAutoScrollTapSyncReplay(tapSyncMode, entry.itemId);
+      }, Math.max(0, entry.timestampMs));
+      const hideId = window.setTimeout(() => {
+        setTapSyncReplayItemId((prev) => (prev === `${tapSyncMode}:${entry.itemId}` ? "" : prev));
+      }, Math.max(0, entry.timestampMs + highlightMs));
+      tapSyncReplayTimersRef.current.push(showId, hideId);
+    });
+    const doneId = window.setTimeout(() => {
+      setTapSyncReplayRunning(false);
+      setTapSyncReplayItemId("");
+      setTapSyncStatusText("Replay complete.");
+    }, entries[entries.length - 1].timestampMs + highlightMs + 40);
+    tapSyncReplayTimersRef.current.push(doneId);
+  }
+
+  function recordTapSyncNote(r, c) {
+    if (!tapSyncRecording || tapSyncMode !== "note") return;
+    const value = String(gridRef.current?.[r]?.[c] ?? "").trim();
+    if (!value) {
+      setTapSyncStatusText("Add some tab notes to use Note Sync.");
+      return;
+    }
+    const id = `${r}:${c}`;
+    setTapSyncNoteTimings((prev) => {
+      if (!tapSyncReplaceOnClick && Object.prototype.hasOwnProperty.call(prev, id)) return prev;
+      const next = { ...prev, [id]: Math.max(0, Date.now() - tapSyncStartMsRef.current) };
+      return next;
+    });
+    setTapSyncStatusText("Sync is recording...");
+  }
+
+  function recordTapSyncRow(rowId) {
+    if (!tapSyncRecording || tapSyncMode !== "row") return;
+    const id = String(rowId || "");
+    if (!id) return;
+    setTapSyncRowTimings((prev) => {
+      if (!tapSyncReplaceOnClick && Object.prototype.hasOwnProperty.call(prev, id)) return prev;
+      const next = { ...prev, [id]: Math.max(0, Date.now() - tapSyncStartMsRef.current) };
+      return next;
+    });
+    setTapSyncStatusText("Sync is recording...");
+  }
+
+  // Multi-cell selection
+  const [cellSelection, setCellSelection] = useState(null);
+  const [randomCellSelection, setRandomCellSelection] = useState(() => new Set());
+  const selectingRef = useRef(false);
+
+  const selectionBounds = useMemo(() => {
+    if (!cellSelection) return null;
+    const r1 = Math.min(cellSelection.r1, cellSelection.r2);
+    const r2 = Math.max(cellSelection.r1, cellSelection.r2);
+    const c1 = Math.min(cellSelection.c1, cellSelection.c2);
+    const c2 = Math.max(cellSelection.c1, cellSelection.c2);
+    return { r1, r2, c1, c2 };
+  }, [cellSelection]);
+
+  const hasRangeSelection =
+    !!selectionBounds && !(selectionBounds.r1 === selectionBounds.r2 && selectionBounds.c1 === selectionBounds.c2);
+  const hasCellSelection = hasRangeSelection || randomCellSelection.size > 0;
+
+  function cellKey(r, c) {
+    return `${r}:${c}`;
+  }
+
+  function parseCellKey(key) {
+    const [rs, cs] = String(key ?? "").split(":");
+    const r = Number(rs);
+    const c = Number(cs);
+    if (!Number.isFinite(r) || !Number.isFinite(c)) return null;
+    return { r, c };
+  }
+
+  function getSelectedCellCoords() {
+    if (randomCellSelection.size > 0) {
+      const cells = [];
+      randomCellSelection.forEach((k) => {
+        const parsed = parseCellKey(k);
+        if (parsed) cells.push(parsed);
+      });
+      return cells;
+    }
+    if (!selectionBounds) return [];
+    const cells = [];
+    for (let rr = selectionBounds.r1; rr <= selectionBounds.r2; rr++) {
+      for (let cc = selectionBounds.c1; cc <= selectionBounds.c2; cc++) {
+        cells.push({ r: rr, c: cc });
+      }
+    }
+    return cells;
+  }
+
+  function getSelectionAnchor() {
+    const cells = getSelectedCellCoords();
+    if (!cells.length) return null;
+    return cells.reduce((best, cur) => {
+      if (!best) return cur;
+      if (cur.r < best.r) return cur;
+      if (cur.r === best.r && cur.c < best.c) return cur;
+      return best;
+    }, null);
+  }
+
+  function isCellSelected(r, c) {
+    if (randomCellSelection.has(cellKey(r, c))) return true;
+    if (!selectionBounds) return false;
+    return r >= selectionBounds.r1 && r <= selectionBounds.r2 && c >= selectionBounds.c1 && c <= selectionBounds.c2;
+  }
+
+  function clearCellSelection() {
+    setCellSelection(null);
+    setRandomCellSelection(new Set());
+    selectingRef.current = false;
+  }
+
+// Undo / Redo
+const undoStackRef = useRef([]);
+const redoStackRef = useRef([]);
+const libraryUndoStackRef = useRef([]);
+const libraryRedoStackRef = useRef([]);
+const editingCellRef = useRef(null); // tracks the cell for the current typing session
+
+  function pushUndoSnapshot(snapshot) {
+    undoStackRef.current.push(snapshot);
+    if (undoStackRef.current.length > 250) undoStackRef.current.shift();
+  }
+
+  function snapshotNow() {
+    return { grid: clone2D(gridRef.current), cursor: { ...cursorRef.current } };
+  }
+
+  function pushLibraryUndoSnapshot(snapshot) {
+    libraryUndoStackRef.current.push(snapshot);
+    if (libraryUndoStackRef.current.length > 250) libraryUndoStackRef.current.shift();
+  }
+
+  function snapshotLibraryNow() {
+    return {
+      libraryData: cloneJson(libraryData, makeEmptyLibrary()),
+      artist: String(artist || ""),
+      albumName: String(albumName || ""),
+      selectedLibraryArtistKey: String(selectedLibraryArtistKey || ""),
+      selectedLibraryAlbumName: String(selectedLibraryAlbumName || ""),
+      selectedLibrarySongName: String(selectedLibrarySongName || ""),
+    };
+  }
+
+  function applyLibrarySnapshot(snapshot) {
+    if (!snapshot) return;
+    setLibraryData(normalizeLibraryData(cloneJson(snapshot.libraryData, makeEmptyLibrary())));
+    setArtist(String(snapshot.artist || ""));
+    setAlbumName(String(snapshot.albumName || ""));
+    setSelectedLibraryArtistKey(String(snapshot.selectedLibraryArtistKey || ""));
+    setSelectedLibraryAlbumName(String(snapshot.selectedLibraryAlbumName || ""));
+    setSelectedLibrarySongName(String(snapshot.selectedLibrarySongName || ""));
+  }
+
+  function commitGridChange(nextGrid, nextCursor = null) {
+    pushUndoSnapshot(snapshotNow());
+    redoStackRef.current = [];
+    setGrid(nextGrid);
+    if (nextCursor) setCursor(nextCursor);
+  }
+
+  function undo() {
+    if (projectsLibraryOpen) {
+      const stack = libraryUndoStackRef.current;
+      if (!stack.length) return;
+      const prev = stack.pop();
+      libraryRedoStackRef.current.push(snapshotLibraryNow());
+      applyLibrarySnapshot(prev);
+      return;
+    }
+    const stack = undoStackRef.current;
+    if (!stack.length) return;
+    const prev = stack.pop();
+    redoStackRef.current.push(snapshotNow());
+    setGrid(prev.grid);
+    setCursor(prev.cursor);
+    clearCellSelection();
+    setOverwriteNext(true);
+    focusKeyCapture();
+  }
+
+  function redo() {
+    if (projectsLibraryOpen) {
+      const stack = libraryRedoStackRef.current;
+      if (!stack.length) return;
+      const next = stack.pop();
+      pushLibraryUndoSnapshot(snapshotLibraryNow());
+      applyLibrarySnapshot(next);
+      return;
+    }
+    const stack = redoStackRef.current;
+    if (!stack.length) return;
+    const next = stack.pop();
+    pushUndoSnapshot(snapshotNow());
+    setGrid(next.grid);
+    setCursor(next.cursor);
+    clearCellSelection();
+    setOverwriteNext(true);
+    focusKeyCapture();
+  }
+
+  function cloneJson(value, fallback) {
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch {
+      return fallback;
+    }
+  }
+
+  // Saved project data includes editor state + metadata so it can be reopened exactly.
+  function buildCurrentProjectSnapshot() {
+    return {
+      songName: String(songTitle || "").trim(),
+      artistName: String(artist || "").trim() || "Unsorted",
+      albumName: String(albumName || "").trim() || NO_ALBUM_NAME,
+      instrumentId,
+      tuning: cloneJson(tuning, DEFAULT_TUNING.slice()),
+      tuningLabel: String(tuningLabel || "").trim() || "Custom",
+      cols: clampColsValue(cols, DEFAULT_COLS),
+      grid: cloneJson(grid, makeBlankGrid(tuning.length, clampColsValue(cols, DEFAULT_COLS))),
+      capoEnabled: Boolean(capoEnabled),
+      capoFret: String(capoFret || ""),
+      showCapoControl: Boolean(showCapoControl),
+      showTempoControl: Boolean(showTempoControl),
+      tempoBpm: String(tempoBpm || "120"),
+      completedRows: cloneJson(completedRows, []),
+      chordName: String(chordName || ""),
+      selectedChordId: String(selectedChordId || ""),
+      lastAppliedChordId: String(lastAppliedChordId || ""),
+    };
+  }
+
+  function applyProjectSnapshot(snapshot) {
+    if (!snapshot || typeof snapshot !== "object") return;
+    const nextTuning = Array.isArray(snapshot.tuning) && snapshot.tuning.length ? snapshot.tuning.slice() : DEFAULT_TUNING.slice();
+    const nextCols = clampColsValue(snapshot.cols, DEFAULT_COLS);
+    const nextGrid = makeBlankGrid(nextTuning.length, nextCols);
+    const sourceGrid = Array.isArray(snapshot.grid) ? snapshot.grid : [];
+    for (let r = 0; r < nextTuning.length; r += 1) {
+      for (let c = 0; c < nextCols; c += 1) {
+        nextGrid[r][c] = String(sourceGrid?.[r]?.[c] ?? "");
+      }
+    }
+
+    undoStackRef.current = [];
+    redoStackRef.current = [];
+    clearCellSelection();
+    setInsertOpen(false);
+    setSongTitle(String(snapshot.songName || ""));
+    setArtist(String(snapshot.artistName || "").trim() === "Unsorted" ? "" : String(snapshot.artistName || ""));
+    setAlbumName(String(snapshot.albumName || "").trim() === NO_ALBUM_NAME ? "" : String(snapshot.albumName || ""));
+    setInstrumentId(String(snapshot.instrumentId || "gtr6"));
+    setTuning(nextTuning);
+    setTuningLabel(String(snapshot.tuningLabel || "Custom"));
+    setCols(nextCols);
+    setGrid(nextGrid);
+    setCursor({ r: 0, c: 0 });
+    setCapoEnabled(Boolean(snapshot.capoEnabled));
+    setCapoFret(String(snapshot.capoFret || ""));
+    setShowCapoControl(snapshot.showCapoControl !== false);
+    setShowTempoControl(Boolean(snapshot.showTempoControl));
+    setTempoBpm(String(snapshot.tempoBpm || "120"));
+    setCompletedRows(cloneJson(snapshot.completedRows, []));
+    setChordName(String(snapshot.chordName || ""));
+    setSelectedChordId(String(snapshot.selectedChordId || ""));
+    setLastAppliedChordId(String(snapshot.lastAppliedChordId || ""));
+    setCompletedRowsOpen(true);
+    setOverwriteNext(true);
+    focusKeyCapture();
+  }
+
+  useEffect(() => {
+    try {
+      const draft = {
+        songTitle: String(songTitle || ""),
+        artist: String(artist || ""),
+        tuning: Array.isArray(tuning) ? tuning.slice() : DEFAULT_TUNING.slice(),
+        capo: {
+          enabled: Boolean(capoEnabled),
+          fret: String(capoFret || ""),
+        },
+        tabRows: Array.isArray(completedRows) ? cloneJson(completedRows, []) : [],
+        timestamp: new Date().toISOString(),
+        snapshot: buildCurrentProjectSnapshot(),
+      };
+      localStorage.setItem(LS_TABSTUDIO_DRAFT_KEY, JSON.stringify(draft));
+    } catch {}
+  }, [songTitle, artist, tuning, capoEnabled, capoFret, completedRows, grid, cols, albumName, tempoBpm, showTempoControl, instrumentId]);
+
+  const draftRestoreDoneRef = useRef(false);
+  useEffect(() => {
+    if (draftRestoreDoneRef.current) return;
+    if (!isLoggedIn) return;
+    try {
+      const shouldRestoreFromMembership = String(localStorage.getItem(LS_RESTORE_DRAFT_AFTER_MEMBERSHIP_KEY) || "").toLowerCase() === "true";
+      const shouldRestoreFromSignin = String(localStorage.getItem(LS_RESTORE_DRAFT_AFTER_SIGNIN_KEY) || "").toLowerCase() === "true";
+      const shouldRestore = shouldRestoreFromMembership || shouldRestoreFromSignin;
+      if (!shouldRestore) return;
+      const rawDraft = localStorage.getItem(LS_TABSTUDIO_DRAFT_KEY);
+      if (!rawDraft) {
+        localStorage.removeItem(LS_RESTORE_DRAFT_AFTER_MEMBERSHIP_KEY);
+        localStorage.removeItem(LS_RESTORE_DRAFT_AFTER_SIGNIN_KEY);
+        draftRestoreDoneRef.current = true;
+        return;
+      }
+      const parsed = JSON.parse(rawDraft);
+      const snapshot = parsed?.snapshot;
+      if (snapshot && typeof snapshot === "object") {
+        applyProjectSnapshot(snapshot);
+        setSaveSoonNotice("Your draft tab has been restored.");
+      }
+      localStorage.removeItem(LS_RESTORE_DRAFT_AFTER_MEMBERSHIP_KEY);
+      localStorage.removeItem(LS_RESTORE_DRAFT_AFTER_SIGNIN_KEY);
+      draftRestoreDoneRef.current = true;
+    } catch {
+      try {
+        localStorage.removeItem(LS_RESTORE_DRAFT_AFTER_MEMBERSHIP_KEY);
+        localStorage.removeItem(LS_RESTORE_DRAFT_AFTER_SIGNIN_KEY);
+      } catch {}
+      draftRestoreDoneRef.current = true;
+    }
+  }, [isLoggedIn]);
+
+  function ensureArtistBucket(nextLibrary, targetArtistName) {
+    if (targetArtistName === "Unsorted") {
+      if (!nextLibrary.unsorted || typeof nextLibrary.unsorted !== "object") nextLibrary.unsorted = { albums: {} };
+      if (!nextLibrary.unsorted.albums || typeof nextLibrary.unsorted.albums !== "object") {
+        nextLibrary.unsorted.albums = {};
+      }
+      return nextLibrary.unsorted.albums;
+    }
+    if (!nextLibrary.artists[targetArtistName] || typeof nextLibrary.artists[targetArtistName] !== "object") {
+      nextLibrary.artists[targetArtistName] = { albums: {} };
+    }
+    if (!nextLibrary.artists[targetArtistName].albums || typeof nextLibrary.artists[targetArtistName].albums !== "object") {
+      nextLibrary.artists[targetArtistName].albums = {};
+    }
+    return nextLibrary.artists[targetArtistName].albums;
+  }
+
+  function handleSaveTabClick() {
+    if (!canUsePaidEditorFeatures) {
+      showMembershipGateToast("save");
+      return;
+    }
+    const cleanSongName = String(songTitle || "").trim();
+    if (!cleanSongName) {
+      setSaveSoonNotice("Add a song name before saving.");
+      return;
+    }
+
+    const targetArtistName = String(artist || "").trim() || "Unsorted";
+    const targetAlbumName = String(albumName || "").trim() || NO_ALBUM_NAME;
+    const nowIso = new Date().toISOString();
+    const snapshot = buildCurrentProjectSnapshot();
+    snapshot.songName = cleanSongName;
+    snapshot.artistName = targetArtistName;
+    snapshot.albumName = targetAlbumName;
+    snapshot.updatedAt = nowIso;
+
+    let isNewSong = false;
+    let tabsCreatedTotal = 0;
+
+    setLibraryData((prev) => {
+      const next = normalizeLibraryData(cloneJson(prev, makeEmptyLibrary()));
+      const albums = ensureArtistBucket(next, targetArtistName);
+      if (!albums[targetAlbumName] || typeof albums[targetAlbumName] !== "object") {
+        albums[targetAlbumName] = { songs: {} };
+      }
+      if (!albums[targetAlbumName].songs || typeof albums[targetAlbumName].songs !== "object") {
+        albums[targetAlbumName].songs = {};
+      }
+      const existing = albums[targetAlbumName].songs[cleanSongName];
+      snapshot.createdAt = String(existing?.createdAt || nowIso);
+      if (!existing) isNewSong = true;
+      albums[targetAlbumName].songs[cleanSongName] = snapshot;
+      tabsCreatedTotal = countTabsInLibraryData(next);
+      return next;
+    });
+
+    if (isNewSong && TABS_CREATED_MILESTONES.includes(tabsCreatedTotal) && !tabsMilestonesTriggered.includes(tabsCreatedTotal)) {
+      setTabsMilestonesTriggered((prev) => {
+        const next = [...new Set([...(prev || []), tabsCreatedTotal])].sort((a, b) => a - b);
+        return next;
+      });
+      triggerTabsCreatedMilestone(tabsCreatedTotal);
+    }
+
+    setSaveSoonNotice(`Saved: ${targetArtistName} / ${targetAlbumName} / ${cleanSongName}`);
+  }
+
+  function handleOpenTabClick() {
+    if (!canUsePaidEditorFeatures) {
+      showMembershipGateToast("projects");
+      return;
+    }
+    setExportModalOpen(false);
+    setImageExportProgress("");
+    setSelectedLibraryArtistKey("");
+    setSelectedLibraryAlbumName("");
+    setSelectedLibrarySongName("");
+    setProjectsLibraryOpen(true);
+  }
+
+  function loadLibrarySongByPath(artistName, album, song) {
+    if (!artistName || !album || !song) return;
+    const songs =
+      artistName === "Unsorted"
+        ? libraryData?.unsorted?.albums?.[album]?.songs || {}
+        : libraryData?.artists?.[artistName]?.albums?.[album]?.songs || {};
+    const snapshot = songs?.[song];
+    if (!snapshot) return;
+    setSelectedLibraryArtistKey(artistName === "Unsorted" ? "" : artistName);
+    setSelectedLibraryAlbumName(album);
+    setSelectedLibrarySongName(song);
+    applyProjectSnapshot(snapshot);
+    setProjectsLibraryOpen(false);
+  }
+
+  function deleteLibrarySong(artistName, album, song) {
+    if (!artistName || !album || !song) return;
+    pushLibraryUndoSnapshot(snapshotLibraryNow());
+    libraryRedoStackRef.current = [];
+    setLibraryData((prev) => {
+      const next = normalizeLibraryData(cloneJson(prev, makeEmptyLibrary()));
+      const artistAlbums =
+        artistName === "Unsorted"
+          ? next?.unsorted?.albums || {}
+          : next?.artists?.[artistName]?.albums || {};
+      if (!artistAlbums?.[album]?.songs) return next;
+      delete artistAlbums[album].songs[song];
+      return next;
+    });
+    if (selectedLibrarySongName === song) setSelectedLibrarySongName("");
+  }
+
+  function requestDeleteLibrarySong(artistName, album, song) {
+    if (!artistName || !album || !song) return;
+    setSongDeleteConfirmTarget({ artistName, album, song });
+  }
+
+  function closeDeleteLibrarySongConfirm() {
+    setSongDeleteConfirmTarget(null);
+  }
+
+  function confirmDeleteLibrarySong() {
+    if (!songDeleteConfirmTarget) return;
+    const { artistName, album, song } = songDeleteConfirmTarget;
+    setSongDeleteConfirmTarget(null);
+    deleteLibrarySong(artistName, album, song);
+  }
+
+  function renameLibraryArtist(artistName) {
+    if (!artistName || artistName === "Unsorted") return;
+    openPromptDialog({
+      title: "Rename artist",
+      message: "Update the artist name.",
+      placeholder: "Artist name",
+      initialValue: artistName,
+      confirmLabel: "Save",
+      cancelLabel: "Cancel",
+      extraActionLabel: "Delete artist",
+      extraActionDanger: true,
+      onExtraAction: () => requestDeleteLibraryArtist(artistName),
+      onConfirm: (value) => {
+        const nextName = String(value || "").trim();
+        if (!nextName || nextName === artistName || nextName.toLowerCase() === "unsorted") return;
+        setLibraryData((prev) => {
+          const next = normalizeLibraryData(cloneJson(prev, makeEmptyLibrary()));
+          const source = next?.artists?.[artistName];
+          if (!source) return next;
+          const target = next?.artists?.[nextName];
+          if (target?.albums && source?.albums) {
+            const merged = { ...target.albums };
+            for (const album of Object.keys(source.albums)) {
+              const targetSongs = merged?.[album]?.songs || {};
+              const sourceSongs = source?.albums?.[album]?.songs || {};
+              merged[album] = { songs: { ...targetSongs, ...sourceSongs } };
+            }
+            next.artists[nextName] = { albums: merged };
+          } else {
+            next.artists[nextName] = source;
+          }
+          delete next.artists[artistName];
+          return next;
+        });
+        if (String(artist || "").trim() === artistName) setArtist(nextName);
+        if ((selectedLibraryArtistKey || "Unsorted") === artistName) {
+          setSelectedLibraryArtistKey(nextName);
+        }
+      },
+    });
+  }
+
+  function deleteLibraryArtist(artistName) {
+    if (!artistName || artistName === "Unsorted") return;
+    pushLibraryUndoSnapshot(snapshotLibraryNow());
+    libraryRedoStackRef.current = [];
+    setLibraryData((prev) => {
+      const next = normalizeLibraryData(cloneJson(prev, makeEmptyLibrary()));
+      delete next?.artists?.[artistName];
+      return next;
+    });
+    if (String(artist || "").trim() === artistName) {
+      setArtist("");
+      setAlbumName("");
+    }
+    if ((selectedLibraryArtistKey || "Unsorted") === artistName) {
+      setSelectedLibraryArtistKey("");
+      setSelectedLibraryAlbumName("");
+      setSelectedLibrarySongName("");
+    }
+  }
+
+  function renameLibraryAlbum(artistName, albumNameCurrent) {
+    if (!artistName || !albumNameCurrent) return;
+    openPromptDialog({
+      title: "Rename album",
+      message: "Update the album name.",
+      placeholder: "Album name",
+      initialValue: albumNameCurrent,
+      confirmLabel: "Save",
+      cancelLabel: "Cancel",
+      extraActionLabel: "Delete album",
+      extraActionDanger: true,
+      onExtraAction: () => requestDeleteLibraryAlbum(artistName, albumNameCurrent),
+      onConfirm: (value) => {
+        const nextName = String(value || "").trim();
+        if (!nextName || nextName === albumNameCurrent) return;
+        setLibraryData((prev) => {
+          const next = normalizeLibraryData(cloneJson(prev, makeEmptyLibrary()));
+          const albums =
+            artistName === "Unsorted" ? next?.unsorted?.albums || {} : next?.artists?.[artistName]?.albums || {};
+          const source = albums?.[albumNameCurrent];
+          if (!source) return next;
+          const target = albums?.[nextName];
+          if (target?.songs && source?.songs) {
+            albums[nextName] = { songs: { ...target.songs, ...source.songs } };
+          } else {
+            albums[nextName] = source;
+          }
+          delete albums[albumNameCurrent];
+          return next;
+        });
+        if ((String(artist || "").trim() || "Unsorted") === artistName && String(albumName || "").trim() === albumNameCurrent) {
+          setAlbumName(nextName);
+        }
+        if (selectedLibraryAlbumName === albumNameCurrent) {
+          setSelectedLibraryAlbumName(nextName);
+        }
+      },
+    });
+  }
+
+  function deleteLibraryAlbum(artistName, album) {
+    if (!artistName || !album) return;
+    if (album === NO_ALBUM_NAME) return;
+    pushLibraryUndoSnapshot(snapshotLibraryNow());
+    libraryRedoStackRef.current = [];
+    setLibraryData((prev) => {
+      const next = normalizeLibraryData(cloneJson(prev, makeEmptyLibrary()));
+      const albums =
+        artistName === "Unsorted" ? next?.unsorted?.albums || {} : next?.artists?.[artistName]?.albums || {};
+      delete albums[album];
+      return next;
+    });
+    if ((String(artist || "").trim() || "Unsorted") === artistName && String(albumName || "").trim() === album) {
+      setAlbumName("");
+    }
+    if (selectedLibraryAlbumName === album) {
+      setSelectedLibraryAlbumName("");
+      setSelectedLibrarySongName("");
+    }
+  }
+
+  function requestDeleteLibraryArtist(artistName) {
+    if (!artistName || artistName === "Unsorted") return;
+    setLibraryDeleteConfirmTarget({
+      type: "artist",
+      artistName,
+      album: "",
+      stage: "idle",
+      remaining: LIBRARY_DELETE_WAIT_SECONDS,
+    });
+  }
+
+  function requestDeleteLibraryAlbum(artistName, album) {
+    if (!artistName || !album || album === NO_ALBUM_NAME) return;
+    setLibraryDeleteConfirmTarget({
+      type: "album",
+      artistName,
+      album,
+      stage: "idle",
+      remaining: LIBRARY_DELETE_WAIT_SECONDS,
+    });
+  }
+
+  function closeDeleteLibraryConfirm() {
+    setLibraryDeleteConfirmTarget(null);
+  }
+
+  function confirmDeleteLibraryConfirm() {
+    if (!libraryDeleteConfirmTarget) return;
+    if (libraryDeleteConfirmTarget.stage === "idle") {
+      setLibraryDeleteConfirmTarget((prev) =>
+        prev
+          ? {
+              ...prev,
+              stage: "countdown",
+              remaining: LIBRARY_DELETE_WAIT_SECONDS,
+            }
+          : prev
+      );
+      return;
+    }
+    if (libraryDeleteConfirmTarget.stage === "countdown") return;
+    const { type, artistName, album } = libraryDeleteConfirmTarget;
+    setLibraryDeleteConfirmTarget(null);
+    if (type === "artist") {
+      deleteLibraryArtist(artistName);
+    } else if (type === "album") {
+      deleteLibraryAlbum(artistName, album);
+    }
+  }
+
+  function skipDeleteLibraryWaitAndDeleteNow() {
+    if (!libraryDeleteConfirmTarget) return;
+    const { type, artistName, album } = libraryDeleteConfirmTarget;
+    setLibraryDeleteConfirmTarget(null);
+    if (type === "artist") {
+      deleteLibraryArtist(artistName);
+    } else if (type === "album") {
+      deleteLibraryAlbum(artistName, album);
+    }
+  }
+
+  function renameLibrarySong(artistName, album, song) {
+    if (!artistName || !album || !song) return;
+    openPromptDialog({
+      title: "Rename song",
+      message: "Update the song name.",
+      placeholder: "Song name",
+      initialValue: song,
+      confirmLabel: "Save",
+      cancelLabel: "Cancel",
+      onConfirm: (value) => {
+        const nextName = String(value || "").trim();
+        if (!nextName || nextName === song) return;
+        setLibraryData((prev) => {
+          const next = normalizeLibraryData(cloneJson(prev, makeEmptyLibrary()));
+          const albums =
+            artistName === "Unsorted" ? next?.unsorted?.albums || {} : next?.artists?.[artistName]?.albums || {};
+          const songs = albums?.[album]?.songs || {};
+          const source = songs?.[song];
+          if (!source) return next;
+          const target = songs?.[nextName];
+          songs[nextName] = {
+            ...(target || {}),
+            ...(source || {}),
+            songName: nextName,
+            updatedAt: new Date().toISOString(),
+          };
+          delete songs[song];
+          return next;
+        });
+        if (String(songTitle || "").trim() === song) setSongTitle(nextName);
+        if (selectedLibrarySongName === song) setSelectedLibrarySongName(nextName);
+      },
+    });
+  }
+
+  function confirmCreateArtist() {
+    const name = String(newArtistDraft || "").trim();
+    if (!name || name.toLowerCase() === "unsorted") {
+      setArtistCreateOpen(false);
+      setNewArtistDraft("");
+      return;
+    }
+    setLibraryData((prev) => {
+      const next = normalizeLibraryData(cloneJson(prev, makeEmptyLibrary()));
+      if (!next.artists[name]) next.artists[name] = { albums: { [NO_ALBUM_NAME]: { songs: {} } } };
+      if (!next.artists[name].albums?.[NO_ALBUM_NAME]) next.artists[name].albums[NO_ALBUM_NAME] = { songs: {} };
+      return next;
+    });
+    setArtist(name);
+    setAlbumName("");
+    setSelectedLibraryArtistKey(name);
+    setSelectedLibraryAlbumName("");
+    setSelectedLibrarySongName("");
+    setArtistCreateOpen(false);
+    setNewArtistDraft("");
+  }
+
+  function confirmCreateAlbum() {
+    const name = String(newAlbumDraft || "").trim();
+    if (!name) {
+      setAlbumCreateOpen(false);
+      setNewAlbumDraft("");
+      return;
+    }
+    const targetArtistName = String(artist || "").trim() || "Unsorted";
+    setLibraryData((prev) => {
+      const next = normalizeLibraryData(cloneJson(prev, makeEmptyLibrary()));
+      const albums = ensureArtistBucket(next, targetArtistName);
+      if (!albums[name]) albums[name] = { songs: {} };
+      return next;
+    });
+    setAlbumName(name);
+    setAlbumCreateOpen(false);
+    setNewAlbumDraft("");
+  }
+
+  function confirmCreateLibraryAlbum() {
+    const name = String(libraryNewAlbumDraft || "").trim();
+    if (!name) {
+      setLibraryAlbumCreateOpen(false);
+      setLibraryNewAlbumDraft("");
+      return;
+    }
+    const targetArtistName = String(selectedLibraryArtistLabel || "").trim();
+    if (!targetArtistName) {
+      setLibraryAlbumCreateOpen(false);
+      setLibraryNewAlbumDraft("");
+      return;
+    }
+    setLibraryData((prev) => {
+      const next = normalizeLibraryData(cloneJson(prev, makeEmptyLibrary()));
+      const albums = ensureArtistBucket(next, targetArtistName);
+      if (!albums[name]) albums[name] = { songs: {} };
+      if (!albums[name].songs || typeof albums[name].songs !== "object") albums[name].songs = {};
+      return next;
+    });
+    setSelectedLibraryAlbumName(name);
+    setSelectedLibrarySongName("");
+    setArtist(targetArtistName);
+    setAlbumName(name);
+    setLibraryAlbumCreateOpen(false);
+    setLibraryNewAlbumDraft("");
+  }
+
+  function confirmCreateLibrarySong() {
+    const name = String(libraryNewSongDraft || "").trim();
+    if (!name) {
+      setLibrarySongCreateOpen(false);
+      setLibraryNewSongDraft("");
+      return;
+    }
+    const targetArtistName = String(selectedLibraryArtistLabel || "").trim();
+    const targetAlbumName = String(selectedLibraryAlbumName || "").trim();
+    if (!targetArtistName || !targetAlbumName) {
+      setLibrarySongCreateOpen(false);
+      setLibraryNewSongDraft("");
+      return;
+    }
+    const nowIso = new Date().toISOString();
+    setLibraryData((prev) => {
+      const next = normalizeLibraryData(cloneJson(prev, makeEmptyLibrary()));
+      const albums = ensureArtistBucket(next, targetArtistName);
+      if (!albums[targetAlbumName] || typeof albums[targetAlbumName] !== "object") {
+        albums[targetAlbumName] = { songs: {} };
+      }
+      if (!albums[targetAlbumName].songs || typeof albums[targetAlbumName].songs !== "object") {
+        albums[targetAlbumName].songs = {};
+      }
+      const existing = albums[targetAlbumName].songs[name];
+      const snapshot = existing || buildCurrentProjectSnapshot();
+      snapshot.songName = name;
+      snapshot.artistName = targetArtistName;
+      snapshot.albumName = targetAlbumName;
+      snapshot.updatedAt = nowIso;
+      snapshot.createdAt = String(existing?.createdAt || nowIso);
+      albums[targetAlbumName].songs[name] = snapshot;
+      return next;
+    });
+    setSelectedLibrarySongName(name);
+    setSongTitle(name);
+    setArtist(targetArtistName);
+    setAlbumName(targetAlbumName);
+    setLibrarySongCreateOpen(false);
+    setLibraryNewSongDraft("");
+  }
+
+  function openConfirmDialog({
+    title = "Confirm",
+    message = "",
+    confirmLabel = "Confirm",
+    cancelLabel = "Cancel",
+    danger = false,
+    onConfirm = null,
+  }) {
+    setUiDialog({
+      type: "confirm",
+      title,
+      message,
+      confirmLabel,
+      cancelLabel,
+      danger,
+      value: "",
+      onConfirm,
+    });
+  }
+
+  function openPromptDialog({
+    title = "Rename",
+    message = "",
+    placeholder = "",
+    initialValue = "",
+    confirmLabel = "Save",
+    cancelLabel = "Cancel",
+    danger = false,
+    extraActionLabel = "",
+    extraActionDanger = false,
+    onExtraAction = null,
+    onConfirm = null,
+  }) {
+    setUiDialog({
+      type: "prompt",
+      title,
+      message,
+      placeholder,
+      confirmLabel,
+      cancelLabel,
+      danger,
+      extraActionLabel,
+      extraActionDanger,
+      value: String(initialValue || ""),
+      onExtraAction,
+      onConfirm,
+    });
+  }
+
+  function closeUiDialog() {
+    setUiDialog(null);
+  }
+
+  function submitUiDialog() {
+    if (!uiDialog) return;
+    const onConfirm = uiDialog?.onConfirm;
+    const value = uiDialog?.type === "prompt" ? String(uiDialog?.value ?? "") : undefined;
+    setUiDialog(null);
+    if (typeof onConfirm === "function") onConfirm(value);
+  }
+
+  function runUiDialogExtraAction() {
+    if (!uiDialog) return;
+    const onExtraAction = uiDialog?.onExtraAction;
+    setUiDialog(null);
+    if (typeof onExtraAction === "function") onExtraAction();
+  }
+
+  function triggerTabsCreatedMilestone(milestoneValue) {
+    const surfaceRect = editorSurfaceRef.current?.getBoundingClientRect?.();
+    const gridRect = tabWriterAreaRef.current?.getBoundingClientRect?.();
+    const width = Math.max(420, Math.round(gridRect?.width || surfaceRect?.width || 1100));
+    const height = Math.max(220, Math.round(gridRect?.height || 520));
+    const gridTopInSurface =
+      surfaceRect && gridRect
+        ? Math.max(0, Math.round(gridRect.top - surfaceRect.top))
+        : 0;
+    const gridLeftInSurface =
+      surfaceRect && gridRect
+        ? Math.max(0, Math.round(gridRect.left - surfaceRect.left))
+        : 0;
+
+    const palette = ["#5BD4A1", "#4D8DFF", "#9B7BFF", "#FFD166", "#FF9B42", "#FF5A67", "#7AF7D0", "#7EC8FF"];
+    const particleCount = 185;
+    const particles = Array.from({ length: particleCount }, (_, i) => {
+      const startX = Math.random() * width;
+      const startY = Math.max(8, height - (22 + Math.random() * 24));
+      const riseAmount = height * (0.36 + Math.random() * 0.54);
+      const yPeak = -Math.min(Math.max(24, riseAmount), Math.max(30, startY - 8));
+      const xPeak = -80 + Math.random() * 160;
+      const yApexEase = yPeak + (6 + Math.random() * 16);
+      const xApexEase = xPeak + (-16 + Math.random() * 32);
+
+      const floorY = height - (5 + Math.random() * 10);
+      const yFloor = Math.max(10, floorY - startY);
+      const span = yFloor - yPeak;
+      const fadeFraction = 0.28 + Math.random() * 0.68;
+      const endFraction = Math.min(0.995, fadeFraction + 0.015 + Math.random() * 0.09);
+      const f1 = fadeFraction * (0.12 + Math.random() * 0.28);
+      const f2 = fadeFraction * (0.36 + Math.random() * 0.32);
+      const f3 = fadeFraction * (0.62 + Math.random() * 0.26);
+      const fNearFloor = Math.min(fadeFraction - 0.01, fadeFraction * (0.84 + Math.random() * 0.14));
+
+      const yMid1 = yPeak + span * f1;
+      const yMid2 = yPeak + span * f2;
+      const yMid3 = yPeak + span * f3;
+      const yNearFloor = yPeak + span * fNearFloor;
+      const yFade = yPeak + span * fadeFraction;
+      const yEnd = yPeak + span * endFraction;
+
+      const xDrift = -150 + Math.random() * 300;
+      const swaySign = Math.random() > 0.5 ? 1 : -1;
+      const swayA = (10 + Math.random() * 16) * swaySign;
+      const swayB = (12 + Math.random() * 18) * -swaySign;
+      const swayC = (8 + Math.random() * 16) * swaySign;
+      const swayD = (6 + Math.random() * 14) * -swaySign;
+      const xMid1 = xPeak + xDrift * (0.18 + Math.random() * 0.2) + swayA;
+      const xMid2 = xPeak + xDrift * (0.4 + Math.random() * 0.24) + swayB;
+      const xMid3 = xPeak + xDrift * (0.64 + Math.random() * 0.2) + swayC;
+      const xNearFloor = xPeak + xDrift * (0.82 + Math.random() * 0.14) + swayD;
+      const xFade = xPeak + xDrift * (0.95 + Math.random() * 0.08) + swayC * 0.45;
+      const xEnd = xPeak + xDrift * (1.02 + Math.random() * 0.08) + swayD * 0.35;
+
+      const size = 4 + Math.random() * 6;
+      const duration = 8600 + Math.random() * 8800;
+      const delay = Math.random() * 4800;
+      const rotPeak = `${Math.round((Math.random() * 2 - 1) * 260)}deg`;
+      const rotMid1 = `${Math.round((Math.random() * 2 - 1) * 340)}deg`;
+      const rotMid2 = `${Math.round((Math.random() * 2 - 1) * 420)}deg`;
+      const rotMid3 = `${Math.round((Math.random() * 2 - 1) * 500)}deg`;
+      const rotNearFloor = `${Math.round((Math.random() * 2 - 1) * 560)}deg`;
+      const rotFade = `${Math.round((Math.random() * 2 - 1) * 620)}deg`;
+      const rotEnd = `${Math.round((Math.random() * 2 - 1) * 680)}deg`;
+      const color = palette[Math.floor(Math.random() * palette.length)];
+      return {
+        id: `p_${Date.now()}_${i}_${Math.random().toString(16).slice(2)}`,
+        startX,
+        startY,
+        xPeak,
+        yPeak,
+        xApexEase,
+        yApexEase,
+        xMid1,
+        yMid1,
+        xMid2,
+        yMid2,
+        xMid3,
+        yMid3,
+        xNearFloor,
+        yNearFloor,
+        xFade,
+        yFade,
+        xEnd,
+        yEnd,
+        size,
+        duration,
+        delay,
+        rotPeak,
+        rotApexEase: `${Math.round((Math.random() * 2 - 1) * 300)}deg`,
+        rotMid1,
+        rotMid2,
+        rotMid3,
+        rotNearFloor,
+        rotFade,
+        rotEnd,
+        color,
+      };
+    });
+
+    setMilestoneConfetti({
+      id: `burst_${Date.now()}`,
+      milestoneValue,
+      left: gridLeftInSurface,
+      top: gridTopInSurface,
+      width,
+      height,
+      particles,
+    });
+    setMilestoneToast(`Milestone reached - ${milestoneValue} tabs created.`);
+
+    if (milestoneConfettiTimerRef.current) clearTimeout(milestoneConfettiTimerRef.current);
+    milestoneConfettiTimerRef.current = setTimeout(() => {
+      setMilestoneConfetti(null);
+    }, 18400);
+
+    if (milestoneToastTimerRef.current) clearTimeout(milestoneToastTimerRef.current);
+    milestoneToastTimerRef.current = setTimeout(() => {
+      setMilestoneToast("");
+    }, 2000);
+  }
+
+  function triggerFirstExportGlow({ showToast = true } = {}) {
+    setFirstExportGlowActive(true);
+    if (firstExportGlowTimerRef.current) clearTimeout(firstExportGlowTimerRef.current);
+    firstExportGlowTimerRef.current = setTimeout(() => {
+      setFirstExportGlowActive(false);
+    }, 4200);
+    if (showToast) {
+      setMilestoneToast("First export complete.");
+      if (milestoneToastTimerRef.current) clearTimeout(milestoneToastTimerRef.current);
+      milestoneToastTimerRef.current = setTimeout(() => {
+        setMilestoneToast("");
+      }, 2000);
+    }
+  }
+
+  function showQuickToast(message, durationMs = 1800) {
+    setMilestoneToast(message);
+    if (milestoneToastTimerRef.current) clearTimeout(milestoneToastTimerRef.current);
+    milestoneToastTimerRef.current = setTimeout(() => {
+      setMilestoneToast("");
+    }, durationMs);
+  }
+
+  useEffect(() => {
+    setGrid((prev) => {
+      const next = prev.map((r) => r.slice());
+
+      while (next.length < tuning.length) next.push(Array.from({ length: cols }, () => ""));
+      while (next.length > tuning.length) next.pop();
+
+      for (let i = 0; i < next.length; i++) {
+        while (next[i].length < cols) next[i].push("");
+        next[i] = next[i].slice(0, cols);
+      }
+      return next;
+    });
+
+    setCursor((cur) => ({
+      r: Math.min(cur.r, Math.max(0, tuning.length - 1)),
+      c: Math.min(cur.c, Math.max(0, cols - 1)),
+    }));
+
+    clearCellSelection();
+  }, [tuning, cols]);
+
+  function focusKeyCapture() {
+    const el = keyCaptureRef.current;
+    if (!el) return;
+    try {
+      el.focus({ preventScroll: true });
+    } catch {
+      try {
+        el.focus();
+      } catch {}
+    }
+    requestAnimationFrame(() => {
+      try {
+        el.focus({ preventScroll: true });
+      } catch {
+        try {
+          el.focus();
+        } catch {}
+      }
+    });
+  }
+
+  function shouldStealFocus(target) {
+    const tag = target?.tagName;
+    if (!tag) return true;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || tag === "OPTION" || tag === "BUTTON")
+      return false;
+    return true;
+  }
+
+  function isTextEntryElement(target) {
+    const el = target;
+    if (!el) return false;
+    const tag = String(el.tagName || "").toUpperCase();
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+    if (el.isContentEditable) return true;
+    return false;
+  }
+
+  function handleRootPointerDown(e) {
+    if (!shouldStealFocus(e.target)) return;
+    focusKeyCapture();
+  }
+
+  useEffect(() => {
+    focusKeyCapture();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function setCell(r, c, value) {
+    const prev = gridRef.current;
+    if (!prev[r] || typeof prev[r][c] === "undefined") return;
+
+    const next = prev.map((row) => row.slice());
+    next[r][c] = value;
+    commitGridChange(next);
+  }
+
+  function setManyCells(edits) {
+    const prev = gridRef.current;
+    const next = prev.map((row) => row.slice());
+    let touched = false;
+    for (const it of edits) {
+      if (!next[it.r] || typeof next[it.r][it.c] === "undefined") continue;
+      if (next[it.r][it.c] !== it.v) {
+        next[it.r][it.c] = it.v;
+        touched = true;
+      }
+    }
+    if (!touched) return;
+    commitGridChange(next);
+  }
+
+  function moveCursor(dr, dc) {
+    clearCellSelection();
+    setCursor((cur) => {
+      const nr = Math.max(0, Math.min(tuning.length - 1, cur.r + dr));
+      const nc = Math.max(0, Math.min(cols - 1, cur.c + dc));
+      return { r: nr, c: nc };
+    });
+  }
+
+  function startCellSelection(r, c) {
+    setRandomCellSelection(new Set());
+    setCellSelection({ r1: r, c1: c, r2: r, c2: c });
+    selectingRef.current = true;
+  }
+
+  function updateCellSelection(r, c) {
+    setCellSelection((prev) => {
+      if (!prev) return { r1: r, c1: c, r2: r, c2: c };
+      return { ...prev, r2: r, c2: c };
+    });
+  }
+
+  function stopCellSelection() {
+    selectingRef.current = false;
+  }
+
+  useEffect(() => {
+    const onUp = () => stopCellSelection();
+    window.addEventListener("pointerup", onUp, true);
+    window.addEventListener("pointercancel", onUp, true);
+    return () => {
+      window.removeEventListener("pointerup", onUp, true);
+      window.removeEventListener("pointercancel", onUp, true);
+    };
+  }, []);
+
+  useEffect(() => {
+    const onPointerDown = () => {
+      if (!clearRowSelectionOnNextPointerRef.current) return;
+      clearRowSelectionOnNextPointerRef.current = false;
+      clearSelection();
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
+    return () => window.removeEventListener("pointerdown", onPointerDown, true);
+  }, []);
+
+  useEffect(() => {
+    const onPointerDown = (e) => {
+      const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+      const insideGridCell = path.some((node) => node?.dataset?.gridCell === "true");
+      if (insideGridCell) {
+        setGridTargetingActive(true);
+        return;
+      }
+      setGridTargetingActive(false);
+      clearCellSelection();
+      try {
+        keyCaptureRef.current?.blur?.();
+      } catch {}
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
+    return () => window.removeEventListener("pointerdown", onPointerDown, true);
+  }, []);
+
+  useEffect(() => {
+    if (!rowDeleteConfirmIds) return;
+    const onEnter = (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      e.stopPropagation();
+      confirmDeleteRows();
+    };
+    window.addEventListener("keydown", onEnter, true);
+    return () => window.removeEventListener("keydown", onEnter, true);
+  }, [rowDeleteConfirmIds]);
+
+  useEffect(() => {
+    if (!songDeleteConfirmTarget) return;
+    const onEnter = (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      e.stopPropagation();
+      confirmDeleteLibrarySong();
+    };
+    window.addEventListener("keydown", onEnter, true);
+    return () => window.removeEventListener("keydown", onEnter, true);
+  }, [songDeleteConfirmTarget]);
+
+  useEffect(() => {
+    if (!libraryDeleteConfirmTarget) return;
+    const onEnter = (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      e.stopPropagation();
+      confirmDeleteLibraryConfirm();
+    };
+    window.addEventListener("keydown", onEnter, true);
+    return () => window.removeEventListener("keydown", onEnter, true);
+  }, [libraryDeleteConfirmTarget]);
+
+  useEffect(() => {
+    if (!libraryDeleteConfirmTarget || libraryDeleteConfirmTarget.stage !== "countdown") return;
+    const timer = window.setTimeout(() => {
+      setLibraryDeleteConfirmTarget((prev) => {
+        if (!prev || prev.stage !== "countdown") return prev;
+        const nextRemaining = Math.max(0, Number(prev.remaining || 0) - 1);
+        if (nextRemaining <= 0) {
+          return { ...prev, stage: "armed", remaining: 0 };
+        }
+        return { ...prev, remaining: nextRemaining };
+      });
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [libraryDeleteConfirmTarget]);
+
+  useEffect(() => {
+    if (!chordDeleteConfirmId) return;
+    const onEnter = (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      e.stopPropagation();
+      confirmDeleteUserChord();
+    };
+    window.addEventListener("keydown", onEnter, true);
+    return () => window.removeEventListener("keydown", onEnter, true);
+  }, [chordDeleteConfirmId]);
+
+  function onCellPointerDown(e, r, c) {
+    e.preventDefault();
+    recordTapSyncNote(r, c);
+    setGridTargetingActive(true);
+    const additive = e.metaKey || e.ctrlKey;
+    setCursor({ r, c });
+    setOverwriteNext(true);
+    setInsertOpen(false);
+    if (additive) {
+      selectingRef.current = false;
+      const baseSelection = selectionBounds;
+      setCellSelection(null);
+      const key = cellKey(r, c);
+      setRandomCellSelection((prev) => {
+        const next = new Set(prev);
+        if (next.size === 0 && baseSelection) {
+          for (let rr = baseSelection.r1; rr <= baseSelection.r2; rr++) {
+            for (let cc = baseSelection.c1; cc <= baseSelection.c2; cc++) {
+              next.add(cellKey(rr, cc));
+            }
+          }
+        }
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        return next;
+      });
+      focusKeyCapture();
+      return;
+    }
+    startCellSelection(r, c);
+    focusKeyCapture();
+  }
+
+  function onCellPointerEnter(e, r, c) {
+    if (!selectingRef.current) return;
+    updateCellSelection(r, c);
+  }
+
+  function getSelectedCellsEdits(value = "") {
+    const selectedCells = getSelectedCellCoords();
+    if (!selectedCells.length) return [];
+    const edits = [];
+    for (const { r, c } of selectedCells) {
+      edits.push({ r, c, v: value });
+    }
+    return edits;
+  }
+
+  async function copySelectionToClipboard() {
+    const selectedCells = getSelectedCellCoords();
+    if (!selectedCells.length) return;
+    const selectedSet = new Set(selectedCells.map(({ r, c }) => cellKey(r, c)));
+    const minR = Math.min(...selectedCells.map((p) => p.r));
+    const maxR = Math.max(...selectedCells.map((p) => p.r));
+    const minC = Math.min(...selectedCells.map((p) => p.c));
+    const maxC = Math.max(...selectedCells.map((p) => p.c));
+    const lines = [];
+    for (let rr = minR; rr <= maxR; rr++) {
+      const row = [];
+      for (let cc = minC; cc <= maxC; cc++) {
+        row.push(selectedSet.has(cellKey(rr, cc)) ? String(gridRef.current?.[rr]?.[cc] ?? "") : "");
+      }
+      lines.push(row.join("\t"));
+    }
+    const text = lines.join("\n");
+
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.left = "-10000px";
+        ta.style.top = "-10000px";
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand("copy");
+        ta.remove();
+      } catch {}
+    }
+  }
+
+  function insertIntoSelectedCell(insert) {
+    // If a range of cells is selected, apply the insert to every selected cell.
+    if (hasCellSelection) {
+      const prev = gridRef.current;
+      const next = prev.map((row) => row.slice());
+      const selectedCells = getSelectedCellCoords();
+      for (const { r: rr, c: cc } of selectedCells) {
+        const current = String(next?.[rr]?.[cc] ?? "");
+        next[rr][cc] = current === "" ? insert : current + insert;
+      }
+
+      commitGridChange(next);
+      setOverwriteNext(false);
+      setInsertOpen(false);
+      focusKeyCapture();
+      return;
+    }
+
+    // Otherwise, apply to the single active cell and advance as before.
+    const { r, c } = cursorRef.current;
+    const current = String(gridRef.current?.[r]?.[c] ?? "");
+    const next = current === "" ? insert : current + insert;
+    setCell(r, c, next);
+
+    setOverwriteNext(false);
+
+    const advances =
+      insert === "h" || insert === "p" || insert === "/" || insert === "\\" || insert === "b";
+    if (advances) moveCursor(0, 1);
+
+    setInsertOpen(false);
+    focusKeyCapture();
+  }
+
+function fillSelectedColumnWith(value) {
+    const col = cursorRef.current.c;
+    const prev = gridRef.current;
+    const next = prev.map((row) => row.slice());
+    for (let r = 0; r < tuning.length; r++) next[r][col] = value;
+    commitGridChange(next);
+    setOverwriteNext(true);
+    setInsertOpen(false);
+    focusKeyCapture();
+  }
+
+  function applyTuningOption(t) {
+    const app = lowToHighToApp(t.lowToHigh);
+    if (app.length !== tuning.length || app.some((x) => !String(x).trim())) {
+      // if length differs, trust instrument definition and rebuild
+      const newGrid = makeBlankGrid(app.length, colsRef.current || defaultCols);
+      undoStackRef.current = [];
+      redoStackRef.current = [];
+      setGrid(newGrid);
+      setCursor({ r: 0, c: 0 });
+    }
+    setTuning(app);
+    setTuningLabel(formatTuningName(t.name));
+    setTuningOpen(false);
+    setCustomOpen(false);
+    setOverwriteNext(false);
+    focusKeyCapture();
+  }
+
+  function resetCustomFormToCurrent() {
+    setCustomName("");
+    setCustomLowToHigh(appToLowToHigh(tuning));
+  }
+
+  function saveCustomTuning() {
+    const name = customName.trim();
+    if (!name) return;
+    const lowToHigh = customLowToHigh.map((s) => String(s ?? "").trim()).slice(0, 6);
+    if (lowToHigh.length !== 6 || lowToHigh.some((s) => !s)) return;
+
+    const id = `user_tuning_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const next = { id, name, lowToHigh };
+
+    setUserTunings((prev) => [...prev, next]);
+    setCustomOpen(false);
+    applyTuningOption(next);
+  }
+
+  function deleteUserTuning(id) {
+    const ok = window.confirm("Delete this saved tuning?");
+    if (!ok) return;
+    setUserTunings((prev) => prev.filter((t) => t.id !== id));
+  }
+
+  function getColumnValues(col) {
+    return Array.from({ length: tuning.length }, (_, r) => String(gridRef.current?.[r]?.[col] ?? ""));
+  }
+
+  function saveChordFromSelectedColumn() {
+    if (!standard) return;
+    const name = chordName.trim();
+    if (!name) return;
+    const col = cursorRef.current.c;
+    const values = getColumnValues(col);
+    if (!values.some((x) => x.trim() !== "")) return;
+
+    const id = `userChord_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    setUserChords((prev) => [...prev, { id, name, frets: values.map((v) => v.trim()) }]);
+    setChordName("");
+    setSelectedChordId(id);
+    focusKeyCapture();
+  }
+
+  function deleteUserChord(id) {
+    setUserChords((prev) => prev.filter((c) => c.id !== id));
+    setSelectedChordId((cur) => (cur === id ? "" : cur));
+    setLastAppliedChordId((cur) => (cur === id ? "" : cur));
+    focusKeyCapture();
+  }
+
+  function requestDeleteUserChord(id) {
+    if (!id) return;
+    setChordDeleteConfirmId(id);
+  }
+
+  function closeDeleteUserChordConfirm() {
+    setChordDeleteConfirmId("");
+  }
+
+  function confirmDeleteUserChord() {
+    if (!chordDeleteConfirmId) return;
+    const targetId = chordDeleteConfirmId;
+    setChordDeleteConfirmId("");
+    deleteUserChord(targetId);
+  }
+
+  function applyChordIdToSelectedColumn(chordId) {
+    if (!standard) return;
+    const chord = allChords.find((c) => c.id === chordId);
+    if (!chord) return;
+
+    const col = cursorRef.current.c;
+    const prev = gridRef.current;
+    const next = prev.map((row) => row.slice());
+    for (let r = 0; r < tuning.length; r++) {
+      const v = chord.frets?.[r] ?? "";
+      next[r][col] = v;
+    }
+
+    const cur = cursorRef.current;
+    const nextCursor = { r: cur.r, c: Math.min(colsRef.current - 1, cur.c + 1) };
+    commitGridChange(next, nextCursor);
+
+    setLastAppliedChordId(chordId);
+    setOverwriteNext(true);
+    focusKeyCapture();
+  }
+
+  function applyChordToSelectedColumn() {
+    if (!selectedChordId) return;
+    applyChordIdToSelectedColumn(selectedChordId);
+    setChordsOpen(false);
+  }
+
+  function repeatLastChord() {
+    if (!lastAppliedChordId) return;
+    applyChordIdToSelectedColumn(lastAppliedChordId);
+  }
+
+  function completeRow({ advanceToNextString = false } = {}) {
+    if (!canUsePaidEditorFeatures) {
+      showMembershipGateToast("complete-row");
+      return;
+    }
+    const id = `row_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const trimmed = trimGridToContent(gridView, 1);
+    const currentCursor = cursorRef.current;
+    const nextRowIndex = advanceToNextString ? Math.min(tuning.length - 1, currentCursor.r + 1) : 0;
+
+    setCompletedRows((prev) => {
+      const nextIndex = prev.length + 1;
+      const defaultName = `Row ${nextIndex}`;
+      const snapshot = {
+        id,
+        kind: "tab",
+        name: defaultName,
+        repeatCount: 1,
+        tuningAtTime: tuning.slice(),
+        colsAtTime: trimmed.cols,
+        grid: trimmed.grid,
+        instrumentIdAtTime: currentInstrument.id,
+        instrumentLabelAtTime: currentInstrument.label,
+      };
+      return [...prev, snapshot];
+    });
+
+    const nextGrid = makeBlankGrid(tuning.length, cols);
+    commitGridChange(nextGrid, { r: nextRowIndex, c: 0 });
+
+    setCompletedRowsOpen(true);
+    setOverwriteNext(true);
+    setInsertOpen(false);
+    clearCellSelection();
+    focusKeyCapture();
+  }
+
+
+  function addNoteRow() {
+    const id = `note_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    setCompletedRows((prev) => {
+      const noteIndex = prev.filter((r) => r.kind === "note").length + 1;
+      const snapshot = {
+        id,
+        kind: "note",
+        name: `Note ${noteIndex}`,
+        noteText: "",
+      };
+      return [...prev, snapshot];
+    });
+    lastAddedNoteIdRef.current = id;
+    // Ensure the Completed rows panel is open so the user sees the new note.
+    setCompletedRowsOpen(true);
+    // Scroll/focus happens in an effect after render.
+  }
+
+
+  function updateNoteText(id, text) {
+    const value = String(text ?? "");
+    setCompletedRows((prev) => prev.map((r) => (r.id === id ? { ...r, noteText: value } : r)));
+  }
+
+  function insertIntoNoteText(id, symbol) {
+    const row = completedRows.find((r) => r.id === id && r.kind === "note");
+    if (!row) return;
+
+    const textarea = noteTextAreaRefs.current?.[id];
+    const currentText = String(row.noteText ?? "");
+    let start = currentText.length;
+    let end = currentText.length;
+    if (
+      textarea &&
+      typeof textarea.selectionStart === "number" &&
+      typeof textarea.selectionEnd === "number"
+    ) {
+      start = textarea.selectionStart;
+      end = textarea.selectionEnd;
+    }
+
+    const nextText = `${currentText.slice(0, start)}${symbol}${currentText.slice(end)}`;
+    updateNoteText(id, nextText);
+
+    requestAnimationFrame(() => {
+      const el = noteTextAreaRefs.current?.[id];
+      if (!el) return;
+      const caret = start + symbol.length;
+      try {
+        el.focus();
+        el.setSelectionRange(caret, caret);
+      } catch {}
+    });
+  }
+
+  function updateRowRepeat(id, raw) {
+    const str = String(raw ?? "").trim();
+    const parsed = parseInt(str, 10);
+    const n = !isFinite(parsed) || parsed <= 0 ? 1 : Math.min(parsed, 99);
+    setCompletedRows((prev) => prev.map((r) => (r.id === id ? { ...r, repeatCount: n } : r)));
+  }
+
+  function nudgeRowRepeat(id, delta) {
+    setCompletedRows((prev) =>
+      prev.map((r) => {
+        if (r.id !== id) return r;
+        const current = Math.max(1, Math.min(99, Number(r.repeatCount ?? 1) || 1));
+        const next = Math.max(1, Math.min(99, current + delta));
+        return { ...r, repeatCount: next };
+      })
+    );
+  }
+
+  function resetRowRepeat(id) {
+    setCompletedRows((prev) => prev.map((r) => (r.id === id ? { ...r, repeatCount: 1 } : r)));
+  }
+
+  function editCompletedRow(id) {
+    const row = completedRows.find((x) => x.id === id);
+    if (!row) return;
+
+    setTuning(row.tuningAtTime.slice());
+    setCols(row.colsAtTime);
+
+    const matchingPresets = getInstrumentTuningPresets(instrumentId);
+    const match = matchingPresets.find((t) => {
+      const app = lowToHighToApp(t.lowToHigh);
+      return app.map(normNote).join("|") === row.tuningAtTime.map(normNote).join("|");
+    });
+    setTuningLabel(match ? formatTuningName(match.name) : "Custom");
+
+    const next = makeBlankGrid(row.tuningAtTime.length, row.colsAtTime);
+    for (let r = 0; r < row.tuningAtTime.length; r++) {
+      for (let c = 0; c < row.colsAtTime; c++) next[r][c] = String(row.grid?.[r]?.[c] ?? "");
+    }
+
+    undoStackRef.current = [];
+    redoStackRef.current = [];
+    setGrid(next);
+    setCursor({ r: 0, c: 0 });
+
+    setCompletedRows((prev) => prev.filter((x) => x.id !== id));
+    setSelectedRowIds((prev) => {
+      const nextSet = new Set(prev);
+      nextSet.delete(id);
+      return nextSet;
+    });
+
+    setOverwriteNext(true);
+    setInsertOpen(false);
+    clearCellSelection();
+    focusKeyCapture();
+  }
+
+  function requestDeleteRows(ids, source = "") {
+    const nextIds = Array.from(new Set((ids || []).filter(Boolean)));
+    if (!nextIds.length) return;
+    setRowDeleteConfirmIds(nextIds);
+    setRowDeleteConfirmSource(source);
+  }
+
+  function closeDeleteRowsConfirm() {
+    setRowDeleteConfirmIds(null);
+    setRowDeleteConfirmSource("");
+  }
+
+  function confirmDeleteRows() {
+    if (!rowDeleteConfirmIds || rowDeleteConfirmIds.length === 0) return;
+    const idsToDelete = new Set(rowDeleteConfirmIds);
+    setCompletedRows((prev) => prev.filter((x) => !idsToDelete.has(x.id)));
+    setSelectedRowIds((prev) => {
+      const next = new Set(prev);
+      rowDeleteConfirmIds.forEach((id) => next.delete(id));
+      return next;
+    });
+    setRowDeleteConfirmIds(null);
+    setRowDeleteConfirmSource("");
+  }
+
+  function deleteCompletedRow(id) {
+    requestDeleteRows([id], "single");
+  }
+
+  function toggleSelectedRow(id) {
+    setSelectedRowIds((prev) => {
+      const validIds = new Set(completedRows.map((r) => r.id));
+      const next = new Set();
+      prev.forEach((rowId) => {
+        if (validIds.has(rowId)) next.add(rowId);
+      });
+
+      // If everything is currently selected, a row toggle clears the whole selection.
+      if (completedRows.length > 0 && next.size === completedRows.length) {
+        return new Set();
+      }
+
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function selectAllRows() {
+    setSelectedRowIds(() => new Set(completedRows.map((r) => r.id)));
+  }
+
+  function clearSelection() {
+    setSelectedRowIds(() => new Set());
+  }
+
+  function moveSelectedCompletedRows(delta) {
+    if (selectedRowIds.size === 0 || !completedRows.length) return;
+    setCompletedRows((prev) => {
+      if (prev.length < 2) return prev;
+      const selected = new Set(selectedRowIds);
+      const next = prev.slice();
+
+      if (delta < 0) {
+        for (let i = 1; i < next.length; i += 1) {
+          if (selected.has(next[i].id) && !selected.has(next[i - 1].id)) {
+            const tmp = next[i - 1];
+            next[i - 1] = next[i];
+            next[i] = tmp;
+          }
+        }
+      } else if (delta > 0) {
+        for (let i = next.length - 2; i >= 0; i -= 1) {
+          if (selected.has(next[i].id) && !selected.has(next[i + 1].id)) {
+            const tmp = next[i + 1];
+            next[i + 1] = next[i];
+            next[i] = tmp;
+          }
+        }
+      }
+
+      return next;
+    });
+  }
+
+  function deleteSelectedRows() {
+    if (selectedRowIds.size === 0) return;
+    requestDeleteRows(Array.from(selectedRowIds), "selected");
+  }
+
+  function makeRowDuplicate(row) {
+    const newId = `row_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    if (row.kind === "note") {
+      return {
+        ...row,
+        id: newId,
+        name: row.name ? `${row.name} (copy)` : "Note (copy)",
+        noteText: row.noteText ?? "",
+      };
+    }
+    return {
+      ...row,
+      id: newId,
+      name: row.name ? `${row.name} (copy)` : "Row (copy)",
+      repeatCount: row.repeatCount ?? 1,
+      tuningAtTime: row.tuningAtTime.slice(),
+      colsAtTime: row.colsAtTime,
+      grid: clone2D(row.grid),
+    };
+  }
+
+  function duplicateSelectedRows() {
+    if (selectedRowIds.size === 0) return;
+    clearRowSelectionOnNextPointerRef.current = true;
+    let firstNewId = null;
+    let firstNewName = "";
+    setCompletedRows((prev) => {
+      const next = [];
+      prev.forEach((row) => {
+        next.push(row);
+        if (selectedRowIds.has(row.id)) {
+          const copy = makeRowDuplicate(row);
+          if (!firstNewId) {
+            firstNewId = copy.id;
+            firstNewName = copy.name ?? "";
+          }
+          next.push(copy);
+        }
+      });
+      return next;
+    });
+
+    if (firstNewId) {
+      requestAnimationFrame(() => {
+        setRenamingRowId(firstNewId);
+        setRenameDraft(firstNewName);
+        requestAnimationFrame(() => {
+          renameInputRef.current?.focus?.();
+          renameInputRef.current?.select?.();
+        });
+      });
+    }
+  }
+
+  function startRenameRow(row) {
+    setRenamingRowId(row.id);
+    setRenameDraft(row.name ?? "");
+    requestAnimationFrame(() => {
+      renameInputRef.current?.focus?.();
+      renameInputRef.current?.select?.();
+    });
+  }
+
+  function commitRenameRow(id) {
+    const name = renameDraft.trim() || "Untitled";
+    setCompletedRows((prev) => prev.map((r) => (r.id === id ? { ...r, name } : r)));
+    setRenamingRowId(null);
+    setRenameDraft("");
+  }
+
+  function cancelRenameRow() {
+    setRenamingRowId(null);
+    setRenameDraft("");
+  }
+
+  function duplicateRow(rowId) {
+    const row = completedRows.find((r) => r.id === rowId);
+    if (!row) return;
+    clearRowSelectionOnNextPointerRef.current = true;
+    const copy = makeRowDuplicate(row);
+    const newId = copy.id;
+
+    setCompletedRows((prev) => {
+      const idx = prev.findIndex((r) => r.id === rowId);
+      if (idx === -1) return [...prev, copy];
+      const next = prev.slice();
+      next.splice(idx + 1, 0, copy);
+      return next;
+    });
+
+    requestAnimationFrame(() => {
+      setRenamingRowId(newId);
+      setRenameDraft(copy.name ?? "");
+      requestAnimationFrame(() => {
+        renameInputRef.current?.focus?.();
+        renameInputRef.current?.select?.();
+      });
+    });
+  }
+
+  // Drag reorder
+  const dragRowIdRef = useRef(null);
+  function onDragStartRow(e, rowId) {
+    dragRowIdRef.current = rowId;
+    try {
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", rowId);
+    } catch {}
+  }
+  function onDragOverRow(e) {
+    e.preventDefault();
+    try {
+      e.dataTransfer.dropEffect = "move";
+    } catch {}
+  }
+  function onDropRow(e, targetRowId) {
+    e.preventDefault();
+    const srcId = dragRowIdRef.current;
+    dragRowIdRef.current = null;
+    if (!srcId || srcId === targetRowId) return;
+
+    setCompletedRows((prev) => {
+      const srcIndex = prev.findIndex((r) => r.id === srcId);
+      const tgtIndex = prev.findIndex((r) => r.id === targetRowId);
+      if (srcIndex === -1 || tgtIndex === -1) return prev;
+
+      const next = prev.slice();
+      const [moved] = next.splice(srcIndex, 1);
+      const insertAt = srcIndex < tgtIndex ? tgtIndex : tgtIndex;
+      next.splice(insertAt, 0, moved);
+      return next;
+    });
+  }
+
+  function clearAll() {
+    const next = makeBlankGrid(tuning.length, cols);
+    commitGridChange(next, { r: 0, c: 0 });
+    setOverwriteNext(true);
+    setInsertOpen(false);
+    clearCellSelection();
+    focusKeyCapture();
+  }
+
+  function clearCurrentRowWithConfirm() {
+    const hasContent = gridRef.current?.some((row) => row.some((cell) => String(cell ?? "").trim() !== ""));
+    if (hasContent) {
+      const ok = window.confirm("Clear the current tab writer row?");
+      if (!ok) return;
+    }
+    clearAll();
+  }
+
+  useEffect(() => {
+    if (!insertOpen) return;
+    const onDown = (e) => {
+      if (eventPathIncludes(e, insertBtnRef.current)) return;
+      if (eventPathIncludes(e, insertPanelRef.current)) return;
+      setInsertOpen(false);
+    };
+    window.addEventListener("pointerdown", onDown, true);
+    return () => window.removeEventListener("pointerdown", onDown, true);
+  }, [insertOpen]);
+
+  useEffect(() => {
+    if (!insertOpen) {
+      setInsertPanelShiftX(0);
+      return;
+    }
+    const updateInsertPanelPosition = () => {
+      const btnEl = insertBtnRef.current;
+      const panelEl = insertPanelRef.current;
+      if (!btnEl || !panelEl || typeof window === "undefined") return;
+      const btnRect = btnEl.getBoundingClientRect();
+      const panelWidth = panelEl.getBoundingClientRect().width || 0;
+      const viewportPad = 18;
+      const desiredLeft = btnRect.left;
+      const minLeft = viewportPad;
+      const maxLeft = Math.max(minLeft, window.innerWidth - viewportPad - panelWidth);
+      const clampedLeft = Math.min(Math.max(desiredLeft, minLeft), maxLeft);
+      setInsertPanelShiftX(clampedLeft - desiredLeft);
+    };
+
+    const raf = window.requestAnimationFrame(updateInsertPanelPosition);
+    window.addEventListener("resize", updateInsertPanelPosition);
+    return () => {
+      window.cancelAnimationFrame(raf);
+      window.removeEventListener("resize", updateInsertPanelPosition);
+    };
+  }, [insertOpen]);
+
+  useEffect(() => {
+    if (!tuningOpen) return;
+    const onDown = (e) => {
+      if (eventPathIncludes(e, tuningBtnRef.current)) return;
+      if (eventPathIncludes(e, tuningPanelRef.current)) return;
+      if (eventPathIncludes(e, customTuningModalRef.current)) return;
+      setTuningOpen(false);
+      setCustomOpen(false);
+    };
+    window.addEventListener("pointerdown", onDown, true);
+    return () => window.removeEventListener("pointerdown", onDown, true);
+  }, [tuningOpen]);
+
+  useEffect(() => {
+    if (!capoOpen) return;
+    const onDown = (e) => {
+      if (eventPathIncludes(e, capoBtnRef.current)) return;
+      if (eventPathIncludes(e, capoPanelRef.current)) return;
+      setCapoOpen(false);
+    };
+    window.addEventListener("pointerdown", onDown, true);
+    return () => window.removeEventListener("pointerdown", onDown, true);
+  }, [capoOpen]);
+
+  useEffect(() => {
+    if (!chordsOpen) return;
+    const onDown = (e) => {
+      if (eventPathIncludes(e, chordsBtnRef.current)) return;
+      if (eventPathIncludes(e, chordsPanelRef.current)) return;
+      setChordsOpen(false);
+    };
+    window.addEventListener("pointerdown", onDown, true);
+    return () => window.removeEventListener("pointerdown", onDown, true);
+  }, [chordsOpen]);
+
+  useEffect(() => {
+    if (!chordsOpen) {
+      setChordsPanelShiftX(0);
+      return;
+    }
+    const updateChordsPanelPosition = () => {
+      const btnEl = chordsBtnRef.current;
+      const panelEl = chordsPanelRef.current;
+      if (!btnEl || !panelEl || typeof window === "undefined") return;
+      const btnRect = btnEl.getBoundingClientRect();
+      const panelWidth = panelEl.getBoundingClientRect().width || 0;
+      const viewportPad = 18;
+      const desiredLeft = btnRect.left;
+      const minLeft = viewportPad;
+      const maxLeft = Math.max(minLeft, window.innerWidth - viewportPad - panelWidth);
+      const clampedLeft = Math.min(Math.max(desiredLeft, minLeft), maxLeft);
+      setChordsPanelShiftX(clampedLeft - desiredLeft);
+    };
+
+    const raf = window.requestAnimationFrame(updateChordsPanelPosition);
+    window.addEventListener("resize", updateChordsPanelPosition);
+    return () => {
+      window.cancelAnimationFrame(raf);
+      window.removeEventListener("resize", updateChordsPanelPosition);
+    };
+  }, [chordsOpen]);
+
+  useEffect(() => {
+    if (!instrumentOpen) return;
+    const onDown = (e) => {
+      if (eventPathIncludes(e, instrumentBtnRef.current)) return;
+      if (eventPathIncludes(e, instrumentPanelRef.current)) return;
+      setInstrumentOpen(false);
+    };
+    window.addEventListener("pointerdown", onDown, true);
+    return () => window.removeEventListener("pointerdown", onDown, true);
+  }, [instrumentOpen]);
+
+  // Settings sidebar state
+  const [projectsOpen, setProjectsOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [shortcutsShowBoth, setShortcutsShowBoth] = useState(false);
+  const [tabWritingOpen, setTabWritingOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const [faqsOpen, setFaqsOpen] = useState(false);
+  const [accountProfileOpen, setAccountProfileOpen] = useState(false);
+  const [projectsLibraryOpen, setProjectsLibraryOpen] = useState(false);
+  const [uiDialog, setUiDialog] = useState(null);
+  const [saveSoonNotice, setSaveSoonNotice] = useState("");
+  const [membershipGateNotice, setMembershipGateNotice] = useState(null);
+  const membershipGateLastShownAtRef = useRef(0);
+  const [hasMeaningfulEditorInteraction, setHasMeaningfulEditorInteraction] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return sessionStorage.getItem(LS_HEADER_TABBY_ENGAGED_SESSION_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [headerTabbyNudgeVisible, setHeaderTabbyNudgeVisible] = useState(false);
+  const [headerTabbyNudgeFading, setHeaderTabbyNudgeFading] = useState(false);
+  const [headerTabbyNudgeTrigger, setHeaderTabbyNudgeTrigger] = useState(0);
+  const headerTabbyNudgeFadeTimerRef = useRef(null);
+  const headerTabbyNudgeHideTimerRef = useRef(null);
+  const headerTabbyNudgeDelayTimerRef = useRef(null);
+  const headerTabbyNudgeReplayConsumedRef = useRef(0);
+  const headerTabbyNudgeShownSessionRef = useRef(
+    typeof window !== "undefined" &&
+      (() => {
+        try {
+          return sessionStorage.getItem(LS_HEADER_TABBY_NUDGE_SHOWN_SESSION_KEY) === "1";
+        } catch {
+          return false;
+        }
+      })()
+  );
+  const [tabsMilestonesTriggered, setTabsMilestonesTriggered] = useState(() => readMilestonesTriggered());
+  const [milestoneConfetti, setMilestoneConfetti] = useState(null);
+  const [milestoneToast, setMilestoneToast] = useState("");
+  const [firstExportGlowActive, setFirstExportGlowActive] = useState(false);
+  const [libraryData, setLibraryData] = useState(() => readLibraryData());
+  const [selectedLibraryArtistKey, setSelectedLibraryArtistKey] = useState("");
+  const [selectedLibraryAlbumName, setSelectedLibraryAlbumName] = useState("");
+  const [selectedLibrarySongName, setSelectedLibrarySongName] = useState("");
+  const [libraryAlbumCreateOpen, setLibraryAlbumCreateOpen] = useState(false);
+  const [libraryNewAlbumDraft, setLibraryNewAlbumDraft] = useState("");
+  const [librarySongCreateOpen, setLibrarySongCreateOpen] = useState(false);
+  const [libraryNewSongDraft, setLibraryNewSongDraft] = useState("");
+  const [artistCreateOpen, setArtistCreateOpen] = useState(false);
+  const [newArtistDraft, setNewArtistDraft] = useState("");
+  const [artistMenuOpen, setArtistMenuOpen] = useState(false);
+  const [albumCreateOpen, setAlbumCreateOpen] = useState(false);
+  const [newAlbumDraft, setNewAlbumDraft] = useState("");
+  const [albumMenuOpen, setAlbumMenuOpen] = useState(false);
+  const [accountProfileSection, setAccountProfileSection] = useState("overview");
+  const [profileFooterHover, setProfileFooterHover] = useState(false);
+  const [languageFooterHover, setLanguageFooterHover] = useState(false);
+  const [settingsLanguagePreview, setSettingsLanguagePreview] = useState("en");
+  const [settingsLanguageOpen, setSettingsLanguageOpen] = useState(false);
+  const milestoneConfettiTimerRef = useRef(null);
+  const milestoneToastTimerRef = useRef(null);
+  const firstExportGlowTimerRef = useRef(null);
+  const editorSurfaceRef = useRef(null);
+  const tabWriterAreaRef = useRef(null);
+  const songTitleInputRef = useRef(null);
+  const artistSelectRef = useRef(null);
+  const albumSelectRef = useRef(null);
+  const artistMenuRef = useRef(null);
+  const albumMenuRef = useRef(null);
+  const newArtistInputRef = useRef(null);
+  const newAlbumInputRef = useRef(null);
+  const completedRowsToggleRef = useRef(null);
+  const completedRowsActionsRef = useRef(null);
+  const completedRowsSectionRef = useRef(null);
+  const shortcutPlatform = useMemo(() => {
+    try {
+      const platformRaw =
+        String(navigator?.userAgentData?.platform || "") ||
+        String(navigator?.platform || "") ||
+        String(navigator?.userAgent || "");
+      const normalized = platformRaw.toLowerCase();
+      if (
+        normalized.includes("mac") ||
+        normalized.includes("iphone") ||
+        normalized.includes("ipad") ||
+        normalized.includes("ipod")
+      ) {
+        return "mac";
+      }
+      return "win";
+    } catch {
+      return "win";
+    }
+  }, []);
+  const isSpanishUi = settingsLanguagePreview === "es";
+  const tr = (en, es) => (isSpanishUi ? `${es || en} (${en})` : en);
+  const sloganText = useMemo(() => getSloganText(), []);
+  const [sloganOffsetX, setSloganOffsetX] = useState(() => {
+    if (typeof window === "undefined") return DEFAULT_SLOGAN_OFFSET_X;
+    try {
+      const raw = localStorage.getItem(LS_SLOGAN_OFFSET_X_KEY);
+      const n = Number(raw);
+      if (!Number.isFinite(n)) return DEFAULT_SLOGAN_OFFSET_X;
+      return Math.max(-120, Math.min(40, n));
+    } catch {
+      return DEFAULT_SLOGAN_OFFSET_X;
+    }
+  });
+  const [headerIntroText, setHeaderIntroText] = useState("");
+  const [headerIntroVisible, setHeaderIntroVisible] = useState(false);
+  const [headerIntroOpacity, setHeaderIntroOpacity] = useState(0);
+  const [headerIntroTabsAnchored, setHeaderIntroTabsAnchored] = useState(false);
+  const [headerSloganTextOpacity, setHeaderSloganTextOpacity] = useState(() => {
+    if (typeof window === "undefined") return 1;
+    try {
+      return Boolean(sessionStorage.getItem(HEADER_INTRO_SESSION_KEY)) ? 1 : 0;
+    } catch {
+      return 1;
+    }
+  });
+  const [headerSloganTickVisible, setHeaderSloganTickVisible] = useState(false);
+  const [headerSloganTickOpacity, setHeaderSloganTickOpacity] = useState(0);
+  const [headerSloganTickMorphActive, setHeaderSloganTickMorphActive] = useState(false);
+  const [headerSloganDotVisible, setHeaderSloganDotVisible] = useState(() => {
+    if (typeof window === "undefined") return true;
+    try {
+      return Boolean(sessionStorage.getItem(HEADER_INTRO_SESSION_KEY));
+    } catch {
+      return true;
+    }
+  });
+  const [headerSloganReady, setHeaderSloganReady] = useState(() => {
+    if (typeof window === "undefined") return true;
+    try {
+      return Boolean(sessionStorage.getItem(HEADER_INTRO_SESSION_KEY));
+    } catch {
+      return true;
+    }
+  });
+  const [headerSloganAtFinalX, setHeaderSloganAtFinalX] = useState(() => {
+    if (typeof window === "undefined") return true;
+    try {
+      return Boolean(sessionStorage.getItem(HEADER_INTRO_SESSION_KEY));
+    } catch {
+      return true;
+    }
+  });
+  const [headerSloganFits, setHeaderSloganFits] = useState(() => {
+    if (typeof window === "undefined") return true;
+    return window.innerWidth >= 1320;
+  });
+  const showHeaderSlogan = headerSloganFits;
+  const introActionText = /\s+tabs$/i.test(headerIntroText) ? headerIntroText.replace(/\s+tabs$/i, "") : headerIntroText;
+  const introIsWriteStep = /^write\b/i.test(headerIntroText);
+  const introIsPlayStep = /^play\b/i.test(headerIntroText);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_SLOGAN_OFFSET_X_KEY, String(sloganOffsetX));
+    } catch {}
+  }, [sloganOffsetX]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onResize = () => setHeaderSloganFits(window.innerWidth >= 1320);
+    window.addEventListener("resize", onResize, { passive: true });
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    let seen = false;
+    try {
+      seen = Boolean(sessionStorage.getItem(HEADER_INTRO_SESSION_KEY));
+    } catch {}
+    if (seen) {
+      setHeaderSloganReady(true);
+      setHeaderSloganAtFinalX(true);
+      setHeaderSloganTextOpacity(1);
+      setHeaderIntroTabsAnchored(true);
+      setHeaderSloganTickVisible(false);
+      setHeaderSloganTickOpacity(0);
+      setHeaderSloganTickMorphActive(false);
+      setHeaderSloganDotVisible(true);
+      setHeaderIntroVisible(false);
+      setHeaderIntroText("");
+      setHeaderIntroOpacity(0);
+      return;
+    }
+
+    setHeaderSloganReady(false);
+    setHeaderSloganAtFinalX(false);
+    setHeaderSloganTextOpacity(0);
+    setHeaderIntroTabsAnchored(false);
+    setHeaderSloganTickMorphActive(false);
+    setHeaderSloganDotVisible(false);
+
+    const introWords = ["Write Tabs", "Save Tabs", "Play Tabs"];
+    const introStartDelayMs = 520;
+    const fadeInMs = 550;
+    const visibleMs = 1050;
+    const fadeOutMs = 550;
+    const totalPerWordMs = fadeInMs + visibleMs + fadeOutMs;
+
+    const timers = [];
+    const rafIds = [];
+
+    introWords.forEach((word, index) => {
+      const startMs = introStartDelayMs + index * totalPerWordMs;
+      timers.push(
+        setTimeout(() => {
+          setHeaderIntroVisible(true);
+          setHeaderIntroText(word);
+          const startsPlay = /^play\s+tabs$/i.test(word);
+          setHeaderIntroOpacity(startsPlay ? (isDarkMode ? 0.8 : 0.72) : 0);
+          const rafId = window.requestAnimationFrame(() => setHeaderIntroOpacity(1));
+          rafIds.push(rafId);
+        }, startMs)
+      );
+      timers.push(setTimeout(() => setHeaderIntroOpacity(0), startMs + fadeInMs + visibleMs));
+    });
+    timers.push(setTimeout(() => setHeaderIntroTabsAnchored(true), introStartDelayMs + fadeInMs));
+
+    const handoffStartMs = introStartDelayMs + introWords.length * totalPerWordMs;
+    timers.push(
+      setTimeout(() => {
+        setHeaderSloganReady(true);
+        setHeaderSloganTextOpacity(0);
+        setHeaderSloganTickVisible(true);
+        setHeaderSloganTickOpacity(1);
+        setHeaderSloganTickMorphActive(false);
+        setHeaderSloganDotVisible(false);
+      }, handoffStartMs)
+    );
+    const sloganFadeLeadMs = 120;
+    const sloganFadeMs = 1100;
+    const holdBeforeSlideMs = 3080;
+    const slideDurationMs = HEADER_TAGLINE_SLIDE_MS;
+    timers.push(setTimeout(() => setHeaderSloganTextOpacity(1), handoffStartMs + sloganFadeLeadMs));
+    timers.push(setTimeout(() => setHeaderIntroOpacity(0), handoffStartMs + 20));
+    timers.push(
+      setTimeout(() => {
+        setHeaderIntroVisible(false);
+        setHeaderIntroText("");
+      }, handoffStartMs + sloganFadeLeadMs + 160)
+    );
+    const slideStartMs = handoffStartMs + sloganFadeLeadMs + sloganFadeMs + holdBeforeSlideMs;
+    timers.push(setTimeout(() => setHeaderSloganAtFinalX(true), slideStartMs));
+    const tickFadeStartMs = slideStartMs + slideDurationMs;
+    timers.push(
+      setTimeout(() => {
+        setHeaderSloganTickMorphActive(true);
+        setHeaderSloganDotVisible(true);
+        setHeaderSloganTickOpacity(0);
+      }, tickFadeStartMs)
+    );
+    timers.push(
+      setTimeout(() => {
+        setHeaderSloganTickVisible(false);
+        setHeaderSloganTickMorphActive(false);
+      }, tickFadeStartMs + slideDurationMs + 760)
+    );
+    timers.push(
+      setTimeout(() => {
+        try {
+          sessionStorage.setItem(HEADER_INTRO_SESSION_KEY, "1");
+        } catch {}
+      }, handoffStartMs + sloganFadeLeadMs + sloganFadeMs + 120)
+    );
+
+    return () => {
+      for (const t of timers) clearTimeout(t);
+      for (const id of rafIds) window.cancelAnimationFrame(id);
+    };
+  }, []);
+
+  const isPlaceholderArtistName = useCallback((value) => {
+    const label = String(value || "").trim();
+    return !label || label.toLowerCase() === "unsorted";
+  }, []);
+  const isPlaceholderAlbumName = useCallback((value) => {
+    const label = String(value || "").trim();
+    return !label || label.toLowerCase() === String(NO_ALBUM_NAME || "").toLowerCase();
+  }, []);
+  const availableArtistNames = useMemo(
+    () => Object.keys(libraryData?.artists || {}).filter((name) => !isPlaceholderArtistName(name)).sort(),
+    [libraryData, isPlaceholderArtistName]
+  );
+  const effectiveArtistLabel = isPlaceholderArtistName(artist) ? "" : String(artist || "").trim();
+  const effectiveAlbumLabel = isPlaceholderAlbumName(albumName) ? "" : String(albumName || "").trim();
+  const albumsForCurrentArtist = useMemo(() => {
+    if (!effectiveArtistLabel) return [];
+    return Object.keys(libraryData?.artists?.[effectiveArtistLabel]?.albums || {})
+      .filter((name) => !isPlaceholderAlbumName(name))
+      .sort();
+  }, [libraryData, effectiveArtistLabel, isPlaceholderAlbumName]);
+  const selectedLibraryArtistLabel = isPlaceholderArtistName(selectedLibraryArtistKey) ? "" : String(selectedLibraryArtistKey || "");
+  const selectedLibraryAlbums = useMemo(() => {
+    const artistNames = Object.keys(libraryData?.artists || {}).filter((name) => !isPlaceholderArtistName(name)).sort();
+    const out = [];
+    for (const artistName of artistNames) {
+      if (selectedLibraryArtistLabel && artistName !== selectedLibraryArtistLabel) continue;
+      const albums = libraryData?.artists?.[artistName]?.albums || {};
+      for (const albumName of Object.keys(albums)) {
+        if (isPlaceholderAlbumName(albumName)) continue;
+        out.push({
+          artistName,
+          albumName,
+          key: `${artistName}__${albumName}`,
+        });
+      }
+    }
+    out.sort((a, b) => {
+      const byAlbum = a.albumName.localeCompare(b.albumName);
+      if (byAlbum !== 0) return byAlbum;
+      return a.artistName.localeCompare(b.artistName);
+    });
+    return out;
+  }, [libraryData, selectedLibraryArtistLabel, isPlaceholderArtistName, isPlaceholderAlbumName]);
+  const selectedLibrarySongs = useMemo(() => {
+    const artistNames = Object.keys(libraryData?.artists || {}).filter((name) => !isPlaceholderArtistName(name)).sort();
+    const out = [];
+    for (const artistName of artistNames) {
+      if (selectedLibraryArtistLabel && artistName !== selectedLibraryArtistLabel) continue;
+      const albums = libraryData?.artists?.[artistName]?.albums || {};
+      for (const albumName of Object.keys(albums)) {
+        if (isPlaceholderAlbumName(albumName)) continue;
+        if (selectedLibraryAlbumName && albumName !== selectedLibraryAlbumName) continue;
+        const songs = albums?.[albumName]?.songs || {};
+        for (const songName of Object.keys(songs)) {
+          out.push({
+            artistName,
+            albumName,
+            songName,
+            key: `${artistName}__${albumName}__${songName}`,
+          });
+        }
+      }
+    }
+    out.sort((a, b) => a.songName.localeCompare(b.songName) || a.albumName.localeCompare(b.albumName) || a.artistName.localeCompare(b.artistName));
+    return out;
+  }, [
+    libraryData,
+    selectedLibraryArtistLabel,
+    selectedLibraryAlbumName,
+    isPlaceholderArtistName,
+    isPlaceholderAlbumName,
+  ]);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsFullscreen, setSettingsFullscreen] = useState(() =>
+    readLocalStorageBool(LS_SETTINGS_FULLSCREEN_KEY, false)
+  );
+  const [helpMenuOpen, setHelpMenuOpen] = useState(false);
+  const [helpMenuHoverPath, setHelpMenuHoverPath] = useState("");
+  const settingsBtnRef = useRef(null);
+  const helpBtnRef = useRef(null);
+  const helpMenuRef = useRef(null);
+  const helpMenuHoverOpenTimerRef = useRef(null);
+  const settingsPanelRef = useRef(null);
+  const settingsExpandHandleRef = useRef(null);
+  const settingsLanguageBtnRef = useRef(null);
+  const settingsLanguageMenuRef = useRef(null);
+  const uiDialogInputRef = useRef(null);
+  const libraryNewAlbumInputRef = useRef(null);
+  const libraryNewSongInputRef = useRef(null);
+  const settingsPanelWidth = 304;
+  const settingsPanelWidthCss = `min(${settingsPanelWidth}px, calc(100vw - 16px))`;
+
+  const [tabCopyMode, setTabCopyMode] = useState("move"); // 'move' | 'copy'
+  const [scrollScope, setScrollScope] = useState(() => {
+    try {
+      const stored = localStorage.getItem(LS_SCROLL_SCOPE_KEY);
+      if (stored === "selected" || stored === "all") return stored;
+    } catch {}
+    return "all";
+  });
+  useEffect(() => {
+    if (!saveSoonNotice) return;
+    const t = setTimeout(() => setSaveSoonNotice(""), 2600);
+    return () => clearTimeout(t);
+  }, [saveSoonNotice]);
+  useEffect(() => {
+    if (!membershipGateNotice) return;
+    const t = setTimeout(() => setMembershipGateNotice(null), 4600);
+    return () => clearTimeout(t);
+  }, [membershipGateNotice]);
+
+  const markMeaningfulEditorInteraction = useCallback(() => {
+    setHasMeaningfulEditorInteraction((prev) => {
+      if (prev) return prev;
+      try {
+        sessionStorage.setItem(LS_HEADER_TABBY_ENGAGED_SESSION_KEY, "1");
+      } catch {}
+      return true;
+    });
+  }, []);
+
+  const hasAnyGridInput = useMemo(
+    () =>
+      Array.isArray(grid) &&
+      grid.some((row) => Array.isArray(row) && row.some((cell) => String(cell || "").trim().length > 0)),
+    [grid]
+  );
+
+  useEffect(() => {
+    if (hasMeaningfulEditorInteraction) return;
+    const songTouched = String(songTitle || "").trim().length > 0;
+    const artistTouched = String(artist || "").trim().length > 0;
+    const albumTouched = String(albumName || "").trim().length > 0;
+    const nonDefaultInstrument = instrumentId !== "gtr6";
+    const nonDefaultTuning = String(tuningLabel || "").trim().toLowerCase() !== "standard";
+    const capoTouched = Boolean(capoEnabled) || String(capoFret || "").trim().length > 0;
+    if (songTouched || artistTouched || albumTouched || hasAnyGridInput || nonDefaultInstrument || nonDefaultTuning || capoTouched) {
+      markMeaningfulEditorInteraction();
+    }
+  }, [
+    hasMeaningfulEditorInteraction,
+    songTitle,
+    artist,
+    albumName,
+    hasAnyGridInput,
+    instrumentId,
+    tuningLabel,
+    capoEnabled,
+    capoFret,
+    markMeaningfulEditorInteraction,
+  ]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    if (isLoggedIn || editorHasMembership || !hasMeaningfulEditorInteraction) {
+      setHeaderTabbyNudgeVisible(false);
+      setHeaderTabbyNudgeFading(false);
+      return undefined;
+    }
+    const replayRequested = headerTabbyNudgeTrigger > headerTabbyNudgeReplayConsumedRef.current;
+    const hasShownThisSession = Boolean(headerTabbyNudgeShownSessionRef.current);
+    if (hasShownThisSession && !replayRequested) return undefined;
+
+    if (replayRequested) headerTabbyNudgeReplayConsumedRef.current = headerTabbyNudgeTrigger;
+    headerTabbyNudgeShownSessionRef.current = true;
+    try {
+      sessionStorage.setItem(LS_HEADER_TABBY_NUDGE_SHOWN_SESSION_KEY, "1");
+    } catch {}
+
+    if (headerTabbyNudgeDelayTimerRef.current) window.clearTimeout(headerTabbyNudgeDelayTimerRef.current);
+    if (headerTabbyNudgeHideTimerRef.current) window.clearTimeout(headerTabbyNudgeHideTimerRef.current);
+    if (headerTabbyNudgeFadeTimerRef.current) window.clearTimeout(headerTabbyNudgeFadeTimerRef.current);
+
+    setHeaderTabbyNudgeVisible(false);
+    setHeaderTabbyNudgeFading(false);
+
+    const delayMs = replayRequested ? 900 : 1400;
+    headerTabbyNudgeDelayTimerRef.current = window.setTimeout(() => {
+      setHeaderTabbyNudgeVisible(true);
+      setHeaderTabbyNudgeFading(false);
+      headerTabbyNudgeHideTimerRef.current = window.setTimeout(() => {
+        setHeaderTabbyNudgeFading(true);
+        headerTabbyNudgeFadeTimerRef.current = window.setTimeout(() => {
+          setHeaderTabbyNudgeVisible(false);
+          setHeaderTabbyNudgeFading(false);
+        }, 340);
+      }, 4000);
+    }, delayMs);
+
+    return () => {
+      if (headerTabbyNudgeDelayTimerRef.current) window.clearTimeout(headerTabbyNudgeDelayTimerRef.current);
+      if (headerTabbyNudgeHideTimerRef.current) window.clearTimeout(headerTabbyNudgeHideTimerRef.current);
+      if (headerTabbyNudgeFadeTimerRef.current) window.clearTimeout(headerTabbyNudgeFadeTimerRef.current);
+    };
+  }, [isLoggedIn, editorHasMembership, hasMeaningfulEditorInteraction, headerTabbyNudgeTrigger]);
+
+  const showMembershipGateToast = useCallback(
+    (feature = "save") => {
+      markMeaningfulEditorInteraction();
+      const now = Date.now();
+      if (now - membershipGateLastShownAtRef.current < 1400) return;
+      membershipGateLastShownAtRef.current = now;
+      const next =
+        feature === "save"
+          ? {
+              message: "Tabby: Want to save your tabs? Membership unlocks saving and projects.",
+              cta: "View Membership",
+            }
+          : feature === "complete-row"
+            ? {
+                message: "Tabby: Finish and export your tabs with membership.",
+                cta: "View Membership",
+              }
+            : {
+                message: "Tabby: Export your tabs as clean PDFs or PNG images with membership.",
+                cta: "See Plans",
+              };
+      setMembershipGateNotice(next);
+      setSaveSoonNotice("");
+      setHeaderTabbyNudgeTrigger((v) => v + 1);
+    },
+    [markMeaningfulEditorInteraction]
+  );
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_TABS_MILESTONES_TRIGGERED_KEY, JSON.stringify(tabsMilestonesTriggered));
+    } catch {}
+  }, [tabsMilestonesTriggered]);
+
+  useEffect(
+    () => () => {
+      if (milestoneConfettiTimerRef.current) clearTimeout(milestoneConfettiTimerRef.current);
+      if (milestoneToastTimerRef.current) clearTimeout(milestoneToastTimerRef.current);
+      if (firstExportGlowTimerRef.current) clearTimeout(firstExportGlowTimerRef.current);
+    },
+    []
+  );
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_SCROLL_SCOPE_KEY, scrollScope);
+    } catch {}
+  }, [scrollScope]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_LIBRARY_V1_KEY, JSON.stringify(normalizeLibraryData(libraryData)));
+    } catch {}
+  }, [libraryData]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_SETTINGS_FULLSCREEN_KEY, settingsFullscreen ? "true" : "false");
+    } catch {}
+  }, [settingsFullscreen]);
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const onDown = (e) => {
+      if (eventPathIncludes(e, settingsBtnRef.current)) return;
+      if (eventPathIncludes(e, settingsPanelRef.current)) return;
+      if (eventPathIncludes(e, settingsExpandHandleRef.current)) return;
+      setSettingsOpen(false);
+    };
+    window.addEventListener("pointerdown", onDown, true);
+    return () => window.removeEventListener("pointerdown", onDown, true);
+  }, [settingsOpen]);
+
+  useEffect(() => {
+    if (!settingsLanguageOpen) return;
+    const onDown = (e) => {
+      if (eventPathIncludes(e, settingsLanguageBtnRef.current)) return;
+      if (eventPathIncludes(e, settingsLanguageMenuRef.current)) return;
+      setSettingsLanguageOpen(false);
+    };
+    window.addEventListener("pointerdown", onDown, true);
+    return () => window.removeEventListener("pointerdown", onDown, true);
+  }, [settingsLanguageOpen]);
+
+  useEffect(() => {
+    if (!helpMenuOpen) return;
+    const onDown = (e) => {
+      if (eventPathIncludes(e, helpBtnRef.current)) return;
+      if (eventPathIncludes(e, helpMenuRef.current)) return;
+      setHelpMenuOpen(false);
+      setHelpMenuHoverPath("");
+    };
+    window.addEventListener("pointerdown", onDown, true);
+    return () => window.removeEventListener("pointerdown", onDown, true);
+  }, [helpMenuOpen]);
+
+  useEffect(
+    () => () => {
+      if (helpMenuHoverOpenTimerRef.current) {
+        window.clearTimeout(helpMenuHoverOpenTimerRef.current);
+        helpMenuHoverOpenTimerRef.current = null;
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (!settingsOpen) setSettingsLanguageOpen(false);
+  }, [settingsOpen]);
+
+  useEffect(() => {
+    if (!artistCreateOpen) return;
+    requestAnimationFrame(() => {
+      try {
+        newArtistInputRef.current?.focus?.();
+      } catch {}
+    });
+  }, [artistCreateOpen]);
+
+  useEffect(() => {
+    if (!albumCreateOpen) return;
+    requestAnimationFrame(() => {
+      try {
+        newAlbumInputRef.current?.focus?.();
+      } catch {}
+    });
+  }, [albumCreateOpen]);
+
+  useEffect(() => {
+    if (uiDialog?.type !== "prompt") return;
+    requestAnimationFrame(() => {
+      try {
+        uiDialogInputRef.current?.focus?.();
+        uiDialogInputRef.current?.select?.();
+      } catch {}
+    });
+  }, [uiDialog?.type]);
+
+  useEffect(() => {
+    if (!libraryAlbumCreateOpen) return;
+    requestAnimationFrame(() => {
+      try {
+        libraryNewAlbumInputRef.current?.focus?.();
+      } catch {}
+    });
+  }, [libraryAlbumCreateOpen]);
+
+  useEffect(() => {
+    if (!librarySongCreateOpen) return;
+    requestAnimationFrame(() => {
+      try {
+        libraryNewSongInputRef.current?.focus?.();
+      } catch {}
+    });
+  }, [librarySongCreateOpen]);
+
+  useEffect(() => {
+    if (!artistCreateOpen) return;
+    const onDown = (e) => {
+      if (eventPathIncludes(e, newArtistInputRef.current)) return;
+      if (String(newArtistDraft || "").trim()) return;
+      setArtistCreateOpen(false);
+      setNewArtistDraft("");
+    };
+    window.addEventListener("pointerdown", onDown, true);
+    return () => window.removeEventListener("pointerdown", onDown, true);
+  }, [artistCreateOpen, newArtistDraft]);
+
+  useEffect(() => {
+    if (!artistMenuOpen) return;
+    const onDown = (e) => {
+      if (eventPathIncludes(e, artistSelectRef.current)) return;
+      if (eventPathIncludes(e, artistMenuRef.current)) return;
+      setArtistMenuOpen(false);
+    };
+    window.addEventListener("pointerdown", onDown, true);
+    return () => window.removeEventListener("pointerdown", onDown, true);
+  }, [artistMenuOpen]);
+
+  useEffect(() => {
+    if (!albumCreateOpen) return;
+    const onDown = (e) => {
+      if (eventPathIncludes(e, newAlbumInputRef.current)) return;
+      if (String(newAlbumDraft || "").trim()) return;
+      setAlbumCreateOpen(false);
+      setNewAlbumDraft("");
+    };
+    window.addEventListener("pointerdown", onDown, true);
+    return () => window.removeEventListener("pointerdown", onDown, true);
+  }, [albumCreateOpen, newAlbumDraft]);
+
+  useEffect(() => {
+    if (!albumMenuOpen) return;
+    const onDown = (e) => {
+      if (eventPathIncludes(e, albumSelectRef.current)) return;
+      if (eventPathIncludes(e, albumMenuRef.current)) return;
+      setAlbumMenuOpen(false);
+    };
+    window.addEventListener("pointerdown", onDown, true);
+    return () => window.removeEventListener("pointerdown", onDown, true);
+  }, [albumMenuOpen]);
+
+  useEffect(() => {
+    if (projectsLibraryOpen) return;
+    setLibraryAlbumCreateOpen(false);
+    setLibraryNewAlbumDraft("");
+    setLibrarySongCreateOpen(false);
+    setLibraryNewSongDraft("");
+  }, [projectsLibraryOpen]);
+
+  useEffect(() => {
+    setLibrarySongCreateOpen(false);
+    setLibraryNewSongDraft("");
+  }, [selectedLibraryAlbumName]);
+
+  useEffect(() => {
+    if (!artistCreateOpen) return;
+    setAlbumCreateOpen(false);
+  }, [artistCreateOpen]);
+
+  useEffect(() => {
+    if (!albumCreateOpen) return;
+    setArtistCreateOpen(false);
+  }, [albumCreateOpen]);
+
+  useEffect(() => {
+    if (!artistCreateOpen) return;
+    setArtistMenuOpen(false);
+  }, [artistCreateOpen]);
+
+  useEffect(() => {
+    if (!albumCreateOpen) return;
+    setAlbumMenuOpen(false);
+  }, [albumCreateOpen]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_UI_LANG_KEY, "en");
+    } catch {}
+  }, []);
+
+  const [pdfShowSong, setPdfShowSong] = useState(true);
+  const [pdfShowArtist, setPdfShowArtist] = useState(true);
+  const [pdfShowAlbum, setPdfShowAlbum] = useState(true);
+  const [pdfShowInstrument, setPdfShowInstrument] = useState(true);
+  const [pdfShowTuning, setPdfShowTuning] = useState(true);
+  const [pdfShowCapo, setPdfShowCapo] = useState(true);
+  const [pdfShowTempo, setPdfShowTempo] = useState(true);
+  const [pdfShowHeaderBranding, setPdfShowHeaderBranding] = useState(true);
+  const [pdfRowGrouping, setPdfRowGrouping] = useState("fill");
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [exportFormat, setExportFormat] = useState("pdf");
+  const [imageExportRowIds, setImageExportRowIds] = useState([]);
+  const [imageMultiExportMode, setImageMultiExportMode] = useState("individual");
+  const [imageExportBusy, setImageExportBusy] = useState(false);
+  const [imageExportProgress, setImageExportProgress] = useState("");
+  const [imageBgMode, setImageBgMode] = useState(() => {
+    try {
+      const raw = String(localStorage.getItem(LS_EXPORT_BG_MODE_KEY) ?? "").trim().toLowerCase();
+      return raw === "solid" ? "solid" : "transparent";
+    } catch {
+      return "transparent";
+    }
+  });
+  const [imageBgColor, setImageBgColor] = useState(() => {
+    try {
+      return normalizeHexColorOrFallback(localStorage.getItem(LS_EXPORT_BG_COLOR_KEY), "#000000");
+    } catch {
+      return "#000000";
+    }
+  });
+  const [imageTextColor, setImageTextColor] = useState(() => {
+    try {
+      return normalizeHexColorOrFallback(localStorage.getItem(LS_EXPORT_TEXT_COLOR_KEY), "#ffffff");
+    } catch {
+      return "#ffffff";
+    }
+  });
+  const [imageThickness, setImageThickness] = useState(() => {
+    try {
+      const raw = String(localStorage.getItem(LS_EXPORT_THICKNESS_KEY) ?? "").trim().toUpperCase();
+      return raw === "A" || raw === "B" || raw === "C" ? raw : "B";
+    } catch {
+      return "B";
+    }
+  });
+  const [imageTextOutline, setImageTextOutline] = useState(() => {
+    try {
+      const raw = String(localStorage.getItem(LS_EXPORT_TEXT_OUTLINE_KEY) ?? "").trim().toLowerCase();
+      if (raw === "subtle" || raw === "strong") return raw;
+      return "off";
+    } catch {
+      return "off";
+    }
+  });
+  const [imageShowRowNames, setImageShowRowNames] = useState(() => {
+    try {
+      const raw = String(localStorage.getItem(LS_EXPORT_SHOW_ROW_NAMES_KEY) ?? "").trim().toLowerCase();
+      if (raw === "false" || raw === "0" || raw === "no") return false;
+      return true;
+    } catch {
+      return true;
+    }
+  });
+  const [imageShowArtist, setImageShowArtist] = useState(() => {
+    try {
+      return String(localStorage.getItem(LS_EXPORT_SHOW_ARTIST_KEY) ?? "").trim().toLowerCase() === "true";
+    } catch {
+      return false;
+    }
+  });
+  const [imageShowAlbum, setImageShowAlbum] = useState(() => {
+    try {
+      return String(localStorage.getItem(LS_EXPORT_SHOW_ALBUM_KEY) ?? "").trim().toLowerCase() === "true";
+    } catch {
+      return false;
+    }
+  });
+  const [imageShowSong, setImageShowSong] = useState(() => {
+    try {
+      return String(localStorage.getItem(LS_EXPORT_SHOW_SONG_KEY) ?? "").trim().toLowerCase() === "true";
+    } catch {
+      return false;
+    }
+  });
+  const [imageShowInstrument, setImageShowInstrument] = useState(() => {
+    try {
+      return String(localStorage.getItem(LS_EXPORT_SHOW_INSTRUMENT_KEY) ?? "").trim().toLowerCase() === "true";
+    } catch {
+      return false;
+    }
+  });
+  const [imageShowTuning, setImageShowTuning] = useState(() => {
+    try {
+      return String(localStorage.getItem(LS_EXPORT_SHOW_TUNING_KEY) ?? "").trim().toLowerCase() === "true";
+    } catch {
+      return false;
+    }
+  });
+  const [imageShowCapo, setImageShowCapo] = useState(() => {
+    try {
+      return String(localStorage.getItem(LS_EXPORT_SHOW_CAPO_KEY) ?? "").trim().toLowerCase() === "true";
+    } catch {
+      return false;
+    }
+  });
+  const [imageShowTempo, setImageShowTempo] = useState(() => {
+    try {
+      return String(localStorage.getItem(LS_EXPORT_SHOW_TEMPO_KEY) ?? "").trim().toLowerCase() === "true";
+    } catch {
+      return false;
+    }
+  });
+  const [imageShowBranding, setImageShowBranding] = useState(() => {
+    try {
+      const raw = String(localStorage.getItem(LS_EXPORT_SHOW_IMAGE_BRANDING_KEY) ?? "").trim().toLowerCase();
+      if (raw === "false" || raw === "0" || raw === "no") return false;
+      return true;
+    } catch {
+      return true;
+    }
+  });
+
+  useEffect(() => {
+    if (projectsLibraryOpen || exportModalOpen || !settingsOpen) setHelpMenuOpen(false);
+  }, [projectsLibraryOpen, exportModalOpen, settingsOpen]);
+  const [pdfSettingsOpenSection, setPdfSettingsOpenSection] = useState("song");
+  const [pdfPreviewScale, setPdfPreviewScale] = useState(0.58);
+  const [exportPdfHover, setExportPdfHover] = useState(false);
+  const [imageSettingsOpenSection, setImageSettingsOpenSection] = useState("rows");
+  const [imagePreviewUrl, setImagePreviewUrl] = useState("");
+  const [imagePreviewDims, setImagePreviewDims] = useState({ width: 0, height: 0 });
+  const [imagePreviewBusy, setImagePreviewBusy] = useState(false);
+  const [imagePreviewMetaText, setImagePreviewMetaText] = useState("");
+  const imagePreviewUrlRef = useRef("");
+  const exportUndoStackRef = useRef([]);
+  const exportRedoStackRef = useRef([]);
+  const exportHistorySuspendedRef = useRef(false);
+  const exportHistoryLastSnapshotRef = useRef(null);
+  const toggleImageSettingsSection = (sectionId) => {
+    setImageSettingsOpenSection((current) => (current === sectionId ? "" : sectionId));
+  };
+  const togglePdfSettingsSection = (sectionId) => {
+    setPdfSettingsOpenSection((current) => (current === sectionId ? "" : sectionId));
+  };
+
+  const snapshotExportState = useCallback(
+    () => ({
+      exportFormat,
+      pdfShowSong,
+      pdfShowArtist,
+      pdfShowAlbum,
+      pdfShowInstrument,
+      pdfShowTuning,
+      pdfShowCapo,
+      pdfShowTempo,
+      pdfShowHeaderBranding,
+      pdfRowGrouping,
+      pdfSettingsOpenSection,
+      imageSettingsOpenSection,
+      imageExportRowIds: [...imageExportRowIds],
+      imageMultiExportMode,
+      imageBgMode,
+      imageBgColor,
+      imageTextColor,
+      imageThickness,
+      imageTextOutline,
+      imageShowRowNames,
+      imageShowArtist,
+      imageShowAlbum,
+      imageShowSong,
+      imageShowInstrument,
+      imageShowTuning,
+      imageShowCapo,
+      imageShowTempo,
+      imageShowBranding,
+    }),
+    [
+      exportFormat,
+      pdfShowSong,
+      pdfShowArtist,
+      pdfShowAlbum,
+      pdfShowInstrument,
+      pdfShowTuning,
+      pdfShowCapo,
+      pdfShowTempo,
+      pdfShowHeaderBranding,
+      pdfRowGrouping,
+      pdfSettingsOpenSection,
+      imageSettingsOpenSection,
+      imageExportRowIds,
+      imageMultiExportMode,
+      imageBgMode,
+      imageBgColor,
+      imageTextColor,
+      imageThickness,
+      imageTextOutline,
+      imageShowRowNames,
+      imageShowArtist,
+      imageShowAlbum,
+      imageShowSong,
+      imageShowInstrument,
+      imageShowTuning,
+      imageShowCapo,
+      imageShowTempo,
+      imageShowBranding,
+    ]
+  );
+
+  const applyExportStateSnapshot = useCallback((snapshot) => {
+    if (!snapshot) return;
+    exportHistorySuspendedRef.current = true;
+    setExportFormat(String(snapshot.exportFormat || "pdf").toLowerCase() === "image" ? "image" : "pdf");
+    setPdfShowSong(Boolean(snapshot.pdfShowSong));
+    setPdfShowArtist(Boolean(snapshot.pdfShowArtist));
+    setPdfShowAlbum(Boolean(snapshot.pdfShowAlbum));
+    setPdfShowInstrument(Boolean(snapshot.pdfShowInstrument));
+    setPdfShowTuning(Boolean(snapshot.pdfShowTuning));
+    setPdfShowCapo(Boolean(snapshot.pdfShowCapo));
+    setPdfShowTempo(Boolean(snapshot.pdfShowTempo));
+    setPdfShowHeaderBranding(Boolean(snapshot.pdfShowHeaderBranding));
+    setPdfRowGrouping(snapshot.pdfRowGrouping === "grouped" ? "grouped" : "fill");
+    setPdfSettingsOpenSection(String(snapshot.pdfSettingsOpenSection || ""));
+    setImageSettingsOpenSection(String(snapshot.imageSettingsOpenSection || ""));
+    setImageExportRowIds(Array.isArray(snapshot.imageExportRowIds) ? snapshot.imageExportRowIds : []);
+    setImageMultiExportMode(snapshot.imageMultiExportMode === "combined" ? "combined" : "individual");
+    setImageBgMode(snapshot.imageBgMode === "solid" ? "solid" : "transparent");
+    setImageBgColor(normalizeHexColorOrFallback(snapshot.imageBgColor, "#000000"));
+    setImageTextColor(normalizeHexColorOrFallback(snapshot.imageTextColor, "#ffffff"));
+    setImageThickness(["A", "B", "C"].includes(String(snapshot.imageThickness || "").toUpperCase()) ? String(snapshot.imageThickness || "").toUpperCase() : "B");
+    setImageTextOutline(["off", "subtle", "strong"].includes(String(snapshot.imageTextOutline || "").toLowerCase()) ? String(snapshot.imageTextOutline || "").toLowerCase() : "off");
+    setImageShowRowNames(Boolean(snapshot.imageShowRowNames));
+    setImageShowArtist(Boolean(snapshot.imageShowArtist));
+    setImageShowAlbum(Boolean(snapshot.imageShowAlbum));
+    setImageShowSong(Boolean(snapshot.imageShowSong));
+    setImageShowInstrument(Boolean(snapshot.imageShowInstrument));
+    setImageShowTuning(Boolean(snapshot.imageShowTuning));
+    setImageShowCapo(Boolean(snapshot.imageShowCapo));
+    setImageShowTempo(Boolean(snapshot.imageShowTempo));
+    setImageShowBranding(
+      snapshot.imageShowBranding === undefined ? true : Boolean(snapshot.imageShowBranding)
+    );
+    exportHistoryLastSnapshotRef.current = cloneJson(snapshot, null);
+    requestAnimationFrame(() => {
+      exportHistorySuspendedRef.current = false;
+    });
+  }, []);
+
+  const exportUndo = useCallback(() => {
+    const stack = exportUndoStackRef.current;
+    if (!stack.length) return;
+    const prev = stack.pop();
+    exportRedoStackRef.current.push(snapshotExportState());
+    applyExportStateSnapshot(prev);
+  }, [applyExportStateSnapshot, snapshotExportState]);
+
+  const exportRedo = useCallback(() => {
+    const stack = exportRedoStackRef.current;
+    if (!stack.length) return;
+    const next = stack.pop();
+    exportUndoStackRef.current.push(snapshotExportState());
+    applyExportStateSnapshot(next);
+  }, [applyExportStateSnapshot, snapshotExportState]);
+
+  // Global ESC key handler to close overlays/menus in a top-down order.
+  useEffect(() => {
+    const handleEsc = (e) => {
+      if (e.key !== "Escape") return;
+
+      const active = document.activeElement;
+      if (
+        active &&
+        (active === songTitleInputRef.current ||
+          active === artistSelectRef.current ||
+          active === albumSelectRef.current ||
+          active === newArtistInputRef.current ||
+          active === newAlbumInputRef.current)
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        try {
+          active.blur?.();
+        } catch {}
+        focusKeyCapture();
+        return;
+      }
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (uiDialog) {
+        closeUiDialog();
+        return;
+      }
+
+      // Close top-most sub-modal first and keep parent tool open.
+      if (editChordModalOpen) {
+        setEditChordModalOpen(false);
+        setChordsOpen(true);
+        try {
+          keyCaptureRef.current?.focus?.({ preventScroll: true });
+        } catch {
+          try {
+            keyCaptureRef.current?.focus?.();
+          } catch {}
+        }
+        return;
+      }
+
+      if (customOpen) {
+        setCustomOpen(false);
+        setTuningOpen(true);
+        try {
+          keyCaptureRef.current?.focus?.({ preventScroll: true });
+        } catch {
+          try {
+            keyCaptureRef.current?.focus?.();
+          } catch {}
+        }
+        return;
+      }
+
+      if (rowDeleteConfirmIds) {
+        setRowDeleteConfirmIds(null);
+        setRowDeleteConfirmSource("");
+        return;
+      }
+
+      if (songDeleteConfirmTarget) {
+        setSongDeleteConfirmTarget(null);
+        return;
+      }
+
+      if (libraryDeleteConfirmTarget) {
+        setLibraryDeleteConfirmTarget(null);
+        return;
+      }
+
+      if (chordDeleteConfirmId) {
+        setChordDeleteConfirmId("");
+        return;
+      }
+
+      // Always close the freshest overlay first: settings before page-level views.
+      if (settingsOpen) {
+        setSettingsOpen(false);
+        setSettingsFullscreen(false);
+        return;
+      }
+
+      if (accountProfileOpen) {
+        setAccountProfileOpen(false);
+        return;
+      }
+      if (exportModalOpen) {
+        setExportModalOpen(false);
+        setImageExportProgress("");
+        return;
+      }
+      if (projectsLibraryOpen) {
+        setProjectsLibraryOpen(false);
+        return;
+      }
+
+      // Then close one open panel at a time.
+      if (insertOpen) return void setInsertOpen(false);
+      if (chordsOpen) return void setChordsOpen(false);
+      if (capoOpen) return void setCapoOpen(false);
+      if (tuningOpen) return void setTuningOpen(false);
+      if (instrumentOpen) return void setInstrumentOpen(false);
+      if (artistMenuOpen) return void setArtistMenuOpen(false);
+      if (albumMenuOpen) return void setAlbumMenuOpen(false);
+    };
+
+    window.addEventListener("keydown", handleEsc, true);
+    return () => window.removeEventListener("keydown", handleEsc, true);
+  }, [
+    uiDialog,
+    editChordModalOpen,
+    customOpen,
+    rowDeleteConfirmIds,
+    songDeleteConfirmTarget,
+    libraryDeleteConfirmTarget,
+    chordDeleteConfirmId,
+    accountProfileOpen,
+    exportModalOpen,
+    projectsLibraryOpen,
+    insertOpen,
+    chordsOpen,
+    capoOpen,
+    tuningOpen,
+    instrumentOpen,
+    artistMenuOpen,
+    albumMenuOpen,
+    settingsOpen,
+  ]);
+
+  useEffect(() => {
+    const onGlobalShortcut = (e) => {
+      const key = String(e.key ?? "");
+      const lower = key.toLowerCase();
+      const isMod = e.metaKey || e.ctrlKey;
+      if (!isMod) return;
+
+      const activeEl = document.activeElement;
+      const target = e.target;
+      const isTextEntry = isTextEntryElement(target) || isTextEntryElement(activeEl);
+      const inGridScope = !!(activeEl && (activeEl === keyCaptureRef.current || tabWriterAreaRef.current?.contains(activeEl)));
+      const inCompletedRowsScope = !!(activeEl && completedRowsSectionRef.current?.contains(activeEl));
+      const consume = () => {
+        e.preventDefault();
+        e.stopPropagation();
+      };
+
+      if (lower === "z") {
+        consume();
+        if (exportModalOpen) {
+          if (e.shiftKey) exportRedo();
+          else exportUndo();
+        } else {
+          if (e.shiftKey) redo();
+          else undo();
+        }
+        return;
+      }
+      if (!e.metaKey && e.ctrlKey && lower === "y") {
+        consume();
+        if (exportModalOpen) exportRedo();
+        else redo();
+        return;
+      }
+      if (lower === "s") {
+        if (exportModalOpen || projectsLibraryOpen) return;
+        consume();
+        handleSaveTabClick();
+        return;
+      }
+      if (lower === "o") {
+        consume();
+        handleOpenTabClick();
+        return;
+      }
+      if (lower === "e") {
+        consume();
+        openExportModal();
+        return;
+      }
+      if (key === ",") {
+        consume();
+        setSettingsOpen(true);
+        return;
+      }
+      if (key === "/" || key === "?") {
+        consume();
+        setSettingsOpen(true);
+        setShortcutsOpen(true);
+        setProjectsOpen(false);
+        setTabWritingOpen(false);
+        setFaqsOpen(false);
+        return;
+      }
+
+      if (inCompletedRowsScope && !isTextEntry && (key === "ArrowUp" || key === "ArrowDown")) {
+        consume();
+        moveSelectedCompletedRows(key === "ArrowUp" ? -1 : 1);
+        return;
+      }
+      if (inCompletedRowsScope && !isTextEntry && lower === "d") {
+        consume();
+        duplicateSelectedRows();
+        return;
+      }
+      if (inCompletedRowsScope && !isTextEntry && (key === "Delete" || key === "Backspace")) {
+        consume();
+        deleteSelectedRows();
+        return;
+      }
+
+      if (!inGridScope) return;
+
+      if (lower === "1") {
+        consume();
+        songTitleInputRef.current?.focus?.();
+        songTitleInputRef.current?.select?.();
+        return;
+      }
+      if (lower === "2") {
+        consume();
+        artistSelectRef.current?.focus?.();
+        return;
+      }
+      if (key === "Backspace" || key === "Delete") {
+        consume();
+        clearCurrentRowWithConfirm();
+        return;
+      }
+
+      if (lower === "k") {
+        consume();
+        if (standard) {
+          const next = !chordsOpen;
+          setChordsOpen(next);
+          if (next) {
+            setInsertOpen(false);
+            setCapoOpen(false);
+            setTuningOpen(false);
+            setInstrumentOpen(false);
+          }
+        }
+        return;
+      }
+
+      if (lower === "i" && e.shiftKey) {
+        consume();
+        const next = !instrumentOpen;
+        setInstrumentOpen(next);
+        if (next) {
+          setInsertOpen(false);
+          setCapoOpen(false);
+          setTuningOpen(false);
+          setChordsOpen(false);
+        }
+        return;
+      }
+
+      if (lower === "t" && e.shiftKey) {
+        consume();
+        const next = !tuningOpen;
+        setTuningOpen(next);
+        if (next) {
+          setInsertOpen(false);
+          setCapoOpen(false);
+          setInstrumentOpen(false);
+          setChordsOpen(false);
+        } else {
+          setCustomOpen(false);
+        }
+        return;
+      }
+
+      if (lower === "c" && e.shiftKey) {
+        if (!showCapoControl) return;
+        consume();
+        const next = !capoOpen;
+        setCapoOpen(next);
+        if (next) {
+          setInsertOpen(false);
+          setTuningOpen(false);
+          setInstrumentOpen(false);
+          setChordsOpen(false);
+        }
+        return;
+      }
+
+      if (lower === "i" && !e.shiftKey) {
+        consume();
+        const next = !insertOpen;
+        setInsertOpen(next);
+        if (next) {
+          setCapoOpen(false);
+          setTuningOpen(false);
+          setInstrumentOpen(false);
+          setChordsOpen(false);
+        }
+        return;
+      }
+    };
+
+    window.addEventListener("keydown", onGlobalShortcut, true);
+    return () => window.removeEventListener("keydown", onGlobalShortcut, true);
+  }, [
+    chordsOpen,
+    insertOpen,
+    capoOpen,
+    tuningOpen,
+    instrumentOpen,
+    standard,
+    isTextEntryElement,
+    redo,
+    undo,
+    handleSaveTabClick,
+    handleOpenTabClick,
+    openExportModal,
+    moveSelectedCompletedRows,
+    duplicateSelectedRows,
+    deleteSelectedRows,
+    clearCurrentRowWithConfirm,
+    showCapoControl,
+  ]);
+
+  const [compactGrid] = useState(false);
+  const [strongCursor] = useState(true);
+
+  const selectedExportRows = useMemo(() => {
+    const picked = new Set(imageExportRowIds);
+    return completedRows.filter((row) => picked.has(row.id));
+  }, [completedRows, imageExportRowIds]);
+  const selectedExportCount = selectedExportRows.length;
+  useEffect(() => {
+    if (!exportModalOpen || exportFormat !== "image") return;
+    if (selectedExportCount <= 0) {
+      if (imagePreviewUrlRef.current) {
+        URL.revokeObjectURL(imagePreviewUrlRef.current);
+        imagePreviewUrlRef.current = "";
+      }
+      setImagePreviewUrl("");
+      setImagePreviewDims({ width: 0, height: 0 });
+      setImagePreviewMetaText("");
+      setImagePreviewBusy(false);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setImagePreviewBusy(true);
+      try {
+        const previewRows =
+          selectedExportRows.length > 1 && imageMultiExportMode === "combined"
+            ? selectedExportRows.map((row, i) => ({
+                rowLabel: makeExportRowLabel(row, i),
+                rowText: getExportRowText(row, i),
+                metaLines: buildImageExportMetaLines({
+                  row,
+                  songTitle,
+                  artist,
+                  albumName,
+                  capoEnabled,
+                  capoFret,
+                  tempoEnabled: showTempoControl,
+                  tempoBpm,
+                  showSong: imageShowSong,
+                  showArtist: imageShowArtist,
+                  showAlbum: imageShowAlbum,
+                  showInstrument: imageShowInstrument,
+                  showTuning: imageShowTuning,
+                  showCapo: showCapoControl && imageShowCapo,
+                  showTempo: showTempoControl && imageShowTempo,
+                }),
+              }))
+            : [
+                {
+                  rowLabel: makeExportRowLabel(selectedExportRows[0], 0),
+                  rowText: getExportRowText(selectedExportRows[0], 0),
+                  metaLines: buildImageExportMetaLines({
+                    row: selectedExportRows[0],
+                    songTitle,
+                    artist,
+                    albumName,
+                    capoEnabled,
+                    capoFret,
+                    tempoEnabled: showTempoControl,
+                    tempoBpm,
+                    showSong: imageShowSong,
+                    showArtist: imageShowArtist,
+                    showAlbum: imageShowAlbum,
+                    showInstrument: imageShowInstrument,
+                    showTuning: imageShowTuning,
+                    showCapo: showCapoControl && imageShowCapo,
+                    showTempo: showTempoControl && imageShowTempo,
+                  }),
+                },
+              ];
+
+        const previewBlob =
+          previewRows.length > 1 && imageMultiExportMode === "combined"
+            ? await renderRowsTextToPngBlob({
+                rows: previewRows,
+                showRowLabels: imageShowRowNames,
+                textColor: imageTextColor,
+                bgMode: imageBgMode,
+                bgColor: imageBgColor,
+                thickness: imageThickness,
+                textOutline: imageTextOutline,
+                includeBranding: imageShowBranding,
+                pixelRatio: 2,
+              })
+            : await renderRowTextToPngBlob({
+                rowText: previewRows[0].rowText,
+                rowLabel: previewRows[0].rowLabel,
+                showRowLabel: imageShowRowNames,
+                metaLines: previewRows[0].metaLines,
+                textColor: imageTextColor,
+                bgMode: imageBgMode,
+                bgColor: imageBgColor,
+                thickness: imageThickness,
+                textOutline: imageTextOutline,
+                includeBranding: imageShowBranding,
+                pixelRatio: 2,
+              });
+
+        if (cancelled) return;
+        const objectUrl = URL.createObjectURL(previewBlob);
+        const dimensions = await new Promise((resolve) => {
+          const probe = new Image();
+          probe.onload = () =>
+            resolve({
+              width: probe.naturalWidth || 0,
+              height: probe.naturalHeight || 0,
+            });
+          probe.onerror = () => resolve({ width: 0, height: 0 });
+          probe.src = objectUrl;
+        });
+        if (cancelled) {
+          URL.revokeObjectURL(objectUrl);
+          return;
+        }
+
+        if (imagePreviewUrlRef.current) URL.revokeObjectURL(imagePreviewUrlRef.current);
+        imagePreviewUrlRef.current = objectUrl;
+        setImagePreviewUrl(objectUrl);
+        setImagePreviewDims(dimensions);
+        if (previewRows.length > 1) {
+          setImagePreviewMetaText(
+            `${dimensions.width} x ${dimensions.height}px · Combined export (${selectedExportRows.length} rows)`
+          );
+        } else if (selectedExportRows.length > 1 && imageMultiExportMode === "individual") {
+          setImagePreviewMetaText(
+            `${dimensions.width} x ${dimensions.height}px · Per-image output (1 of ${selectedExportRows.length})`
+          );
+        } else {
+          setImagePreviewMetaText(`${dimensions.width} x ${dimensions.height}px`);
+        }
+      } catch {
+        if (cancelled) return;
+        if (imagePreviewUrlRef.current) {
+          URL.revokeObjectURL(imagePreviewUrlRef.current);
+          imagePreviewUrlRef.current = "";
+        }
+        setImagePreviewUrl("");
+        setImagePreviewDims({ width: 0, height: 0 });
+        setImagePreviewMetaText("");
+      } finally {
+        if (!cancelled) setImagePreviewBusy(false);
+      }
+    }, 120);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [
+    exportModalOpen,
+    exportFormat,
+    selectedExportCount,
+    selectedExportRows,
+    imageMultiExportMode,
+    imageShowRowNames,
+    imageTextColor,
+    imageBgMode,
+    imageBgColor,
+    imageThickness,
+    imageTextOutline,
+    imageShowSong,
+    imageShowArtist,
+    imageShowAlbum,
+    imageShowInstrument,
+    imageShowTuning,
+    imageShowCapo,
+    imageShowTempo,
+    imageShowBranding,
+    showCapoControl,
+    showTempoControl,
+    songTitle,
+    artist,
+    albumName,
+    capoEnabled,
+    capoFret,
+    tempoBpm,
+  ]);
+  useEffect(
+    () => () => {
+      if (!imagePreviewUrlRef.current) return;
+      URL.revokeObjectURL(imagePreviewUrlRef.current);
+      imagePreviewUrlRef.current = "";
+    },
+    []
+  );
+  const pdfPreviewLayout = useMemo(
+    () =>
+      buildPdfPageLayout({
+        title: String(songTitle || "").trim(),
+        artist: String(artist || "").trim(),
+        albumName: String(albumName || "").trim(),
+        instrumentLabel: String(currentInstrument?.label || "").trim(),
+        tuningLabel,
+        capoEnabled,
+        capoFret: hasConfiguredCapo(capoEnabled, capoFret) ? String(capoFret).trim() : "",
+        tempoEnabled: showTempoControl,
+        tempoBpm: hasConfiguredTempo(showTempoControl, tempoBpm) ? String(tempoBpm).trim() : "",
+        completedRows,
+        showSong: pdfShowSong,
+        showArtist: pdfShowArtist,
+        showAlbum: pdfShowAlbum,
+        showInstrument: pdfShowInstrument,
+        showTuning: pdfShowTuning,
+        showCapo: showCapoControl && pdfShowCapo,
+        showTempo: showTempoControl && pdfShowTempo,
+        showHeaderBranding: pdfShowHeaderBranding,
+        rowGrouping: pdfRowGrouping,
+      }),
+    [
+      songTitle,
+      artist,
+      albumName,
+      currentInstrument?.label,
+      tuningLabel,
+      capoEnabled,
+      capoFret,
+      showTempoControl,
+      tempoBpm,
+      completedRows,
+      pdfShowSong,
+      pdfShowArtist,
+      pdfShowAlbum,
+      pdfShowInstrument,
+      pdfShowTuning,
+      pdfShowCapo,
+      pdfShowTempo,
+      showCapoControl,
+      pdfShowHeaderBranding,
+      pdfRowGrouping,
+    ]
+  );
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_EXPORT_BG_MODE_KEY, imageBgMode);
+    } catch {}
+  }, [imageBgMode]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_EXPORT_BG_COLOR_KEY, imageBgColor);
+    } catch {}
+  }, [imageBgColor]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_EXPORT_TEXT_COLOR_KEY, imageTextColor);
+    } catch {}
+  }, [imageTextColor]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_EXPORT_THICKNESS_KEY, imageThickness);
+    } catch {}
+  }, [imageThickness]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_EXPORT_TEXT_OUTLINE_KEY, imageTextOutline);
+    } catch {}
+  }, [imageTextOutline]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_EXPORT_SHOW_ROW_NAMES_KEY, imageShowRowNames ? "true" : "false");
+    } catch {}
+  }, [imageShowRowNames]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_EXPORT_SHOW_ARTIST_KEY, imageShowArtist ? "true" : "false");
+    } catch {}
+  }, [imageShowArtist]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_EXPORT_SHOW_ALBUM_KEY, imageShowAlbum ? "true" : "false");
+    } catch {}
+  }, [imageShowAlbum]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_EXPORT_SHOW_SONG_KEY, imageShowSong ? "true" : "false");
+    } catch {}
+  }, [imageShowSong]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_EXPORT_SHOW_INSTRUMENT_KEY, imageShowInstrument ? "true" : "false");
+    } catch {}
+  }, [imageShowInstrument]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_EXPORT_SHOW_TUNING_KEY, imageShowTuning ? "true" : "false");
+    } catch {}
+  }, [imageShowTuning]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_EXPORT_SHOW_CAPO_KEY, imageShowCapo ? "true" : "false");
+    } catch {}
+  }, [imageShowCapo]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_EXPORT_SHOW_TEMPO_KEY, imageShowTempo ? "true" : "false");
+    } catch {}
+  }, [imageShowTempo]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_EXPORT_SHOW_IMAGE_BRANDING_KEY, imageShowBranding ? "true" : "false");
+    } catch {}
+  }, [imageShowBranding]);
+
+  useEffect(() => {
+    if (!showCapoControl) setCapoOpen(false);
+  }, [showCapoControl]);
+
+  useEffect(() => {
+    if (imageBgMode !== "solid") return;
+    const nextText = getAutoContrastedTextColor(imageBgColor, imageTextColor);
+    if (nextText !== imageTextColor) setImageTextColor(nextText);
+  }, [imageBgMode, imageBgColor, imageTextColor]);
+
+  useEffect(() => {
+    if (!exportModalOpen) {
+      exportUndoStackRef.current = [];
+      exportRedoStackRef.current = [];
+      exportHistoryLastSnapshotRef.current = null;
+      exportHistorySuspendedRef.current = false;
+      return;
+    }
+    const current = snapshotExportState();
+    const previous = exportHistoryLastSnapshotRef.current;
+    if (!previous) {
+      exportHistoryLastSnapshotRef.current = cloneJson(current, null);
+      return;
+    }
+    if (exportHistorySuspendedRef.current) {
+      exportHistoryLastSnapshotRef.current = cloneJson(current, null);
+      return;
+    }
+    if (JSON.stringify(previous) === JSON.stringify(current)) return;
+    exportUndoStackRef.current.push(cloneJson(previous, null));
+    if (exportUndoStackRef.current.length > 250) exportUndoStackRef.current.shift();
+    exportRedoStackRef.current = [];
+    exportHistoryLastSnapshotRef.current = cloneJson(current, null);
+  }, [exportModalOpen, snapshotExportState]);
+
+  useEffect(() => {
+    if (!exportModalOpen) return;
+    setImageExportRowIds(completedRows.map((row) => row.id));
+    setImageMultiExportMode("individual");
+    setImageExportProgress("");
+  }, [exportModalOpen, completedRows]);
+
+  useEffect(() => {
+    if (!settingsOpen || !tabWritingOpen) return;
+
+    const totalCols = colsRef.current || cols;
+    const maxCol = Math.max(0, totalCols - 1);
+    const step = (compactGrid ? 32 : 40) + 8; // cell width + column gap
+    const sidebarWidth =
+      typeof window !== "undefined" ? Math.min(304, Math.max(0, window.innerWidth - 16)) : 304;
+    const minVisibleCol = Math.min(maxCol, Math.max(0, Math.ceil((sidebarWidth + 20) / step)));
+
+    setCursor((cur) => {
+      if (cur.c >= minVisibleCol) return cur;
+      return { ...cur, c: minVisibleCol };
+    });
+  }, [settingsOpen, tabWritingOpen, compactGrid, cols]);
+
+  function commitColsInput(rawValue = colsInput) {
+    const parsed = Number(rawValue);
+    const next = Math.max(
+      MIN_COLS,
+      Math.min(MAX_COLS, Number.isFinite(parsed) && String(rawValue).trim() !== "" ? parsed : colsRef.current)
+    );
+    setCols(next);
+    setColsInput(String(next));
+  }
+  function commitDefaultColsInput() {
+    const next = clampColsValue(defaultColsInput, defaultCols);
+    setDefaultCols(next);
+    setDefaultColsInput(String(next));
+  }
+  function commitColsAutoDelayInput() {
+    const seconds = Number(colsAutoDelayInput);
+    const nextMs = clampColsAutoDelayMs(
+      Number.isFinite(seconds) && String(colsAutoDelayInput).trim() !== "" ? seconds * 1000 : colsAutoDelayMs,
+      colsAutoDelayMs
+    );
+    setColsAutoDelayMs(nextMs);
+    setColsAutoDelayInput(String(Math.round(nextMs / 1000)));
+  }
+  function clearColsAutoCommitTimer() {
+    if (colsAutoCommitTimerRef.current) {
+      window.clearTimeout(colsAutoCommitTimerRef.current);
+      colsAutoCommitTimerRef.current = null;
+    }
+  }
+  function scheduleColsAutoCommit(rawValue) {
+    const raw = String(rawValue ?? "").replace(/[^\d]/g, "");
+    clearColsAutoCommitTimer();
+    if (!raw) return;
+    if (raw.length >= 2) {
+      commitColsInput(raw);
+      setColsReplaceOnType(false);
+      return;
+    }
+    colsAutoCommitTimerRef.current = window.setTimeout(() => {
+      commitColsInput(raw);
+      setColsReplaceOnType(false);
+      colsAutoCommitTimerRef.current = null;
+    }, colsAutoDelayMs);
+  }
+  function resetColsToDefault(sourceEl) {
+    clearColsAutoCommitTimer();
+    // Triple-click reset is intentionally hard-locked to 32 columns.
+    setCols(TRIPLE_CLICK_RESET_COLS);
+    setColsInput(String(TRIPLE_CLICK_RESET_COLS));
+    setColsReplaceOnType(false);
+    colsReplaceOnTypeRef.current = false;
+    colsRapidClickRef.current = { count: 0, lastTs: 0 };
+    if (sourceEl && typeof sourceEl.blur === "function") sourceEl.blur();
+    focusKeyCapture();
+  }
+  function handleColsTripleClickReset(event) {
+    const detail = Number(event?.detail ?? event?.nativeEvent?.detail ?? 0);
+    if (detail >= 3) {
+      resetColsToDefault(event?.currentTarget);
+      return true;
+    }
+    const now = Date.now();
+    const burst = colsRapidClickRef.current;
+    const withinBurst = now - Number(burst.lastTs || 0) <= 420;
+    burst.count = withinBurst ? Number(burst.count || 0) + 1 : 1;
+    burst.lastTs = now;
+    if (burst.count >= 3) {
+      resetColsToDefault(event?.currentTarget);
+      return true;
+    }
+    return false;
+  }
+  function nudgeCols(delta) {
+    if (!Number.isFinite(delta) || delta === 0) return;
+    clearColsAutoCommitTimer();
+    setColsReplaceOnType(false);
+    colsReplaceOnTypeRef.current = false;
+    setCols((prev) => {
+      const base = Number.isFinite(prev) ? prev : colsRef.current;
+      return Math.max(MIN_COLS, Math.min(MAX_COLS, base + delta));
+    });
+  }
+  useEffect(() => {
+    const el = colsInputRef.current;
+    if (!el) return;
+    const onWheelNative = (event) => {
+      event.preventDefault();
+      if (event.deltaY < 0) nudgeCols(-1);
+      else if (event.deltaY > 0) nudgeCols(1);
+    };
+    el.addEventListener("wheel", onWheelNative, { passive: false });
+    return () => el.removeEventListener("wheel", onWheelNative);
+  }, [nudgeCols]);
+  useEffect(() => () => clearColsAutoCommitTimer(), []);
+
+  function commitTempoInput(rawValue = tempoBpm) {
+    const raw = String(rawValue ?? "").replace(/[^\d]/g, "").slice(0, 3);
+    if (!raw) {
+      setTempoBpm("120");
+      return;
+    }
+    const parsed = Number(raw);
+    const next = Math.max(30, Math.min(300, Number.isFinite(parsed) ? parsed : 120));
+    setTempoBpm(String(next));
+  }
+  function clearTempoAutoCommitTimer() {
+    if (tempoAutoCommitTimerRef.current) {
+      window.clearTimeout(tempoAutoCommitTimerRef.current);
+      tempoAutoCommitTimerRef.current = null;
+    }
+  }
+  function scheduleTempoAutoCommit(rawValue) {
+    const raw = String(rawValue ?? "").replace(/[^\d]/g, "").slice(0, 3);
+    clearTempoAutoCommitTimer();
+    if (!raw) return;
+    if (raw.length >= 3) {
+      commitTempoInput(raw);
+      setTempoReplaceOnType(false);
+      tempoReplaceOnTypeRef.current = false;
+      return;
+    }
+    tempoAutoCommitTimerRef.current = window.setTimeout(() => {
+      commitTempoInput(raw);
+      setTempoReplaceOnType(false);
+      tempoReplaceOnTypeRef.current = false;
+      tempoAutoCommitTimerRef.current = null;
+    }, colsAutoDelayMs);
+  }
+  function nudgeTempo(delta) {
+    if (!Number.isFinite(delta) || delta === 0) return;
+    clearTempoAutoCommitTimer();
+    setTempoReplaceOnType(false);
+    tempoReplaceOnTypeRef.current = false;
+    setTempoBpm((prev) => {
+      const parsed = Number(String(prev ?? "").trim());
+      const base = Number.isFinite(parsed) ? parsed : 120;
+      const next = Math.max(30, Math.min(300, base + delta));
+      return String(next);
+    });
+  }
+  useEffect(() => {
+    const el = tempoInputRef.current;
+    if (!el) return;
+    const onWheelNative = (event) => {
+      event.preventDefault();
+      if (event.deltaY < 0) nudgeTempo(-1);
+      else if (event.deltaY > 0) nudgeTempo(1);
+    };
+    el.addEventListener("wheel", onWheelNative, { passive: false });
+    return () => el.removeEventListener("wheel", onWheelNative);
+  }, [nudgeTempo]);
+  useEffect(() => () => clearTempoAutoCommitTimer(), []);
+
+  function validateCapo() {
+    if (!capoEnabled) return true;
+    if (!capoFret) return true;
+    const n = Number(capoFret);
+    if (!Number.isFinite(n) || n < 1 || n > 24) {
+      window.alert("Error: please enter a capo fret between 1 and 24.");
+      setCapoFret("");
+      return false;
+    }
+    setCapoFret(String(n));
+    return true;
+  }
+
+  function validateTempo() {
+    const raw = String(tempoBpm ?? "").trim();
+    if (!raw) {
+      setTempoBpm("120");
+      return true;
+    }
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 30 || n > 300) {
+      window.alert("Error: please enter a tempo between 30 and 300 BPM.");
+      setTempoBpm("120");
+      return false;
+    }
+    setTempoBpm(String(n));
+    return true;
+  }
+
+  function exportPdfNow() {
+    if (!canUsePaidEditorFeatures) {
+      showMembershipGateToast("export-pdf");
+      focusKeyCapture();
+      return;
+    }
+    const safeTitle = (songTitle || "TabStudio")
+      .trim()
+      .replace(/[^\w\- ]+/g, "")
+      .replace(/\s+/g, " ");
+    const filename = `${safeTitle || "TabStudio"} - tabs.pdf`;
+
+    if (!validateCapo()) {
+      focusKeyCapture();
+      return;
+    }
+    if (showTempoControl && !validateTempo()) {
+      focusKeyCapture();
+      return;
+    }
+
+    const capoValueForPdf = hasConfiguredCapo(capoEnabled, capoFret) ? String(Number(capoFret)) : "";
+    const tempoValueForPdf = hasConfiguredTempo(showTempoControl, tempoBpm) ? String(Number(tempoBpm)) : "";
+
+    const bytes = buildPdfBytes({
+      title: songTitle.trim(),
+      artist: artist.trim(),
+      albumName: albumName.trim(),
+      instrumentLabel: String(currentInstrument?.label || "").trim(),
+      tuningLabel,
+      capoEnabled,
+      capoFret: capoValueForPdf,
+      tempoEnabled: showTempoControl,
+      tempoBpm: tempoValueForPdf,
+      completedRows,
+      showSong: pdfShowSong,
+      showArtist: pdfShowArtist,
+      showAlbum: pdfShowAlbum,
+      showInstrument: pdfShowInstrument,
+      showTuning: pdfShowTuning,
+      showCapo: showCapoControl && pdfShowCapo,
+      showTempo: showTempoControl && pdfShowTempo,
+      showHeaderBranding: pdfShowHeaderBranding,
+      rowGrouping: pdfRowGrouping,
+      thickness: imageThickness,
+    });
+
+    downloadPdf(bytes, filename);
+    try {
+      const alreadyCelebrated = String(localStorage.getItem(LS_FIRST_EXPORT_CELEBRATED_KEY) ?? "").toLowerCase() === "true";
+      if (!alreadyCelebrated) {
+        triggerFirstExportGlow({ showToast: true });
+        localStorage.setItem(LS_FIRST_EXPORT_CELEBRATED_KEY, "true");
+      }
+    } catch {}
+    focusKeyCapture();
+  }
+
+  function openExportModal() {
+    setProjectsLibraryOpen(false);
+    setExportModalOpen(true);
+    setExportFormat("pdf");
+  }
+
+  function openAccountProfilePanel() {
+    setAccountProfileSection("overview");
+    setProjectsLibraryOpen(false);
+    setExportModalOpen(false);
+    setImageExportProgress("");
+    setSettingsOpen(false);
+    setSettingsFullscreen(false);
+    setAccountProfileOpen(true);
+  }
+
+  function returnToTabWriterFromLogo() {
+    setProjectsLibraryOpen(false);
+    setExportModalOpen(false);
+    setImageExportProgress("");
+    setSettingsFullscreen(false);
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+    focusKeyCapture();
+  }
+
+  useEffect(() => {
+    if (!pendingOpenPanel) return;
+    const panel = String(pendingOpenPanel || "").toLowerCase();
+    if (panel === "projects") {
+      if (!canUsePaidEditorFeatures) {
+        showMembershipGateToast("projects");
+        onPendingPanelHandled?.();
+        return;
+      }
+      setProjectsLibraryOpen(true);
+      setExportModalOpen(false);
+      setSettingsOpen(false);
+      setSettingsFullscreen(false);
+    } else if (panel === "export") {
+      setSettingsOpen(false);
+      setSettingsFullscreen(false);
+      openExportModal();
+    } else if (panel === "settings") {
+      setProjectsLibraryOpen(false);
+      setExportModalOpen(false);
+      setSettingsOpen(true);
+      setSettingsFullscreen(false);
+    }
+    onPendingPanelHandled?.();
+  }, [pendingOpenPanel, onPendingPanelHandled, canUsePaidEditorFeatures, showMembershipGateToast]);
+
+  function toggleImageExportRow(id) {
+    setImageExportRowIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return Array.from(next);
+    });
+  }
+
+  async function exportImagesNow() {
+    if (!canUsePaidEditorFeatures) {
+      showMembershipGateToast("export-image");
+      return;
+    }
+    if (!canUseCreatorExport) {
+      showMembershipGateToast("creator-export");
+      return;
+    }
+    if (imageExportBusy) return;
+    if (selectedExportCount <= 0) {
+      window.alert("Select at least one row to export as image.");
+      return;
+    }
+    if (showTempoControl && !validateTempo()) {
+      return;
+    }
+
+    const safeTitle = sanitizeExportFileBase(songTitle) || "TabStudio";
+    setImageExportBusy(true);
+    setImageExportProgress("");
+
+    try {
+      if (selectedExportRows.length > 1 && imageMultiExportMode === "combined") {
+        setImageExportProgress("Exporting combined image...");
+        const combinedBlob = await renderRowsTextToPngBlob({
+          rows: selectedExportRows.map((row, i) => ({
+            rowLabel: makeExportRowLabel(row, i),
+            rowText: getExportRowText(row, i),
+            metaLines: buildImageExportMetaLines({
+              row,
+              songTitle,
+              artist,
+              albumName,
+              capoEnabled,
+              capoFret,
+              tempoEnabled: showTempoControl,
+              tempoBpm,
+              showSong: imageShowSong,
+              showArtist: imageShowArtist,
+              showAlbum: imageShowAlbum,
+              showInstrument: imageShowInstrument,
+              showTuning: imageShowTuning,
+              showCapo: showCapoControl && imageShowCapo,
+              showTempo: showTempoControl && imageShowTempo,
+            }),
+          })),
+          showRowLabels: imageShowRowNames,
+          textColor: imageTextColor,
+          bgMode: imageBgMode,
+          bgColor: imageBgColor,
+          thickness: imageThickness,
+          textOutline: imageTextOutline,
+          includeBranding: imageShowBranding,
+          pixelRatio: 2,
+        });
+        downloadBlobFile(combinedBlob, `${safeTitle} - selected rows.png`);
+        setImageExportProgress("Exported combined image.");
+      } else {
+        const files = [];
+        for (let i = 0; i < selectedExportRows.length; i += 1) {
+          const row = selectedExportRows[i];
+          setImageExportProgress(`Exporting ${i + 1} / ${selectedExportRows.length} rows...`);
+          const blob = await renderRowTextToPngBlob({
+            rowText: getExportRowText(row, i),
+            rowLabel: makeExportRowLabel(row, i),
+            showRowLabel: imageShowRowNames,
+            metaLines: buildImageExportMetaLines({
+              row,
+              songTitle,
+              artist,
+              albumName,
+              capoEnabled,
+              capoFret,
+              tempoEnabled: showTempoControl,
+              tempoBpm,
+              showSong: imageShowSong,
+              showArtist: imageShowArtist,
+              showAlbum: imageShowAlbum,
+              showInstrument: imageShowInstrument,
+              showTuning: imageShowTuning,
+              showCapo: showCapoControl && imageShowCapo,
+              showTempo: showTempoControl && imageShowTempo,
+            }),
+            textColor: imageTextColor,
+            bgMode: imageBgMode,
+            bgColor: imageBgColor,
+            thickness: imageThickness,
+            textOutline: imageTextOutline,
+            includeBranding: imageShowBranding,
+            pixelRatio: 2,
+          });
+          files.push({
+            name: `${safeTitle} - Row ${String(i + 1).padStart(2, "0")}.png`,
+            blob,
+          });
+        }
+
+        if (files.length === 1) {
+          downloadBlobFile(files[0].blob, files[0].name);
+        } else {
+          const zipBlob = await buildStoredZipBlob(files);
+          downloadBlobFile(zipBlob, `${safeTitle} - rows.zip`);
+        }
+        setImageExportProgress(`Exported ${files.length} image${files.length > 1 ? "s" : ""}.`);
+      }
+    } catch (err) {
+      console.error(err);
+      setImageExportProgress("");
+      window.alert("Image export failed. Please try again.");
+    } finally {
+      setImageExportBusy(false);
+      focusKeyCapture();
+    }
+  }
+
+  function clearSelectedCells() {
+    if (!hasCellSelection) return;
+    const edits = getSelectedCellsEdits("");
+    setManyCells(edits);
+    setOverwriteNext(true);
+    clearCellSelection();
+  }
+
+  function handleGridKeyDown(e) {
+    if (e.target !== keyCaptureRef.current) return;
+    if (!gridTargetingActive) return;
+
+    const isMod = e.metaKey || e.ctrlKey;
+
+    if (isMod && (e.key === "z" || e.key === "Z")) {
+      e.preventDefault();
+      if (e.shiftKey) redo();
+      else undo();
+      return;
+    }
+    if (isMod && (e.key === "y" || e.key === "Y")) {
+      e.preventDefault();
+      redo();
+      return;
+    }
+
+    if (isMod && (e.key === "c" || e.key === "C")) {
+      if (hasCellSelection) {
+        e.preventDefault();
+        copySelectionToClipboard();
+      }
+      return;
+    }
+
+    if (isMod && (e.key === "a" || e.key === "A")) {
+      e.preventDefault();
+      setRandomCellSelection(new Set());
+      setCellSelection({
+        r1: 0,
+        c1: 0,
+        r2: Math.max(0, tuning.length - 1),
+        c2: Math.max(0, cols - 1),
+      });
+      setCursor({
+        r: 0,
+        c: 0,
+      });
+      setOverwriteNext(true);
+      return;
+    }
+
+    if (e.key === "Escape") {
+      e.preventDefault();
+      // Close any overlays / selection that might be open
+      closeEditChordModal();
+      setCapoOpen(false);
+      setInsertOpen(false);
+      setChordsOpen(false);
+      if (hasCellSelection) {
+        clearCellSelection();
+      }
+      return;
+    }
+
+    if (isMod && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+      e.preventDefault();
+      moveCursor(e.key === "ArrowUp" ? -1 : 1, 0);
+      setOverwriteNext(true);
+      return;
+    }
+
+    if (e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      e.preventDefault();
+      setRandomCellSelection(new Set());
+      const cur = cursorRef.current;
+      const dr = e.key === "ArrowUp" ? -1 : e.key === "ArrowDown" ? 1 : 0;
+      const dc = e.key === "ArrowLeft" ? -1 : e.key === "ArrowRight" ? 1 : 0;
+      const nr = Math.max(0, Math.min(tuning.length - 1, cur.r + dr));
+      const nc = Math.max(0, Math.min(cols - 1, cur.c + dc));
+      setCellSelection((prev) => {
+        if (!prev) return { r1: cur.r, c1: cur.c, r2: nr, c2: nc };
+        return { ...prev, r2: nr, c2: nc };
+      });
+      setCursor({ r: nr, c: nc });
+      setOverwriteNext(true);
+      return;
+    }
+
+    if (e.key === "ArrowUp") return (e.preventDefault(), moveCursor(-1, 0), setOverwriteNext(true));
+    if (e.key === "ArrowDown") return (e.preventDefault(), moveCursor(1, 0), setOverwriteNext(true));
+    if (e.key === "ArrowLeft") return (e.preventDefault(), moveCursor(0, -1), setOverwriteNext(true));
+    if (e.key === "ArrowRight") return (e.preventDefault(), moveCursor(0, 1), setOverwriteNext(true));
+
+    // Grid-only:
+    // - Shift + 1..N jumps to string row (same column)
+    // - Shift + 9 / Shift + 0 inserts "(" / ")"
+    // - Other Shift+number symbols are blocked in grid
+    if (!isMod && !e.altKey && e.shiftKey && /^Digit[0-9]$/.test(String(e.code || ""))) {
+      e.preventDefault();
+      e.stopPropagation();
+      const digit = Number(String(e.code).replace("Digit", ""));
+      const targetRow = digit - 1;
+      if (targetRow >= 0 && targetRow < tuning.length) {
+        const { c } = cursorRef.current;
+        setRandomCellSelection(new Set());
+        clearCellSelection();
+        setCursor({ r: targetRow, c });
+        setOverwriteNext(true);
+      } else if (digit === 9 || digit === 0) {
+        const bracketValue = digit === 9 ? "(" : ")";
+        const { r, c } = cursorRef.current;
+        const overwrite = overwriteNextRef.current;
+
+        if (hasCellSelection) {
+          const edits = getSelectedCellsEdits(bracketValue);
+          if (edits.length) {
+            setManyCells(edits);
+          }
+          const anchor = getSelectionAnchor();
+          clearCellSelection();
+          if (anchor) setCursor({ r: anchor.r, c: anchor.c });
+          setOverwriteNext(false);
+          return;
+        }
+
+        const cur = String(gridRef.current?.[r]?.[c] ?? "");
+        if (overwrite) {
+          setCell(r, c, bracketValue);
+        } else {
+          setCell(r, c, cur === "" ? bracketValue : cur + bracketValue);
+        }
+        setOverwriteNext(false);
+      }
+      return;
+    }
+
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (e.shiftKey) {
+        completeRow({ advanceToNextString: true });
+      } else {
+        moveCursor(1, 0);
+        setOverwriteNext(true);
+      }
+      return;
+    }
+
+    if (e.key === "Tab") {
+      e.preventDefault();
+
+      if (e.shiftKey) {
+        moveCursor(0, -1);
+        setOverwriteNext(true);
+        return;
+      }
+
+      if (tabCopyMode === "copy") {
+        const { r, c } = cursorRef.current;
+        const curVal = String(gridRef.current?.[r]?.[c] ?? "");
+        const targetCol = Math.max(0, Math.min(colsRef.current - 1, c + 1));
+
+        // At the far right – just stop.
+        if (targetCol === c) {
+          setOverwriteNext(true);
+          return;
+        }
+
+        // Empty cell: just move, no copy.
+        if (curVal.trim() === "") {
+          clearCellSelection();
+          setCursor({ r, c: targetCol });
+          setOverwriteNext(true);
+          return;
+        }
+
+        const prev = gridRef.current;
+        const next = prev.map((row) => row.slice());
+
+        if (next[r] && typeof next[r][targetCol] !== "undefined") {
+          next[r][targetCol] = curVal;
+          commitGridChange(next, { r, c: targetCol });
+        } else {
+          clearCellSelection();
+          setCursor({ r, c: targetCol });
+        }
+
+        setOverwriteNext(true);
+        return;
+      }
+
+      // Default: move only
+      moveCursor(0, 1);
+      setOverwriteNext(true);
+      return;
+    }
+
+    if (e.key === "Backspace" || e.key === "Delete") {
+      e.preventDefault();
+      if (hasCellSelection) {
+        clearSelectedCells();
+        return;
+      }
+      const { r, c } = cursorRef.current;
+      const current = String(gridRef.current?.[r]?.[c] ?? "");
+      if (current === "") {
+        if (c > 0) moveCursor(0, -1);
+        setOverwriteNext(true);
+      } else {
+        setCell(r, c, "");
+        setOverwriteNext(true);
+      }
+      return;
+    }
+
+    // Grid-only quick navigation:
+    // Shift + =  -> jump down to Completed Rows section
+    // Shift + -  -> jump back to top tab writer
+    if (!isMod && !e.altKey && e.shiftKey && String(e.code || "") === "Equal") {
+      e.preventDefault();
+      e.stopPropagation();
+      setCompletedRowsOpen(true);
+      requestAnimationFrame(() => {
+        const section = completedRowsSectionRef.current;
+        if (section && typeof section.scrollIntoView === "function") {
+          section.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+        setTimeout(() => focusKeyCapture(), 120);
+      });
+      return;
+    }
+
+    if (!isMod && !e.altKey && e.shiftKey && String(e.code || "") === "Minus") {
+      e.preventDefault();
+      e.stopPropagation();
+      requestAnimationFrame(() => {
+        const top = tabWriterAreaRef.current;
+        if (top && typeof top.scrollIntoView === "function") {
+          top.scrollIntoView({ behavior: "smooth", block: "start" });
+        } else {
+          try {
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          } catch {
+            window.scrollTo(0, 0);
+          }
+        }
+        setTimeout(() => focusKeyCapture(), 120);
+      });
+      return;
+    }
+
+    if (e.key === "+" || (e.key === "=" && e.shiftKey)) {
+      e.preventDefault();
+      setInsertOpen(true);
+      return;
+    }
+
+    if (insertOpen && !isMod && !e.altKey) {
+      const trigger = String(e.key ?? "").toLowerCase();
+      const insertByKey = {
+        b: "b",
+        s: "/",
+        h: "h",
+        p: "p",
+        v: "~",
+        t: "t",
+      };
+      const insert = insertByKey[trigger];
+      if (insert) {
+        e.preventDefault();
+        insertIntoSelectedCell(insert);
+        return;
+      }
+    }
+
+    const { r, c } = cursorRef.current;
+    const overwrite = overwriteNextRef.current;
+
+   if (/^\d$/.test(e.key)) {
+  e.preventDefault();
+
+  // Start or continue grouped edit session
+  if (!editingCellRef.current ||
+      editingCellRef.current.r !== r ||
+      editingCellRef.current.c !== c) {
+
+    // First edit in this cell → capture undo snapshot once
+    pushUndoSnapshot(snapshotNow());
+    redoStackRef.current = [];
+    editingCellRef.current = { r, c };
+  }
+
+  if (hasCellSelection) {
+    // Fill every selected cell with this fret value
+    const edits = getSelectedCellsEdits(clampFret(e.key));
+    if (edits.length) {
+      setManyCells(edits);
+    }
+    const anchor = getSelectionAnchor();
+    clearCellSelection();
+    if (anchor) setCursor({ r: anchor.r, c: anchor.c });
+    setOverwriteNext(false);
+    return;
+  }
+
+
+
+  const cur = String(gridRef.current?.[r]?.[c] ?? "");
+
+  const prev = gridRef.current;
+  const next = prev.map((row) => row.slice());
+
+  if (overwrite) {
+    next[r][c] = clampFret(e.key);
+  } else {
+    const isNumericOnly = cur !== "" ? /^\d{1,2}$/.test(cur) : true;
+    if (isNumericOnly) {
+      const nextRaw = (cur + e.key).slice(0, 2);
+      next[r][c] = clampFret(nextRaw);
+    } else {
+      next[r][c] = cur + e.key;
+    }
+  }
+
+  setGrid(next);
+  setOverwriteNext(false);
+  return;
+}
+
+    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+
+      if (hasCellSelection) {
+        // Fill every selected cell with this character
+        const edits = getSelectedCellsEdits(e.key);
+        if (edits.length) {
+          setManyCells(edits);
+        }
+        const anchor = getSelectionAnchor();
+        clearCellSelection();
+        if (anchor) setCursor({ r: anchor.r, c: anchor.c });
+        setOverwriteNext(false);
+        return;
+      }
+
+
+
+      const cur = String(gridRef.current?.[r]?.[c] ?? "");
+      if (overwrite) {
+        setCell(r, c, e.key);
+        setOverwriteNext(false);
+        return;
+      }
+      setCell(r, c, cur === "" ? e.key : cur + e.key);
+      setOverwriteNext(false);
+      return;
+    }
+  }
+
+  const cellSize = compactGrid ? 32 : 40;
+  const cellIdleBg = isDarkMode ? "#1C1C1C" : THEME.surfaceWarm;
+
+  const baseBtn = {
+    borderRadius: 12,
+    border: `1px solid ${THEME.border}`,
+    background: THEME.surfaceWarm,
+    outline: "none",
+    cursor: "pointer",
+    fontWeight: 900,
+    color: THEME.text,
+    height: 42,
+    padding: "0 14px",
+    lineHeight: 1,
+    boxSizing: "border-box",
+  };
+
+  const btnSmallPill = {
+    borderRadius: 999,
+    border: `1px solid ${THEME.border}`,
+    background: THEME.surfaceWarm,
+    outline: "none",
+    cursor: "pointer",
+    fontWeight: 800,
+    color: THEME.text,
+    height: 28,
+    padding: "0 10px",
+    lineHeight: 1,
+    boxSizing: "border-box",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+  };
+
+  const btnSmallPillDanger = {
+    ...btnSmallPill,
+    borderColor: THEME.dangerBorder ?? "#f1b4b4",
+    background: THEME.dangerSoft ?? "#fff5f5",
+    color: THEME.dangerText ?? "#b02a2a",
+  };
+  const btnSecondary = { ...baseBtn, borderColor: THEME.border };
+  const btnSmallPillClose = {
+    ...btnSecondary,
+    height: 32,
+    padding: "0 12px",
+    borderRadius: 10,
+    fontSize: 12,
+    fontWeight: 900,
+    color: THEME.textFaint,
+  };
+  const actionEditBtn = {
+    ...btnSecondary,
+    width: 36,
+    minWidth: 36,
+    height: 36,
+    padding: 0,
+    borderRadius: 10,
+    fontSize: 12,
+    fontWeight: 900,
+    color: THEME.text,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+  };
+  const actionDeleteBtn = {
+    ...btnSecondary,
+    width: 36,
+    minWidth: 36,
+    height: 36,
+    padding: 0,
+    borderRadius: 10,
+    fontSize: 18,
+    lineHeight: 1,
+    fontWeight: 950,
+    color: THEME.danger,
+    borderColor: withAlpha(THEME.danger, 0.35),
+    background: THEME.surfaceWarm,
+  };
+  const rowDeleteBtn = {
+    ...actionDeleteBtn,
+  };
+  const btnPrimary = {
+    ...baseBtn,
+    borderColor: THEME.accent,
+    boxShadow: "0 8px 18px rgba(0,0,0,0.06)",
+  };
+  const toolbarToggleVisual = (isOpen) =>
+    isOpen
+      ? {
+          borderColor: THEME.accent,
+          borderWidth: 2,
+          background: THEME.surfaceWarm,
+          boxShadow: "none",
+        }
+      : {
+          borderColor: THEME.border,
+          borderWidth: 1,
+          background: THEME.surfaceWarm,
+          boxShadow: "none",
+        };
+  const settingsSectionToggleVisual = (isOpen) =>
+    isOpen
+      ? {
+          borderColor: withAlpha(THEME.accent, 0.72),
+          color: THEME.accent,
+          background: withAlpha(THEME.accent, 0.08),
+          boxShadow: `0 0 0 2px ${withAlpha(THEME.accent, isDarkMode ? 0.16 : 0.11)}`,
+        }
+      : {
+          borderColor: THEME.border,
+          color: THEME.text,
+          background: "transparent",
+          boxShadow: "none",
+        };
+  const toolbarMenuBtn = {
+    ...btnSecondary,
+    height: 42,
+    minWidth: 136,
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 8,
+  };
+  const pressVisual = (pressed) =>
+    pressed
+      ? {
+          borderColor: THEME.accent,
+          background: THEME.surfaceWarm,
+          color: THEME.accent,
+          transform: "translateY(1px)",
+          boxShadow: "inset 0 2px 6px rgba(0,0,0,0.24)",
+        }
+      : {
+          transform: "translateY(0)",
+        };
+  const pressHandlers = (id, disabled = false) =>
+    disabled
+      ? {}
+      : {
+          onPointerDown: () => setPressedBtnId(id),
+          onPointerUp: () => setPressedBtnId(""),
+          onPointerLeave: () => setPressedBtnId(""),
+          onPointerCancel: () => setPressedBtnId(""),
+          onBlur: () => setPressedBtnId(""),
+        };
+
+  const handleGridRowScroll = (sourceRow, e) => {
+    if (scrollScope !== "all" || syncingRowScrollRef.current) return;
+    const sourceLeft = e.currentTarget.scrollLeft;
+    syncingRowScrollRef.current = true;
+    gridRowScrollRefs.current.forEach((el, idx) => {
+      if (!el || idx === sourceRow) return;
+      if (Math.abs(el.scrollLeft - sourceLeft) > 0.5) {
+        el.scrollLeft = sourceLeft;
+      }
+    });
+    requestAnimationFrame(() => {
+      syncingRowScrollRef.current = false;
+    });
+  };
+
+  useEffect(() => {
+    if (scrollScope !== "all") return;
+    const firstWithScroll = gridRowScrollRefs.current.find((el) => el && el.scrollLeft > 0) || gridRowScrollRefs.current.find(Boolean);
+    if (!firstWithScroll) return;
+    const left = firstWithScroll.scrollLeft;
+    gridRowScrollRefs.current.forEach((el) => {
+      if (!el) return;
+      if (Math.abs(el.scrollLeft - left) > 0.5) el.scrollLeft = left;
+    });
+  }, [scrollScope, cols, tuning.length]);
+
+  const headerTextBtnStyle = (
+    id,
+    { disabled = false, iconOnly = false, arrow = false, primary = false, activeSelected = false } = {}
+  ) => {
+    const hovered = headerHoverBtn === id;
+    const pressed = pressedBtnId === id;
+    const isSavePrimary = primary || id === "saveTab";
+    const isSecondaryAction = id === "openTab" || id === "export";
+    const isUtility = iconOnly || arrow || id === "settings" || id === "undo" || id === "redo";
+    const neutralHoverBg = withAlpha(THEME.text, isDarkMode ? 0.08 : 0.045);
+    const neutralHoverBorder = withAlpha(THEME.text, isDarkMode ? 0.22 : 0.16);
+    const saveHoverBg = isDarkMode ? withAlpha(THEME.text, 0.13) : withAlpha(THEME.text, 0.09);
+    const saveBorder = withAlpha(THEME.text, isDarkMode ? 0.34 : 0.24);
+    const isAccentState = activeSelected && !isSavePrimary;
+    const baseColor = disabled
+      ? THEME.textFaint
+      : isSavePrimary
+      ? THEME.text
+      : isAccentState
+      ? THEME.accent
+      : isUtility
+      ? withAlpha(THEME.text, isDarkMode ? 0.78 : 0.72)
+      : isSecondaryAction
+      ? withAlpha(THEME.text, isDarkMode ? 0.9 : 0.86)
+      : THEME.text;
+    const borderColor = disabled
+      ? "transparent"
+      : isSavePrimary
+      ? hovered
+        ? withAlpha(THEME.text, isDarkMode ? 0.42 : 0.3)
+        : "transparent"
+      : isAccentState
+      ? withAlpha(THEME.accent, 0.58)
+      : hovered
+      ? neutralHoverBorder
+      : "transparent";
+    const background = disabled
+      ? "transparent"
+      : isSavePrimary
+      ? hovered
+        ? saveHoverBg
+        : "transparent"
+      : hovered
+      ? neutralHoverBg
+      : "transparent";
+    return {
+      border: `1px solid ${borderColor}`,
+      background,
+      color: baseColor,
+      borderRadius: 12,
+      height: 36,
+      minWidth: iconOnly ? 38 : arrow ? 38 : 0,
+      padding: iconOnly ? "0 8px" : arrow ? "0 8px" : "0 10px",
+      lineHeight: 1,
+      fontWeight: iconOnly ? 700 : arrow ? 900 : isSavePrimary ? 900 : 840,
+      fontSize: iconOnly ? 24 : arrow ? 24 : 16,
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      boxSizing: "border-box",
+      cursor: disabled ? "not-allowed" : "pointer",
+      transform: pressed ? "translateY(1px) scale(0.985)" : hovered && isSavePrimary ? "translateY(-0.5px)" : "translateY(0)",
+      position: "relative",
+      top: arrow ? 1 : 0,
+      boxShadow:
+        isSavePrimary && hovered && !disabled
+          ? `0 0 0 2px ${withAlpha(THEME.accent, isDarkMode ? 0.15 : 0.11)}`
+          : "none",
+      transition:
+        "transform 180ms ease, background 180ms ease, border-color 180ms ease, color 180ms ease, box-shadow 180ms ease",
+    };
+  };
+
+  const headerBtnHoverHandlers = (id, disabled = false) =>
+    disabled
+      ? {}
+      : {
+          onMouseEnter: () => setHeaderHoverBtn(id),
+          onMouseLeave: () => setHeaderHoverBtn((prev) => (prev === id ? "" : prev)),
+          onFocus: () => setHeaderHoverBtn(id),
+          onBlur: () => setHeaderHoverBtn((prev) => (prev === id ? "" : prev)),
+        };
+
+  const microBtnHoverHandlers = (id, disabled = false) =>
+    disabled
+      ? {}
+      : {
+          onMouseEnter: () => setMicroHoverBtnId(id),
+          onMouseLeave: () => setMicroHoverBtnId((prev) => (prev === id ? "" : prev)),
+          onFocus: () => setMicroHoverBtnId(id),
+          onBlur: () => setMicroHoverBtnId((prev) => (prev === id ? "" : prev)),
+        };
+
+  const microBtnInteractiveStyle = (id, baseStyle, disabled = false) => {
+    const hovered = !disabled && microHoverBtnId === id;
+    const pressed = !disabled && pressedBtnId === id;
+    return {
+      ...baseStyle,
+      cursor: disabled ? "not-allowed" : "pointer",
+      borderColor: hovered ? withAlpha(THEME.text, isDarkMode ? 0.34 : 0.24) : baseStyle.borderColor,
+      background: hovered ? withAlpha(THEME.text, isDarkMode ? 0.1 : 0.06) : baseStyle.background,
+      color: hovered ? THEME.text : baseStyle.color,
+      transform: pressed ? "translateY(1px) scale(0.985)" : hovered ? "translateY(-0.5px)" : "translateY(0)",
+      boxShadow: hovered ? `0 0 0 2px ${withAlpha(THEME.accent, isDarkMode ? 0.13 : 0.1)}` : "none",
+      transition:
+        "transform 170ms ease, background 170ms ease, border-color 170ms ease, color 170ms ease, box-shadow 170ms ease",
+    };
+  };
+
+  const card = {
+    border: `1px solid ${THEME.border}`,
+    borderRadius: 16,
+    background: THEME.surfaceWarm,
+    padding: 12,
+    boxShadow: "0 12px 28px rgba(0,0,0,0.05)",
+  };
+
+  const field = {
+    width: "100%",
+    height: 42,
+    borderRadius: 12,
+    border: `1px solid ${THEME.border}`,
+    padding: "0 10px",
+    fontWeight: 800,
+    background: THEME.surfaceWarm,
+    color: THEME.text,
+    outline: "none",
+    boxSizing: "border-box",
+  };
+  const songMetaGridColumns = "repeat(3, minmax(0, 1fr))";
+
+  const pillMono = {
+    fontFamily:
+      "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+    fontWeight: 950,
+  };
+
+  const capoLabel = capoEnabled ? "Capo: Yes" : "Capo: No";
+  const undoDisabled = exportModalOpen
+    ? exportUndoStackRef.current.length === 0
+    : projectsLibraryOpen
+    ? libraryUndoStackRef.current.length === 0
+    : undoStackRef.current.length === 0;
+  const redoDisabled = exportModalOpen
+    ? exportRedoStackRef.current.length === 0
+    : projectsLibraryOpen
+    ? libraryRedoStackRef.current.length === 0
+    : redoStackRef.current.length === 0;
+
+  const userTuningsById = useMemo(() => {
+    const m = new Map();
+    for (const t of userTunings) m.set(t.id, t);
+    return m;
+  }, [userTunings]);
+
+  const validCompletedRowIds = useMemo(() => new Set(completedRows.map((r) => r.id)), [completedRows]);
+  const selectionCount = useMemo(() => {
+    let count = 0;
+    selectedRowIds.forEach((id) => {
+      if (validCompletedRowIds.has(id)) count += 1;
+    });
+    return count;
+  }, [selectedRowIds, validCompletedRowIds]);
+  const hasRowSelection = selectionCount > 0;
+  const allRowsSelected = completedRows.length > 0 && selectionCount === completedRows.length;
+  const deleteConfirmCount = rowDeleteConfirmIds?.length ?? 0;
+  const deleteSelectedConfirmOpen = !!rowDeleteConfirmIds && rowDeleteConfirmSource === "selected";
+  const iconActionBtnBase = {
+    ...btnSecondary,
+    width: 44,
+    minWidth: 44,
+    height: 36,
+    padding: 0,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
+  };
+
+  function openEditChordModal(chord) {
+    if (!chord) return;
+    setSelectedChordId(String(chord.id || ""));
+    setEditChordTargetId(chord.id);
+    setEditChordIsPreset(PRESET_CHORDS.some((p) => p.id === chord.id));
+    setEditChordNameHeader(chord.name || "");
+    const frets = (chord.frets ?? []).map((x) => String(x ?? ""));
+    const pad = [...frets];
+    while (pad.length < 6) pad.push("");
+    setEditChordFrets(pad.slice(0, 6));
+    setEditChordModalOpen(true);
+  }
+
+  function closeEditChordModal() {
+    setEditChordModalOpen(false);
+    setChordsOpen(true);
+    focusKeyCapture();
+  }
+
+  function handleSaveEditedChord() {
+    const cleaned = editChordFrets.map((v) => String(v ?? "").trim());
+    if (!editChordTargetId) {
+      closeEditChordModal();
+      return;
+    }
+    if (editChordIsPreset) {
+      setPresetChordOverrides((prev) => ({
+        ...prev,
+        [editChordTargetId]: { frets: cleaned },
+      }));
+    } else {
+      setUserChords((prev) => prev.map((c) => (c.id === editChordTargetId ? { ...c, frets: cleaned } : c)));
+    }
+    closeEditChordModal();
+  }
+
+  function handleResetEditedChordToDefault() {
+    if (!editChordIsPreset || !editChordTargetId) return;
+    setPresetChordOverrides((prev) => {
+      const next = { ...prev };
+      delete next[editChordTargetId];
+      return next;
+    });
+    const original = PRESET_CHORDS.find((c) => c.id === editChordTargetId);
+    if (original) {
+      const frets = (original.frets ?? []).map((x) => String(x ?? ""));
+      const pad = [...frets];
+      while (pad.length < 6) pad.push("");
+      setEditChordFrets(pad.slice(0, 6));
+    }
+  }
+
+  const editChordLabelStrings = DEFAULT_TUNING;
+
+  // Custom tuning modal helpers (for now uses 6-string layout)
+  const customAppNotes = lowToHighToApp(customLowToHigh);
+  function sanitizeCustomNoteValue(value) {
+    return String(value ?? "")
+      .replace(/[^a-z]/gi, "")
+      .toUpperCase()
+      .slice(0, 1);
+  }
+  function setCustomAppNote(index, value) {
+    setCustomLowToHigh((prev) => {
+      const app = lowToHighToApp(prev);
+      const nextApp = app.slice();
+      nextApp[index] = sanitizeCustomNoteValue(value);
+      return appToLowToHigh(nextApp);
+    });
+  }
+
+  function toggleFavouriteInstrument(id) {
+    setFavInstrumentIds((prev) => {
+      if (prev.includes(id)) return prev.filter((x) => x !== id);
+      return [...prev, id];
+    });
+  }
+
+  function handleInstrumentChange(nextId) {
+    if (nextId === instrumentId) return;
+
+    const nextInstrument = INSTRUMENTS.find((i) => i.id === nextId) || INSTRUMENTS[0];
+
+    const hasContent = gridRef.current?.some((row) => row.some((cell) => String(cell).trim() !== ""));
+    if (hasContent) {
+      const ok = window.confirm(
+        `Changing to ${nextInstrument.label} will clear the current tab writer.\nYour completed rows will not be affected.\n\nDo you want to continue?`
+      );
+      if (!ok) return;
+    }
+
+    setInstrumentId(nextInstrument.id);
+
+    const presets = getInstrumentTuningPresets(nextInstrument.id);
+    const firstPreset = presets[0];
+    const app = lowToHighToApp(firstPreset.lowToHigh);
+
+    setTuning(app);
+    setTuningLabel(formatTuningName(firstPreset.name));
+
+    const newGrid = makeBlankGrid(app.length, colsRef.current || defaultCols);
+    undoStackRef.current = [];
+    redoStackRef.current = [];
+    setGrid(newGrid);
+    setCursor({ r: 0, c: 0 });
+    clearCellSelection();
+    setOverwriteNext(true);
+    setInsertOpen(false);
+    setInstrumentOpen(false);
+    focusKeyCapture();
+  }
+
+  const [isMobile, setIsMobile] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.innerWidth <= 768;
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onResize = () => setIsMobile(window.innerWidth <= 768);
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  function MobileLanding() {
+    const [mobileNotice, setMobileNotice] = useState("");
+    const featuresRef = useRef(null);
+
+    const showDesktopNotice = () => {
+      setMobileNotice("TabStudio is designed for desktop. Open this page on a larger screen to start writing.");
+    };
+
+    const scrollToFeatures = () => {
+      if (featuresRef.current?.scrollIntoView) {
+        featuresRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    };
+
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          width: "100%",
+          boxSizing: "border-box",
+          background: THEME.bg,
+          color: THEME.text,
+          fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
+          padding: 16,
+          display: "grid",
+          gap: 28,
+          alignContent: "start",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <button
+            type="button"
+            aria-label="Go to tab writer"
+            title="Go to tab writer"
+            onClick={returnToTabWriterFromLogo}
+            style={{
+              width: 210,
+              height: 62,
+              overflow: "hidden",
+              borderRadius: 4,
+              flexShrink: 0,
+              position: "relative",
+              top: 1,
+              cursor: "pointer",
+              border: "none",
+              background: "transparent",
+              padding: 0,
+            }}
+          >
+            <img
+              src={isDarkMode ? logoDark : logoLight}
+              alt="TabStudio"
+              style={{
+                width: "100%",
+                height: "100%",
+                display: "block",
+                objectFit: "cover",
+                objectPosition: "center 50%",
+              }}
+            />
+          </button>
+        </div>
+
+        <section style={{ display: "grid", gap: 12 }}>
+          <h1
+            style={{
+              margin: 0,
+              marginLeft: 0,
+              width: 220,
+              minWidth: 220,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              alignSelf: "flex-end",
+              marginBottom: 11.25,
+              fontSize: 13,
+              fontWeight: 400,
+              color: THEME.text,
+              opacity: isDarkMode ? 0.75 : 0.65,
+              letterSpacing: 0.2,
+              lineHeight: 1.2,
+              whiteSpace: "nowrap",
+              overflow: "visible",
+            }}
+          >
+            {headerSloganReady ? (
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  transform: `translate3d(${headerSloganAtFinalX ? 0 : 76}px, 0, 0)`,
+                  transition: `transform ${HEADER_TAGLINE_SLIDE_MS}ms ${HEADER_TAGLINE_SLIDE_EASE}`,
+                  willChange: "transform",
+                }}
+              >
+                <span
+                  style={{
+                    opacity: headerSloganTextOpacity,
+                    transition: `opacity ${HEADER_TAGLINE_FADE_MS}ms cubic-bezier(0.22, 1, 0.36, 1)`,
+                  }}
+                >
+                  {"Tabs"}
+                </span>
+                <span
+                  style={{
+                    marginLeft: 0,
+                    opacity: headerSloganTextOpacity,
+                    transition: `opacity ${HEADER_TAGLINE_FADE_MS}ms cubic-bezier(0.22, 1, 0.36, 1)`,
+                  }}
+                >
+                  {sloganText.startsWith("Tabs") ? `${sloganText.slice(4)}` : sloganText}
+                </span>
+                <span
+                  style={{
+                    marginLeft: 0,
+                    opacity: headerSloganDotVisible ? 1 : 0,
+                    transition: "opacity 1700ms cubic-bezier(0.22, 1, 0.36, 1)",
+                  }}
+                >
+                  .
+                </span>
+                {headerSloganTickVisible && (
+                  <span
+                    style={{
+                      marginLeft: 2,
+                      opacity: headerSloganTickOpacity,
+                      transform: headerSloganTickMorphActive ? "translateX(-9px) scale(0.6)" : "translateX(0) scale(1)",
+                      transition: "opacity 1700ms cubic-bezier(0.22, 1, 0.36, 1), transform 1700ms cubic-bezier(0.22, 1, 0.36, 1)",
+                    }}
+                  >
+                    ✓
+                  </span>
+                )}
+              </span>
+            ) : (
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 4,
+                  color: THEME.text,
+                  opacity: isDarkMode ? 0.9 : 0.88,
+                }}
+              >
+                <span
+                  style={{
+                    display: "inline-block",
+                    minWidth: 78,
+                    textAlign: "right",
+                    opacity: headerIntroOpacity,
+                    transition: "opacity 700ms ease",
+                    fontStyle: "italic",
+                    textShadow: isDarkMode
+                      ? "0 0 10px rgba(255,255,255,0.18), 0 0 2px rgba(255,255,255,0.16)"
+                      : "0 0 8px rgba(20,20,20,0.12), 0 0 2px rgba(20,20,20,0.1)",
+                  }}
+                >
+                  {headerIntroVisible ? introActionText : ""}
+                </span>
+                <span
+                  style={{
+                    minWidth: 42,
+                    opacity: headerIntroVisible
+                      ? introIsPlayStep
+                        ? headerIntroOpacity
+                        : headerIntroTabsAnchored
+                          ? isDarkMode
+                            ? 0.8
+                            : 0.72
+                          : headerIntroOpacity
+                      : 0,
+                    transition: "opacity 700ms ease",
+                  }}
+                >
+                  Tabs
+                </span>
+              </span>
+            )}
+          </h1>
+          <p style={{ margin: 0, color: THEME.textFaint, fontSize: 16, lineHeight: 1.45 }}>
+            Precision tab writing. Smart notation. Clean PDF exports.
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <button
+              type="button"
+              onClick={showDesktopNotice}
+              style={{
+                ...btnSecondary,
+                height: 44,
+                borderColor: withAlpha(THEME.accent, 0.6),
+                color: THEME.accent,
+                justifySelf: "start",
+              }}
+            >
+              Use on desktop
+            </button>
+            <button
+              type="button"
+              onClick={scrollToFeatures}
+              style={{ ...btnSecondary, height: 44, justifySelf: "start" }}
+            >
+              View features
+            </button>
+          </div>
+          {mobileNotice ? (
+            <div
+              style={{
+                ...card,
+                padding: 10,
+                fontSize: 13,
+                lineHeight: 1.45,
+                color: THEME.textFaint,
+              }}
+            >
+              {mobileNotice}
+            </div>
+          ) : null}
+          <div
+            style={{
+              ...card,
+              minHeight: 190,
+              padding: 8,
+              overflow: "hidden",
+            }}
+          >
+            <img
+              src={resolvedTheme === "dark" ? heroDark : heroLight}
+              alt="TabStudio desktop preview"
+              style={{
+                width: "100%",
+                height: "100%",
+                minHeight: 174,
+                objectFit: "cover",
+                borderRadius: 10,
+                display: "block",
+              }}
+            />
+          </div>
+        </section>
+
+        <section ref={featuresRef} style={{ display: "grid", gap: 10 }}>
+          <h2 style={{ margin: 0, fontSize: 22, letterSpacing: -0.3 }}>Why it&apos;s different</h2>
+          <div style={{ ...card, padding: 12, display: "grid", gap: 10 }}>
+            <div>
+              <div style={{ fontWeight: 900 }}>Built for precision</div>
+              <div style={{ marginTop: 3, color: THEME.textFaint, fontSize: 14, lineHeight: 1.45 }}>
+                Designed for musicians who care about clean, structured tabs.
+              </div>
+            </div>
+            <div>
+              <div style={{ fontWeight: 900 }}>Smart notation system</div>
+              <div style={{ marginTop: 3, color: THEME.textFaint, fontSize: 14, lineHeight: 1.45 }}>
+                Bends, slides, harmonics and more, formatted properly.
+              </div>
+            </div>
+            <div>
+              <div style={{ fontWeight: 900 }}>Export beautifully</div>
+              <div style={{ marginTop: 3, color: THEME.textFaint, fontSize: 14, lineHeight: 1.45 }}>
+                Professional PDF output, ready to share.
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section style={{ display: "grid", gap: 10 }}>
+          <h2 style={{ margin: 0, fontSize: 22, letterSpacing: -0.3 }}>Who it&apos;s for</h2>
+          <div style={{ ...card, padding: 12, display: "grid", gap: 8 }}>
+            <div style={{ color: THEME.textFaint, fontWeight: 800 }}>Made for:</div>
+            <div style={{ display: "grid", gap: 6, fontWeight: 850 }}>
+              <div>Guitarists</div>
+              <div>Songwriters</div>
+              <div>Teachers</div>
+              <div>Session players</div>
+            </div>
+          </div>
+        </section>
+
+        <section style={{ display: "grid", gap: 10 }}>
+          <h2 style={{ margin: 0, fontSize: 22, letterSpacing: -0.3 }}>TabStudio Plus</h2>
+          <div style={{ ...card, padding: 12, display: "grid", gap: 10 }}>
+            <div style={{ color: THEME.textFaint, fontWeight: 800 }}>One simple subscription.</div>
+            <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 6 }}>
+              <li>Full desktop editor</li>
+              <li>Project library</li>
+              <li>Unlimited exports</li>
+              <li>Dark mode</li>
+            </ul>
+            <button
+              type="button"
+              onClick={showDesktopNotice}
+              style={{
+                ...btnSecondary,
+                height: 44,
+                borderColor: withAlpha(THEME.accent, 0.6),
+                color: THEME.accent,
+                justifySelf: "start",
+              }}
+            >
+              Start writing on desktop
+            </button>
+          </div>
+        </section>
+
+        <section style={{ ...card, padding: 12, fontSize: 13, lineHeight: 1.5, color: THEME.textFaint }}>
+          TabStudio is designed for desktop precision editing. Open this page on a larger screen to start writing tabs.
+        </section>
+      </div>
+    );
+  }
+
+  if (isMobile) {
+    return <MobileLanding />;
+  }
+
+  return (
+    <div
+      onPointerDown={handleRootPointerDown}
+      style={{
+        padding: 18,
+        fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
+        background: THEME.bg,
+        color: THEME.text,
+        minHeight: "100vh",
+        width: "100%",
+        maxWidth: "100%",
+        boxSizing: "border-box",
+      }}
+    >
+      {/* Hidden key capture */}
+      <input
+        ref={keyCaptureRef}
+        value=""
+        onChange={() => {}}
+        onKeyDown={handleGridKeyDown}
+        aria-hidden="true"
+        inputMode="none"
+        autoCapitalize="none"
+        autoCorrect="off"
+        spellCheck={false}
+        style={{
+          position: "fixed",
+          left: 0,
+          top: 0,
+          width: 1,
+          height: 1,
+          opacity: 0,
+          border: "none",
+          padding: 0,
+          margin: 0,
+          background: "transparent",
+          color: "transparent",
+          pointerEvents: "none",
+        }}
+      />
+
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
+          position: "sticky",
+          top: 0,
+          zIndex: 50,
+          paddingTop: 6,
+          paddingBottom: 6,
+          background: THEME.bg,
+          borderBottom: `1px solid ${THEME.border}`,
+          boxShadow: "0 10px 24px rgba(0,0,0,0.06)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            flexWrap: "wrap",
+            transform: settingsOpen && !settingsFullscreen && !accountProfileOpen ? `translateX(${settingsPanelWidthCss})` : undefined,
+            transition: "transform 220ms ease",
+          }}
+        >
+          <button
+            type="button"
+            aria-label="Go to tab writer"
+            title="Go to tab writer"
+            onClick={returnToTabWriterFromLogo}
+            style={{
+              width: 210,
+              height: 62,
+              overflow: "hidden",
+              borderRadius: 4,
+              flexShrink: 0,
+              position: "relative",
+              top: 1,
+              cursor: "pointer",
+              border: "none",
+              background: "transparent",
+              padding: 0,
+            }}
+          >
+            <img
+              src={isDarkMode ? logoDark : logoLight}
+              alt="TabStudio"
+              style={{
+                width: "100%",
+                height: "100%",
+                display: "block",
+                objectFit: "cover",
+                objectPosition: "center 50%",
+              }}
+            />
+          </button>
+          {showHeaderSlogan && (
+            <div
+              style={{
+                marginLeft: 0,
+                width: 220,
+                minWidth: 220,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                alignSelf: "flex-end",
+                marginBottom: 11.25,
+                fontSize: 13,
+                fontWeight: 400,
+                color: THEME.text,
+                opacity: isDarkMode ? 0.75 : 0.65,
+                letterSpacing: 0.2,
+                lineHeight: 1.2,
+                whiteSpace: "nowrap",
+                overflow: "visible",
+              }}
+            >
+              {headerSloganReady ? (
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    transform: `translate3d(${headerSloganAtFinalX ? 0 : 76}px, 0, 0)`,
+                    transition: `transform ${HEADER_TAGLINE_SLIDE_MS}ms ${HEADER_TAGLINE_SLIDE_EASE}`,
+                    willChange: "transform",
+                  }}
+                >
+                    <span
+                      style={{
+                        whiteSpace: "nowrap",
+                        overflow: "visible",
+                        opacity: headerSloganTextOpacity,
+                        transition: `opacity ${HEADER_TAGLINE_FADE_MS}ms cubic-bezier(0.22, 1, 0.36, 1)`,
+                      }}
+                    >
+                      {"Tabs"}
+                    </span>
+                    <span
+                      style={{
+                        whiteSpace: "nowrap",
+                        overflow: "visible",
+                        marginLeft: 0,
+                        opacity: headerSloganTextOpacity,
+                        transition: `opacity ${HEADER_TAGLINE_FADE_MS}ms cubic-bezier(0.22, 1, 0.36, 1)`,
+                      }}
+                    >
+                      {sloganText.startsWith("Tabs") ? `${sloganText.slice(4)}` : sloganText}
+                    </span>
+                    <span
+                      style={{
+                        marginLeft: 0,
+                        opacity: headerSloganDotVisible ? 1 : 0,
+                        transition: "opacity 1700ms cubic-bezier(0.22, 1, 0.36, 1)",
+                      }}
+                    >
+                      .
+                    </span>
+                  {headerSloganTickVisible && (
+                    <span
+                      style={{
+                        marginLeft: 1,
+                        opacity: headerSloganTickOpacity,
+                        transform: headerSloganTickMorphActive ? "translateX(-9px) scale(0.6)" : "translateX(0) scale(1)",
+                        transition: "opacity 1700ms cubic-bezier(0.22, 1, 0.36, 1), transform 1700ms cubic-bezier(0.22, 1, 0.36, 1)",
+                      }}
+                    >
+                      ✓
+                    </span>
+                  )}
+                </span>
+              ) : (
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 4,
+                    width: 132,
+                    minWidth: 132,
+                    textAlign: "left",
+                  }}
+                >
+                  <span
+                    style={{
+                      display: "inline-block",
+                      minWidth: 78,
+                      textAlign: "right",
+                      opacity: headerIntroOpacity,
+                      transition: "opacity 700ms ease",
+                      fontStyle: "italic",
+                      textShadow: isDarkMode
+                        ? "0 0 10px rgba(255,255,255,0.18), 0 0 2px rgba(255,255,255,0.16)"
+                        : "0 0 8px rgba(20,20,20,0.12), 0 0 2px rgba(20,20,20,0.1)",
+                    }}
+                  >
+                    {headerIntroVisible ? introActionText : ""}
+                  </span>
+                  <span
+                    style={{
+                      minWidth: 42,
+                      opacity: headerIntroVisible
+                        ? introIsPlayStep
+                          ? headerIntroOpacity
+                          : headerIntroTabsAnchored
+                            ? isDarkMode
+                              ? 0.8
+                              : 0.72
+                            : headerIntroOpacity
+                        : 0,
+                      transition: "opacity 700ms ease",
+                    }}
+                  >
+                    Tabs
+                  </span>
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: "flex", gap: 22, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <button
+              type="button"
+              onClick={exportModalOpen ? exportUndo : undo}
+              disabled={undoDisabled}
+              {...headerBtnHoverHandlers("undo", undoDisabled)}
+              {...pressHandlers("undo", undoDisabled)}
+              style={headerTextBtnStyle("undo", {
+                disabled: undoDisabled,
+                arrow: true,
+              })}
+              title="Undo (Cmd/Ctrl+Z)"
+              aria-label="Undo"
+            >
+              <svg
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M9 14L5 10L9 6" />
+                <path d="M5 10h8a6 6 0 0 1 6 6v2" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              onClick={exportModalOpen ? exportRedo : redo}
+              disabled={redoDisabled}
+              {...headerBtnHoverHandlers("redo", redoDisabled)}
+              {...pressHandlers("redo", redoDisabled)}
+              style={headerTextBtnStyle("redo", {
+                disabled: redoDisabled,
+                arrow: true,
+              })}
+              title="Redo (Cmd+Shift+Z / Ctrl+Shift+Z / Ctrl+Y)"
+              aria-label="Redo"
+            >
+              <svg
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M15 14l4-4-4-4" />
+                <path d="M19 10h-8a6 6 0 0 0-6 6v2" />
+              </svg>
+            </button>
+          </div>
+
+          <div
+            aria-hidden="true"
+            style={{
+              opacity: 0.34,
+              fontSize: 18,
+              fontWeight: 700,
+              lineHeight: 1,
+              margin: "0 2px",
+            }}
+          >
+            |
+          </div>
+
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            {!projectsLibraryOpen && !exportModalOpen ? (
+              <button
+                type="button"
+                onClick={handleSaveTabClick}
+                {...headerBtnHoverHandlers("saveTab")}
+                {...pressHandlers("saveTab")}
+                style={headerTextBtnStyle("saveTab", { primary: true })}
+              >
+                {tr("Save", "Guardar")}
+              </button>
+            ) : null}
+
+            <button
+              type="button"
+              onClick={handleOpenTabClick}
+              {...headerBtnHoverHandlers("openTab")}
+              {...pressHandlers("openTab")}
+              style={headerTextBtnStyle("openTab", { activeSelected: projectsLibraryOpen })}
+            >
+              {tr("Projects", "Proyectos")}
+            </button>
+
+            <button
+              type="button"
+              onClick={openExportModal}
+              {...headerBtnHoverHandlers("export")}
+              {...pressHandlers("export")}
+              style={headerTextBtnStyle("export")}
+            >
+              {tr("Export", "Exportar")}
+            </button>
+
+            <div
+              aria-hidden="true"
+              style={{
+                opacity: 0.34,
+                fontSize: 18,
+                fontWeight: 700,
+                lineHeight: 1,
+                margin: "0 2px",
+              }}
+            >
+              |
+            </div>
+
+            {!isLoggedIn ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => navigateTo("/signin")}
+                  {...headerBtnHoverHandlers("signIn")}
+                  {...pressHandlers("signIn")}
+                  style={headerTextBtnStyle("signIn")}
+                >
+                  Sign In
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => navigateTo("/membership")}
+                  {...headerBtnHoverHandlers("becomeMember")}
+                  {...pressHandlers("becomeMember")}
+                  style={{
+                    ...headerTextBtnStyle("becomeMember"),
+                    borderColor:
+                      headerHoverBtn === "becomeMember"
+                        ? withAlpha(THEME.accent, isDarkMode ? 0.9 : 0.75)
+                        : withAlpha(THEME.accent, isDarkMode ? 0.56 : 0.44),
+                    background:
+                      headerHoverBtn === "becomeMember"
+                        ? withAlpha(THEME.accent, isDarkMode ? 0.24 : 0.14)
+                        : withAlpha(THEME.accent, isDarkMode ? 0.15 : 0.09),
+                    color: THEME.text,
+                  }}
+                >
+                  Become a Member
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={openAccountProfilePanel}
+                {...headerBtnHoverHandlers("account")}
+                {...pressHandlers("account")}
+                style={headerTextBtnStyle("account")}
+              >
+                Account
+              </button>
+            )}
+
+            <div
+              aria-hidden="true"
+              style={{
+                opacity: 0.34,
+                fontSize: 18,
+                fontWeight: 700,
+                lineHeight: 1,
+                margin: "0 2px",
+              }}
+            >
+              |
+            </div>
+
+            <div style={{ position: "relative" }}>
+              <button
+                ref={helpBtnRef}
+                type="button"
+                onClick={() => setHelpMenuOpen((v) => !v)}
+                onMouseEnter={() => {
+                  setHeaderHoverBtn("help");
+                  if (helpMenuOpen || helpMenuHoverOpenTimerRef.current) return;
+                  helpMenuHoverOpenTimerRef.current = window.setTimeout(() => {
+                    setHelpMenuOpen(true);
+                    helpMenuHoverOpenTimerRef.current = null;
+                  }, 500);
+                }}
+                onMouseLeave={() => {
+                  setHeaderHoverBtn((prev) => (prev === "help" ? "" : prev));
+                  if (helpMenuHoverOpenTimerRef.current) {
+                    window.clearTimeout(helpMenuHoverOpenTimerRef.current);
+                    helpMenuHoverOpenTimerRef.current = null;
+                  }
+                }}
+                onBlur={() => setHeaderHoverBtn((prev) => (prev === "help" ? "" : prev))}
+                {...pressHandlers("help")}
+                style={{
+                  ...headerTextBtnStyle("help", { iconOnly: true }),
+                  fontSize: 20,
+                  fontWeight: 700,
+                  lineHeight: 1,
+                }}
+                title="Help"
+                aria-label="Help"
+              >
+                ?
+              </button>
+              {helpMenuOpen && (
+                <div
+                  ref={helpMenuRef}
+                  style={{
+                    position: "absolute",
+                    right: 0,
+                    top: "calc(100% + 8px)",
+                    minWidth: 260,
+                    borderRadius: 12,
+                    border: `1px solid ${THEME.border}`,
+                    background: THEME.surfaceWarm,
+                    boxShadow: "0 16px 32px rgba(0,0,0,0.28)",
+                    overflow: "hidden",
+                    zIndex: 1400,
+                    padding: 8,
+                    display: "grid",
+                    gap: 8,
+                  }}
+                >
+                  {[
+                    {
+                      label: "About TabStudio",
+                      description: "Learn about the app and its purpose",
+                      path: "/about",
+                    },
+                    {
+                      label: "FAQs",
+                      description: "Common questions and answers",
+                      path: "/faq",
+                    },
+                    {
+                      label: "Support",
+                      description: "Report bugs or get help",
+                      path: "/support",
+                    },
+                  ].map((item) => (
+                    <button
+                      key={item.path}
+                      type="button"
+                      onClick={() => {
+                        setHelpMenuOpen(false);
+                        setHelpMenuHoverPath("");
+                        navigateTo(item.path);
+                      }}
+                      onMouseEnter={() => setHelpMenuHoverPath(item.path)}
+                      onMouseLeave={() => setHelpMenuHoverPath((prev) => (prev === item.path ? "" : prev))}
+                      style={{
+                        width: "100%",
+                        ...btnSecondary,
+                        minHeight: 56,
+                        padding: "10px 12px",
+                        borderRadius: 10,
+                        borderColor: helpMenuHoverPath === item.path ? withAlpha(THEME.accent, 0.7) : THEME.border,
+                        background:
+                          helpMenuHoverPath === item.path ? withAlpha(THEME.accent, isDarkMode ? 0.14 : 0.09) : "transparent",
+                        color: THEME.text,
+                        fontWeight: 800,
+                        justifyContent: "flex-start",
+                        display: "grid",
+                        gap: 4,
+                        textAlign: "left",
+                        transform: helpMenuHoverPath === item.path ? "translateY(-1px)" : "translateY(0)",
+                        boxShadow:
+                          helpMenuHoverPath === item.path ? `0 0 0 2px ${withAlpha(THEME.accent, isDarkMode ? 0.12 : 0.08)}` : "none",
+                        transition: "background 140ms ease, border-color 140ms ease, transform 140ms ease, box-shadow 140ms ease",
+                      }}
+                    >
+                      <span style={{ fontWeight: 900, color: THEME.text }}>{item.label}</span>
+                      <span style={{ fontSize: 11, color: THEME.textFaint, fontWeight: 700 }}>{item.description}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <button
+              ref={settingsBtnRef}
+              type="button"
+              onClick={() =>
+                setSettingsOpen((v) => {
+                  const next = !v;
+                  if (next) setSettingsFullscreen(false);
+                  return next;
+                })
+              }
+              {...headerBtnHoverHandlers("settings")}
+              {...pressHandlers("settings")}
+              style={headerTextBtnStyle("settings", { iconOnly: true })}
+              title="Settings"
+              aria-label="Settings"
+            >
+              ⛭
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {saveSoonNotice && (
+        <div
+          style={{
+            position: "fixed",
+            top: 86,
+            right: 18,
+            zIndex: 120,
+            maxWidth: 420,
+            borderRadius: 12,
+            border: `1px solid ${withAlpha(THEME.accent, 0.55)}`,
+            background: THEME.surfaceWarm,
+            color: THEME.text,
+            padding: "10px 12px",
+            fontSize: 13,
+            fontWeight: 800,
+            boxShadow: "0 10px 24px rgba(0,0,0,0.12)",
+          }}
+        >
+          {saveSoonNotice}
+        </div>
+      )}
+      {membershipGateNotice && (
+        <div
+          style={{
+            position: "fixed",
+            top: 86,
+            right: 18,
+            zIndex: 121,
+            maxWidth: 440,
+            borderRadius: 12,
+            border: `1px solid ${withAlpha(THEME.accent, 0.55)}`,
+            background: THEME.surfaceWarm,
+            color: THEME.text,
+            padding: "10px 12px",
+            fontSize: 13,
+            fontWeight: 800,
+            boxShadow: "0 10px 24px rgba(0,0,0,0.14)",
+            display: "grid",
+            gap: 8,
+          }}
+        >
+          <div>{membershipGateNotice?.message}</div>
+          <button
+            type="button"
+            onClick={() => navigateTo("/membership")}
+            style={{
+              width: "fit-content",
+              minHeight: 32,
+              borderRadius: 999,
+              border: `1px solid ${withAlpha(THEME.accent, 0.62)}`,
+              background: withAlpha(THEME.accent, isDarkMode ? 0.14 : 0.09),
+              color: THEME.accent,
+              fontSize: 12,
+              fontWeight: 900,
+              padding: "0 12px",
+              cursor: "pointer",
+            }}
+          >
+            {membershipGateNotice?.cta || "View Membership"}
+          </button>
+        </div>
+      )}
+      {!isLoggedIn && headerTabbyNudgeVisible ? (
+        <div
+          style={{
+            position: "fixed",
+            top: 88,
+            right: 102,
+            zIndex: 122,
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 10,
+            opacity: headerTabbyNudgeFading ? 0 : 1,
+            transform: headerTabbyNudgeFading ? "translateY(-4px)" : "translateY(0)",
+            transition: "opacity 340ms ease, transform 340ms ease",
+            pointerEvents: "none",
+          }}
+          aria-live="polite"
+        >
+          <div
+            style={{
+              pointerEvents: "auto",
+              maxWidth: 250,
+              borderRadius: 12,
+              border: `1px solid ${withAlpha(THEME.text, isDarkMode ? 0.36 : 0.3)}`,
+              background: THEME.surfaceWarm,
+              color: THEME.text,
+              boxShadow: "0 12px 24px rgba(0,0,0,0.14)",
+              padding: "9px 10px",
+              fontSize: 12,
+              fontWeight: 800,
+              lineHeight: 1.35,
+              position: "relative",
+            }}
+          >
+            <div>Save your tab when you&apos;re ready.</div>
+            <button
+              type="button"
+              onClick={() => navigateTo("/membership")}
+              style={{
+                marginTop: 6,
+                border: "none",
+                background: "transparent",
+                color: THEME.accent,
+                fontSize: 12,
+                fontWeight: 900,
+                cursor: "pointer",
+                padding: 0,
+                textDecoration: "underline",
+                textDecorationThickness: "1px",
+              }}
+            >
+              Become a Member
+            </button>
+            <div
+              aria-hidden="true"
+              style={{
+                position: "absolute",
+                right: -5,
+                bottom: 10,
+                width: 10,
+                height: 10,
+                background: THEME.surfaceWarm,
+                borderTop: `1px solid ${withAlpha(THEME.text, isDarkMode ? 0.36 : 0.3)}`,
+                borderRight: `1px solid ${withAlpha(THEME.text, isDarkMode ? 0.36 : 0.3)}`,
+                transform: "rotate(45deg)",
+              }}
+            />
+          </div>
+          <div
+            style={{
+              width: 38,
+              height: 38,
+              borderRadius: "50%",
+              display: "grid",
+              placeItems: "center",
+              background: `radial-gradient(circle at center, ${withAlpha(THEME.accent, isDarkMode ? 0.22 : 0.14)} 0%, ${withAlpha(
+                THEME.accent,
+                0
+              )} 72%)`,
+              animation: "tabbyHeaderNudgeFloat 3.2s ease-in-out infinite",
+              pointerEvents: "none",
+            }}
+          >
+            <img
+              src={isDarkMode ? tabbyLight : tabbyDark}
+              alt="Tabby"
+              style={{
+                width: 26,
+                height: 26,
+                objectFit: "contain",
+                filter: `drop-shadow(0 2px 8px ${withAlpha("#000000", isDarkMode ? 0.32 : 0.2)})`,
+                userSelect: "none",
+                pointerEvents: "none",
+              }}
+              draggable={false}
+            />
+          </div>
+        </div>
+      ) : null}
+
+      {/* Main layout */}
+      <div
+        style={{
+          marginTop: 10,
+        }}
+      >
+        {/* Settings sidebar */}
+        {settingsOpen && (
+          <>
+          {settingsFullscreen && (
+            <div
+              aria-hidden="true"
+              style={{
+                position: "fixed",
+                inset: 0,
+                background: withAlpha(THEME.bg, isDarkMode ? 0.52 : 0.36),
+                backdropFilter: "blur(3px)",
+                zIndex: 89,
+              }}
+            />
+          )}
+          <aside
+            ref={settingsPanelRef}
+            style={{
+              width: settingsFullscreen ? "100vw" : settingsPanelWidthCss,
+              minWidth: 0,
+              borderRadius: settingsFullscreen ? 0 : "0 16px 16px 0",
+              border: settingsFullscreen ? "none" : `1px solid ${THEME.border}`,
+              background: THEME.surfaceWarm,
+              boxShadow: settingsFullscreen ? "none" : "0 18px 48px rgba(0,0,0,0.22)",
+              padding: settingsFullscreen ? "16px 16px 14px" : "14px 12px 12px",
+              boxSizing: "border-box",
+              position: "fixed",
+              left: 0,
+              top: 0,
+              bottom: 0,
+              zIndex: 90,
+              overflow: "hidden",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <div
+              style={{
+                marginBottom: 10,
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 8,
+                order: 0,
+                borderBottom: settingsFullscreen ? `1px solid ${THEME.border}` : "none",
+                paddingBottom: settingsFullscreen ? 10 : 0,
+              }}
+            >
+              <div>
+                <div style={{ fontSize: 18, fontWeight: 950, letterSpacing: -0.3 }}>Settings</div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSettingsOpen(false);
+                    setSettingsFullscreen(false);
+                  }}
+                  style={{ ...btnSmallPillClose }}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+
+            <div
+              className="tabstudio-settings-scrollbar"
+              style={{
+                flex: 1,
+                minHeight: 0,
+                overflowY: "auto",
+                overscrollBehavior: "contain",
+                WebkitOverflowScrolling: "touch",
+                scrollbarGutter: "stable",
+                paddingRight: 8,
+              }}
+            >
+
+            <div style={{ marginTop: 10, borderRadius: 12, border: `1px solid ${projectsOpen ? withAlpha(THEME.accent, 0.72) : THEME.border}`, background: THEME.surfaceWarm, overflow: "hidden", order: 4, flexShrink: 0, boxShadow: projectsOpen ? `0 0 0 2px ${withAlpha(THEME.accent, isDarkMode ? 0.16 : 0.11)}` : "none" }}>
+              <button
+                type="button"
+                onClick={() =>
+                  setProjectsOpen((v) => {
+                    const next = !v;
+                    if (next) {
+                      setShortcutsOpen(false);
+                      setTabWritingOpen(false);
+                      setAboutOpen(false);
+                      setFaqsOpen(false);
+                    }
+                    return next;
+                  })
+                }
+                style={{
+                  width: "100%",
+                  ...btnSecondary,
+                  height: 42,
+                  padding: "0 10px",
+                  borderRadius: 0,
+                  border: "none",
+                  background: "transparent",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  fontSize: 16,
+                  fontWeight: 900,
+                  lineHeight: 1,
+                  boxSizing: "border-box",
+                  ...settingsSectionToggleVisual(projectsOpen),
+                }}
+              >
+                <span>{tr("Projects & Saving", "Proyectos y guardado")}</span>
+                <span style={{ fontSize: 12, opacity: 0.8 }}>{projectsOpen ? "▲" : "▼"}</span>
+              </button>
+              {projectsOpen && (
+                <div
+                  style={{
+                    padding: 8,
+                    borderTop: `1px solid ${THEME.border}`,
+                    fontSize: 12,
+                    display: "grid",
+                    gap: 4,
+                  }}
+                >
+                  <div>Library structure:</div>
+                  <ul style={{ margin: "4px 0 0 14px", padding: 0 }}>
+                    <li>Artist</li>
+                    <li>Album</li>
+                    <li>Song (load into editor)</li>
+                    <li>Last opened / last edited snapshots</li>
+                  </ul>
+                  <div style={{ fontSize: 11, color: THEME.textFaint, marginTop: 4 }}>
+                    Projects are currently stored locally in this browser and can be re-opened in the editor.
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div style={{ marginTop: 10, borderRadius: 12, border: `1px solid ${shortcutsOpen ? withAlpha(THEME.accent, 0.72) : THEME.border}`, background: THEME.surfaceWarm, overflow: "hidden", order: 3, flexShrink: 0, boxShadow: shortcutsOpen ? `0 0 0 2px ${withAlpha(THEME.accent, isDarkMode ? 0.16 : 0.11)}` : "none" }}>
+              <button
+                type="button"
+                onClick={() =>
+                  setShortcutsOpen((v) => {
+                    const next = !v;
+                    if (next) {
+                      setProjectsOpen(false);
+                      setTabWritingOpen(false);
+                      setAboutOpen(false);
+                      setFaqsOpen(false);
+                    }
+                    return next;
+                  })
+                }
+                style={{
+                  width: "100%",
+                  ...btnSecondary,
+                  height: 42,
+                  padding: "0 10px",
+                  borderRadius: 0,
+                  border: "none",
+                  background: "transparent",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  fontSize: 16,
+                  fontWeight: 900,
+                  lineHeight: 1,
+                  boxSizing: "border-box",
+                  ...settingsSectionToggleVisual(shortcutsOpen),
+                }}
+              >
+                <span>{tr("Shortcuts & Tips", "Atajos y consejos")}</span>
+                <span style={{ fontSize: 12, opacity: 0.8 }}>{shortcutsOpen ? "▲" : "▼"}</span>
+              </button>
+              {shortcutsOpen && (
+                <div
+                  style={{
+                    padding: 8,
+                    borderTop: `1px solid ${THEME.border}`,
+                    fontSize: 12,
+                    display: "grid",
+                    gap: 8,
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 8,
+                      padding: "0 2px",
+                    }}
+                  >
+                    <div style={{ fontSize: 11, color: THEME.textFaint, fontWeight: 800 }}>
+                      {tr("Showing", "Mostrando")}{" "}
+                      <b style={{ color: THEME.text }}>{shortcutPlatform === "mac" ? "macOS" : tr("Windows", "Windows")}</b>{" "}
+                      {tr("shortcuts for your device", "atajos para tu dispositivo")}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShortcutsShowBoth((v) => !v)}
+                      style={{
+                        ...btnSecondary,
+                        height: 28,
+                        padding: "0 8px",
+                        fontSize: 11,
+                        fontWeight: 850,
+                        borderColor: shortcutsShowBoth ? withAlpha(THEME.accent, 0.6) : THEME.border,
+                        color: shortcutsShowBoth ? THEME.accent : THEME.text,
+                      }}
+                    >
+                      {shortcutsShowBoth ? tr("Show detected only", "Mostrar solo detectado") : tr("Show both", "Mostrar ambos")}
+                    </button>
+                  </div>
+
+                  <div
+                    style={{
+                      maxHeight: 300,
+                      overflowY: "auto",
+                      paddingRight: 2,
+                      display: "grid",
+                      gap: 6,
+                    }}
+                  >
+                    {SHORTCUTS_REFERENCE.map((item) => (
+                      <div
+                        key={`${item.action}-${item.win}-${item.mac}`}
+                        style={{
+                          display: "grid",
+                          gap: 6,
+                          padding: "8px 10px",
+                          borderRadius: 10,
+                          border: `1px solid ${THEME.border}`,
+                          background: THEME.surfaceWarm,
+                          boxSizing: "border-box",
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                          <span style={{ fontWeight: 900 }}>{tr(item.action, SHORTCUTS_ACTION_ES[item.action])}</span>
+                          <span style={{ fontSize: 11, fontWeight: 900, color: THEME.accent, whiteSpace: "nowrap" }}>
+                            {tr(item.scope, SHORTCUTS_SCOPE_ES[item.scope])}
+                          </span>
+                        </div>
+                        {shortcutsShowBoth ? (
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontSize: 10, color: THEME.textFaint, fontWeight: 900, textTransform: "uppercase" }}>Windows</div>
+                              <div style={{ ...pillMono, fontSize: 12, color: THEME.text }}>{item.win}</div>
+                            </div>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontSize: 10, color: THEME.textFaint, fontWeight: 900, textTransform: "uppercase" }}>macOS</div>
+                              <div style={{ ...pillMono, fontSize: 12, color: THEME.text }}>{item.mac}</div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 10, color: THEME.textFaint, fontWeight: 900, textTransform: "uppercase" }}>
+                              {shortcutPlatform === "mac" ? "macOS" : "Windows"}
+                            </div>
+                            <div style={{ ...pillMono, fontSize: 12, color: THEME.text }}>
+                              {shortcutPlatform === "mac" ? item.mac : item.win}
+                            </div>
+                          </div>
+                        )}
+                        <div style={{ color: THEME.textFaint, lineHeight: 1.35 }}>
+                          {tr(item.description, SHORTCUTS_DESC_ES[item.description])}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{ fontSize: 11, color: THEME.textFaint, marginTop: 2 }}>
+                    {tr(
+                      "This table is the master shortcut reference for TabStudio (Windows + macOS).",
+                      "Esta tabla es la referencia principal de atajos para TabStudio (Windows + macOS)."
+                    )}
+                  </div>
+                  <a
+                    href={TABSTUDIO_TUTORIAL_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{
+                      ...btnSecondary,
+                      minHeight: 34,
+                      padding: "8px 10px",
+                      borderRadius: 10,
+                      textDecoration: "none",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 8,
+                      justifyContent: "center",
+                    }}
+                  >
+                    <span aria-hidden="true" style={{ display: "inline-flex", lineHeight: 1 }}>
+                      <svg width="16" height="12" viewBox="0 0 16 12" fill="none">
+                        <rect x="0.5" y="0.5" width="15" height="11" rx="2.6" fill="#FF0033" stroke="#FF335E" />
+                        <path d="M6.3 3.5L10.6 6L6.3 8.5V3.5Z" fill="#ffffff" />
+                      </svg>
+                    </span>
+                    <span style={{ fontWeight: 850 }}>
+                      {tr("TabStudio - Full Video on How to Use", "TabStudio - Video completo de cómo usarlo")}
+                    </span>
+                  </a>
+                </div>
+              )}
+            </div>
+
+            {/* Tab writing settings */}
+            <div
+              style={{
+                marginTop: 10,
+                borderRadius: 12,
+                border: `1px solid ${tabWritingOpen ? withAlpha(THEME.accent, 0.72) : THEME.border}`,
+                background: THEME.surfaceWarm,
+                overflow: "hidden",
+                order: 1,
+                flexShrink: 0,
+                boxShadow: tabWritingOpen ? `0 0 0 2px ${withAlpha(THEME.accent, isDarkMode ? 0.16 : 0.11)}` : "none",
+              }}
+            >
+              <button
+                type="button"
+                onClick={() =>
+                  setTabWritingOpen((v) => {
+                    const next = !v;
+                    if (next) {
+                      setProjectsOpen(false);
+                      setShortcutsOpen(false);
+                      setAboutOpen(false);
+                      setFaqsOpen(false);
+                    }
+                    return next;
+                  })
+                }
+                style={{
+                  width: "100%",
+                  ...btnSecondary,
+                  height: 42,
+                  padding: "0 10px",
+                  borderRadius: 0,
+                  border: "none",
+                  background: "transparent",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  fontSize: 16,
+                  fontWeight: 900,
+                  lineHeight: 1,
+                  boxSizing: "border-box",
+                  ...settingsSectionToggleVisual(tabWritingOpen),
+                }}
+              >
+                <span>{tr("Tab Settings", "Ajustes de tablatura")}</span>
+                <span style={{ fontSize: 12, opacity: 0.8 }}>{tabWritingOpen ? "▲" : "▼"}</span>
+              </button>
+              {tabWritingOpen && (
+                <div
+                  style={{
+                    padding: 8,
+                    borderTop: `1px solid ${THEME.border}`,
+                    fontSize: 12,
+                    display: "grid",
+                    gap: 6,
+                  }}
+                >
+                  <div style={{ fontWeight: 900 }}>Tab Key Behaviour</div>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <input
+                      type="radio"
+                      name="tab-behaviour"
+                      checked={tabCopyMode === "move"}
+                      onChange={() => setTabCopyMode("move")}
+                    />
+                    <span>Tab - Move to next cell</span>
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <input
+                      type="radio"
+                      name="tab-behaviour"
+                      checked={tabCopyMode === "copy"}
+                      onChange={() => setTabCopyMode("copy")}
+                    />
+                    <span>Auto-Duplicate on Tab</span>
+                  </label>
+                  <div style={{ fontSize: 11, color: THEME.textFaint, lineHeight: 1.35 }}>
+                    (If "Auto-Duplicate on Tab" is enabled, Tab will also copy the current cell&apos;s value into the
+                    next cell.)
+                  </div>
+
+                  <div style={{ marginTop: 8, fontWeight: 900 }}>Horizontal scroll</div>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <input
+                      type="radio"
+                      name="scroll-scope"
+                      checked={scrollScope === "all"}
+                      onChange={() => setScrollScope("all")}
+                    />
+                    <span>Scroll all rows together</span>
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <input
+                      type="radio"
+                      name="scroll-scope"
+                      checked={scrollScope === "selected"}
+                      onChange={() => setScrollScope("selected")}
+                    />
+                    <span>Scroll selected row only</span>
+                  </label>
+
+                  <div style={{ marginTop: 8, fontWeight: 900 }}>Song details controls</div>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <input
+                      type="checkbox"
+                      checked={showCapoControl}
+                      onChange={(e) => setShowCapoControl(e.target.checked)}
+                    />
+                    <span>Show Capo</span>
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <input
+                      type="checkbox"
+                      checked={showTempoControl}
+                      onChange={(e) => setShowTempoControl(e.target.checked)}
+                    />
+                    <span>Show Tempo</span>
+                  </label>
+
+                  <div style={{ marginTop: 8, fontWeight: 900 }}>Appearance</div>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 10,
+                    }}
+                  >
+                    <span style={{ fontWeight: 800, color: THEME.text }}>
+                      {resolvedTheme === "dark" ? "Dark mode" : "Light mode"}
+                    </span>
+                    <div
+                      role="group"
+                      aria-label="Theme mode"
+                      style={{
+                        display: "inline-flex",
+                        gap: 10,
+                        alignItems: "center",
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setThemeMode("light")}
+                        aria-pressed={themeMode === "light"}
+                        title="Light mode"
+                        style={{
+                          border: "none",
+                          background: "transparent",
+                          padding: 0,
+                          width: 28,
+                          height: 28,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          color: themeMode === "light" ? "#E09C22" : THEME.textFaint,
+                          cursor: "pointer",
+                          outline: "none",
+                          textShadow: themeMode === "light" ? "0 0 10px rgba(244,173,58,0.38)" : "none",
+                          transition: "color 140ms ease, text-shadow 140ms ease, transform 140ms ease",
+                          transform: themeMode === "light" ? "scale(1.06)" : "scale(1)",
+                        }}
+                      >
+                        <span style={{ fontSize: 22, fontWeight: 900, lineHeight: 1 }}>☀</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setThemeMode("dark")}
+                        aria-pressed={themeMode === "dark"}
+                        title="Dark mode"
+                        style={{
+                          border: "none",
+                          background: "transparent",
+                          padding: 0,
+                          width: 28,
+                          height: 28,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          color: themeMode === "dark" ? "#BFD2FF" : THEME.textFaint,
+                          cursor: "pointer",
+                          outline: "none",
+                          textShadow: themeMode === "dark" ? "0 0 10px rgba(168,190,255,0.35)" : "none",
+                          transition: "color 140ms ease, text-shadow 140ms ease, transform 140ms ease",
+                          transform: themeMode === "dark" ? "scale(1.06)" : "scale(1)",
+                        }}
+                      >
+                        <span style={{ fontSize: 22, fontWeight: 900, lineHeight: 1 }}>☾</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      display: "grid",
+                      gap: 8,
+                      marginTop: 6,
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                      <span style={{ fontWeight: 800, color: THEME.text }}>Accent color</span>
+                      <span style={{ fontSize: 11, color: THEME.textFaint, fontWeight: 800 }}>{activeAccent.label}</span>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      {ACCENT_PRESETS.map((preset) => {
+                        if (isDarkMode && preset.id === "black") return null;
+                        if (!isDarkMode && preset.id === "white") return null;
+                        const active = preset.id === accentColorId;
+                        return (
+                          <button
+                            key={preset.id}
+                            type="button"
+                            onClick={() => setAccentColorId(preset.id)}
+                            title={preset.label}
+                            aria-pressed={active}
+                            style={{
+                              width: 24,
+                              height: 24,
+                              borderRadius: 999,
+                              border: `2px solid ${active ? THEME.accent : THEME.border}`,
+                              background: preset.hex,
+                              boxShadow: active ? "0 0 0 3px rgba(255,255,255,0.1)" : "inset 0 0 0 1px rgba(255,255,255,0.14)",
+                              cursor: "pointer",
+                              outline: "none",
+                              padding: 0,
+                            }}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
+                    <div style={{ fontWeight: 800, color: THEME.text }}>Default columns</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        value={defaultColsInput}
+                        onChange={(e) => {
+                          const raw = String(e.target.value ?? "").replace(/[^\d]/g, "");
+                          setDefaultColsInput(raw);
+                        }}
+                        onBlur={commitDefaultColsInput}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            commitDefaultColsInput();
+                            e.currentTarget.blur();
+                          }
+                        }}
+                        style={{
+                          width: 72,
+                          height: 32,
+                          borderRadius: 10,
+                          border: `1px solid ${THEME.border}`,
+                          textAlign: "center",
+                          fontWeight: 900,
+                          background: THEME.surfaceWarm,
+                          color: THEME.text,
+                          outline: "none",
+                          boxSizing: "border-box",
+                        }}
+                      />
+                      <span style={{ fontSize: 11, color: THEME.textFaint }}>
+                        Used for new rows.
+                      </span>
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
+                    <div style={{ fontWeight: 800, color: THEME.text }}>1-digit auto-apply delay (seconds)</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        value={colsAutoDelayInput}
+                        onChange={(e) => {
+                          const raw = String(e.target.value ?? "").replace(/[^\d]/g, "");
+                          setColsAutoDelayInput(raw);
+                        }}
+                        onBlur={commitColsAutoDelayInput}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            commitColsAutoDelayInput();
+                            e.currentTarget.blur();
+                          }
+                        }}
+                        style={{
+                          width: 72,
+                          height: 32,
+                          borderRadius: 10,
+                          border: `1px solid ${THEME.border}`,
+                          textAlign: "center",
+                          fontWeight: 900,
+                          background: THEME.surfaceWarm,
+                          color: THEME.text,
+                          outline: "none",
+                          boxSizing: "border-box",
+                        }}
+                      />
+                      <span style={{ fontSize: 11, color: THEME.textFaint }}>
+                        2+ digits apply instantly. 1 digit waits this long. Range: 1-10s.
+                      </span>
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: 8, fontWeight: 900 }}>PDF export</div>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <input
+                      type="checkbox"
+                      checked={pdfShowSong}
+                      onChange={(e) => setPdfShowSong(e.target.checked)}
+                    />
+                    <span>Show song name</span>
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <input
+                      type="checkbox"
+                      checked={pdfShowArtist}
+                      onChange={(e) => setPdfShowArtist(e.target.checked)}
+                    />
+                    <span>Show artist name</span>
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <input
+                      type="checkbox"
+                      checked={pdfShowTuning}
+                      onChange={(e) => setPdfShowTuning(e.target.checked)}
+                    />
+                    <span>Show tuning</span>
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <input
+                      type="checkbox"
+                      checked={pdfShowCapo}
+                      onChange={(e) => setPdfShowCapo(e.target.checked)}
+                    />
+                    <span>Show capo info</span>
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <input
+                      type="checkbox"
+                      checked={pdfShowHeaderBranding}
+                      onChange={(e) => setPdfShowHeaderBranding(e.target.checked)}
+                    />
+                    <span>Show TabStudio header (logo/text)</span>
+                  </label>
+
+                  <div style={{ fontSize: 11, color: THEME.textFaint, marginTop: 4 }}>
+                    Appearance is stored per user in this browser, so your preference stays the same next time.
+                  </div>
+                </div>
+              )}
+            </div>
+
+            </div>
+
+            <div
+              style={{
+                marginTop: 10,
+                order: 98,
+                position: "relative",
+                flexShrink: 0,
+              }}
+            >
+              {(() => {
+                const languages = [
+                  { id: "en", name: "English (US)", available: true },
+                  { id: "es", name: "Spanish (Español)", available: false },
+                  { id: "zh-Hans", name: "Mandarin Chinese", available: false },
+                  { id: "fr", name: "French", available: false },
+                  { id: "de", name: "German", available: false },
+                  { id: "pt", name: "Portuguese", available: false },
+                  { id: "ar", name: "Arabic", available: false },
+                  { id: "ja", name: "Japanese", available: false },
+                  { id: "ru", name: "Russian", available: false },
+                  { id: "ko", name: "Korean", available: false },
+                ];
+                const activeLanguage = languages.find((l) => l.id === settingsLanguagePreview) || languages[0];
+                const availableLanguages = languages.filter((l) => l.available);
+                const upcomingLanguages = languages.filter((l) => !l.available);
+                return (
+                  <>
+                    <button
+                      ref={settingsLanguageBtnRef}
+                      type="button"
+                      onClick={() => setSettingsLanguageOpen((v) => !v)}
+                      onPointerEnter={() => setLanguageFooterHover(true)}
+                      onPointerLeave={() => setLanguageFooterHover(false)}
+                      style={{
+                        padding: "10px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 10,
+                        borderRadius: 10,
+                        border: `1px solid ${
+                          languageFooterHover || settingsLanguageOpen
+                            ? withAlpha(THEME.text, isDarkMode ? 0.22 : 0.16)
+                            : "transparent"
+                        }`,
+                        background:
+                          languageFooterHover || settingsLanguageOpen
+                            ? withAlpha(THEME.text, isDarkMode ? 0.08 : 0.045)
+                            : "transparent",
+                        width: "100%",
+                        textAlign: "left",
+                        cursor: "pointer",
+                        transition: "background 120ms ease, border-color 120ms ease",
+                      }}
+                      aria-expanded={settingsLanguageOpen}
+                      aria-label="Language menu"
+                    >
+                      <span style={{ fontSize: 16, lineHeight: 1.1, fontWeight: 900, color: THEME.text }}>
+                        {tr("Language", "Idioma")}
+                      </span>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 12, fontWeight: 800, color: THEME.textFaint }}>{activeLanguage.name}</span>
+                        <span style={{ fontSize: 12, opacity: 0.8 }}>{settingsLanguageOpen ? "▲" : "▼"}</span>
+                      </span>
+                    </button>
+
+                    {settingsLanguageOpen && (
+                      <div
+                        ref={settingsLanguageMenuRef}
+                        style={{
+                          position: "absolute",
+                          left: 0,
+                          right: 0,
+                          bottom: "calc(100% + 8px)",
+                          zIndex: 5,
+                          display: "grid",
+                          gap: 6,
+                          border: `1px solid ${THEME.border}`,
+                          borderRadius: 12,
+                          padding: 8,
+                          background: THEME.surfaceWarm,
+                          boxShadow: "0 12px 28px rgba(0,0,0,0.22)",
+                          maxHeight: 300,
+                          overflowY: "auto",
+                        }}
+                      >
+                        <div style={{ fontSize: 11, fontWeight: 700, color: THEME.textFaint }}>
+                          {tr(
+                            "Not in your language yet? Contact us at Support@tabstudio.app to help us release it faster",
+                            "¿Aún no está en tu idioma? Contáctanos en Support@tabstudio.app para ayudarnos a lanzarlo más rápido"
+                          )}
+                        </div>
+
+                        {availableLanguages.map((lang) => {
+                          const active = settingsLanguagePreview === lang.id;
+                          return (
+                            <button
+                              key={lang.id}
+                              type="button"
+                              onClick={() => {
+                                setSettingsLanguagePreview(lang.id);
+                                setSettingsLanguageOpen(false);
+                              }}
+                              style={{
+                                width: "100%",
+                                minHeight: 34,
+                                padding: "7px 10px",
+                                borderRadius: 10,
+                                border: `1px solid ${active ? withAlpha(THEME.accent, 0.7) : THEME.border}`,
+                                background: active ? withAlpha(THEME.accent, 0.08) : "transparent",
+                                color: active ? THEME.accent : THEME.text,
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                fontSize: 13,
+                                fontWeight: 850,
+                                cursor: "pointer",
+                              }}
+                            >
+                              <span>{lang.name}</span>
+                              {active ? <span style={{ fontSize: 14, fontWeight: 900, color: THEME.accent }}>✓</span> : <span />}
+                            </button>
+                          );
+                        })}
+
+                        <div style={{ height: 1, background: THEME.border, margin: "2px 0" }} />
+                        {upcomingLanguages.map((lang) => (
+                          <div
+                            key={lang.id}
+                            style={{
+                              width: "100%",
+                              minHeight: 32,
+                              padding: "6px 10px",
+                              borderRadius: 10,
+                              border: `1px solid ${THEME.border}`,
+                              color: THEME.textFaint,
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              fontSize: 13,
+                              fontWeight: 800,
+                              opacity: 0.86,
+                              boxSizing: "border-box",
+                            }}
+                          >
+                            <span>{lang.name}</span>
+                            <span style={{ fontSize: 10, fontWeight: 900 }}>{tr("Coming soon", "Próximamente")}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setAccountProfileSection("overview");
+                setProjectsLibraryOpen(false);
+                setExportModalOpen(false);
+                setImageExportProgress("");
+                setSettingsOpen(false);
+                setSettingsFullscreen(false);
+                setAccountProfileOpen(true);
+              }}
+              onPointerEnter={() => setProfileFooterHover(true)}
+              onPointerLeave={() => setProfileFooterHover(false)}
+              title="Account & billing"
+              style={{
+                marginTop: 10,
+                padding: "10px",
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                order: 99,
+                borderRadius: 10,
+                border: `1px solid ${
+                  profileFooterHover ? withAlpha(THEME.text, isDarkMode ? 0.22 : 0.16) : "transparent"
+                }`,
+                background:
+                  profileFooterHover ? withAlpha(THEME.text, isDarkMode ? 0.08 : 0.045) : "transparent",
+                width: "100%",
+                textAlign: "left",
+                cursor: "pointer",
+                transition: "background 120ms ease, border-color 120ms ease",
+              }}
+            >
+              <div
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: 999,
+                  border: `1px solid ${THEME.border}`,
+                  background: THEME.surfaceWarm,
+                  color: THEME.textFaint,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 12,
+                  fontWeight: 900,
+                  flexShrink: 0,
+                }}
+                aria-hidden="true"
+              >
+                {String(accountFullName || "?")
+                  .split(" ")
+                  .map((s) => s[0] || "")
+                  .join("")
+                  .slice(0, 2)
+                  .toUpperCase()}
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 16, lineHeight: 1.1, fontWeight: 900, color: THEME.text }}>{accountFullName}</div>
+                <div style={{ marginTop: 2, fontSize: 12, lineHeight: 1.1, color: THEME.textFaint, fontWeight: 800 }}>
+                  {accountTier}
+                </div>
+              </div>
+            </button>
+          </aside>
+          {!settingsFullscreen && (
+            <button
+              ref={settingsExpandHandleRef}
+              type="button"
+              onClick={() => setSettingsFullscreen(true)}
+              title="Open settings fullscreen"
+              aria-label="Open settings fullscreen"
+              style={{
+                position: "fixed",
+                top: "50%",
+                left: `min(${settingsPanelWidth}px, calc(100vw - 16px))`,
+                transform: "translate(-50%, -50%)",
+                width: 22,
+                height: 44,
+                borderRadius: 10,
+                border: `1px solid ${THEME.border}`,
+                background: THEME.surfaceWarm,
+                color: THEME.textFaint,
+                fontSize: 14,
+                fontWeight: 850,
+                lineHeight: 1,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "pointer",
+                zIndex: 91,
+                boxShadow: `0 6px 12px ${withAlpha("#000000", isDarkMode ? 0.2 : 0.12)}`,
+                padding: 0,
+                transition: "background 120ms ease, color 120ms ease, border-color 120ms ease",
+              }}
+            >
+              ▶
+            </button>
+          )}
+          </>
+        )}
+
+        {/* Main editor */}
+        <div
+          ref={editorSurfaceRef}
+          className="tab-editor-surface"
+          style={{
+            width: "100%",
+            minWidth: 0,
+            transform: settingsOpen && !settingsFullscreen && !accountProfileOpen ? `translateX(${settingsPanelWidthCss})` : undefined,
+            transition: "transform 220ms ease",
+          }}
+        >
+          {/* Song info */}
+          <div style={{ ...card }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: songMetaGridColumns,
+                gap: 12,
+                alignItems: "center",
+              }}
+            >
+              <div style={{ minWidth: 0 }}>
+                <label
+                  htmlFor="song-name-input"
+                  style={{
+                    display: "block",
+                    margin: "0 0 7px 10px",
+                    fontSize: 11,
+                    fontWeight: 800,
+                    letterSpacing: "0.08em",
+                    textTransform: "uppercase",
+                    color: withAlpha(THEME.text, isDarkMode ? 0.72 : 0.7),
+                    lineHeight: 1.1,
+                    cursor: "text",
+                  }}
+                >
+                  {tr("SONG NAME", "NOMBRE DE LA CANCION")}
+                </label>
+                <input
+                  id="song-name-input"
+                  name="tabstudio-song-name"
+                  ref={songTitleInputRef}
+                  value={songTitle}
+                  onChange={(e) => setSongTitle(e.target.value)}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Escape") return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.currentTarget.blur();
+                    focusKeyCapture();
+                  }}
+                  placeholder={tr("Song name", "Nombre de la canción")}
+                  style={field}
+                />
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <label
+                  htmlFor={artistCreateOpen ? "artist-new-input" : "artist-select"}
+                  style={{
+                    display: "block",
+                    margin: "0 0 7px 10px",
+                    fontSize: 11,
+                    fontWeight: 800,
+                    letterSpacing: "0.08em",
+                    textTransform: "uppercase",
+                    color: withAlpha(THEME.text, isDarkMode ? 0.72 : 0.7),
+                    lineHeight: 1.1,
+                    cursor: "text",
+                  }}
+                >
+                  {tr("ARTIST", "ARTISTA")}
+                </label>
+                <div style={{ position: "relative" }}>
+                  {artistCreateOpen ? (
+                    <input
+                      id="artist-new-input"
+                      ref={newArtistInputRef}
+                      value={newArtistDraft}
+                      onChange={(e) => setNewArtistDraft(e.target.value)}
+                      placeholder="New artist name"
+                      style={{ ...field, fontWeight: 800 }}
+                      onBlur={() => {
+                        if (String(newArtistDraft || "").trim()) {
+                          confirmCreateArtist();
+                          return;
+                        }
+                        setArtistCreateOpen(false);
+                        setNewArtistDraft("");
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          confirmCreateArtist();
+                          return;
+                        }
+                        if (e.key === "Escape") {
+                          e.preventDefault();
+                          setArtistCreateOpen(false);
+                          setNewArtistDraft("");
+                          focusKeyCapture();
+                          return;
+                        }
+                        if (e.key === "Tab" && !String(newArtistDraft || "").trim()) {
+                          setArtistCreateOpen(false);
+                          setNewArtistDraft("");
+                        }
+                      }}
+                    />
+                  ) : (
+                    <>
+                      <button
+                        id="artist-select"
+                        ref={artistSelectRef}
+                        type="button"
+                        onClick={() => {
+                          setArtistMenuOpen((v) => !v);
+                          setAlbumMenuOpen(false);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key !== "Escape") return;
+                          e.preventDefault();
+                          e.stopPropagation();
+                          e.currentTarget.blur();
+                          focusKeyCapture();
+                        }}
+                        style={{
+                          ...field,
+                          fontWeight: 800,
+                          textAlign: "left",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          cursor: "pointer",
+                          borderColor: artistMenuOpen ? THEME.accent : THEME.border,
+                          boxShadow: artistMenuOpen ? `0 0 0 3px ${withAlpha(THEME.accent, 0.16)}` : "none",
+                        }}
+                      >
+                        <span>{effectiveArtistLabel || (availableArtistNames.length ? "Select Artist" : "Create Artist")}</span>
+                        <span style={{ opacity: 0.8 }}>{artistMenuOpen ? "▲" : "▼"}</span>
+                      </button>
+                      {artistMenuOpen && (
+                        <div
+                          ref={artistMenuRef}
+                          style={{
+                            position: "absolute",
+                            top: "calc(100% + 6px)",
+                            left: 0,
+                            zIndex: 1000,
+                            width: "100%",
+                            background: THEME.surfaceWarm,
+                            border: `1px solid ${THEME.border}`,
+                            borderRadius: 16,
+                            boxShadow: "0 24px 70px rgba(0,0,0,0.18)",
+                            padding: 10,
+                            boxSizing: "border-box",
+                          }}
+                          onPointerDown={(e) => e.stopPropagation()}
+                        >
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                            <div style={{ fontWeight: 950 }}>Artists</div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setArtistMenuOpen(false);
+                                focusKeyCapture();
+                              }}
+                              style={{ ...btnSmallPillClose }}
+                            >
+                              Close
+                            </button>
+                          </div>
+                          <div
+                            style={{
+                              display: "grid",
+                              gap: 6,
+                              marginTop: 10,
+                              maxHeight: 300,
+                              overflowY: "auto",
+                              overscrollBehavior: "contain",
+                              paddingRight: 4,
+                            }}
+                            onWheel={(e) => e.stopPropagation()}
+                          >
+                            {availableArtistNames.map((name) => {
+                              const selected = name === effectiveArtistLabel;
+                              return (
+                                <button
+                                  key={name}
+                                  type="button"
+                                  onClick={() => {
+                                    setArtistCreateOpen(false);
+                                    setNewArtistDraft("");
+                                    if (selected) {
+                                      setArtist("");
+                                      setAlbumName("");
+                                    } else {
+                                      setArtist(name);
+                                      setAlbumName("");
+                                    }
+                                    setArtistMenuOpen(false);
+                                    focusKeyCapture();
+                                  }}
+                                  style={{
+                                    textAlign: "left",
+                                    padding: "10px 10px",
+                                    borderRadius: 14,
+                                    border: `1px solid ${selected ? THEME.accent : THEME.border}`,
+                                    background: THEME.surfaceWarm,
+                                    cursor: "pointer",
+                                    fontWeight: 900,
+                                    color: THEME.text,
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "space-between",
+                                    gap: 10,
+                                    boxSizing: "border-box",
+                                  }}
+                                >
+                                  <span>{name}</span>
+                                  {selected ? <span style={{ color: THEME.accent, fontWeight: 900 }}>✓</span> : <span />}
+                                </button>
+                              );
+                            })}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setArtistMenuOpen(false);
+                                setNewArtistDraft("");
+                                setArtistCreateOpen(true);
+                                setAlbumCreateOpen(false);
+                              }}
+                              style={{
+                                textAlign: "left",
+                                padding: "10px 10px",
+                                borderRadius: 14,
+                                border: `1px solid ${THEME.border}`,
+                                background: THEME.surfaceWarm,
+                                cursor: "pointer",
+                                fontWeight: 900,
+                                color: THEME.text,
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                gap: 10,
+                                boxSizing: "border-box",
+                              }}
+                            >
+                              <span>+ New artist...</span>
+                              <span />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <label
+                  htmlFor={albumCreateOpen ? "album-new-input" : "album-select"}
+                  style={{
+                    display: "block",
+                    margin: "0 0 7px 10px",
+                    fontSize: 11,
+                    fontWeight: 800,
+                    letterSpacing: "0.08em",
+                    textTransform: "uppercase",
+                    color: withAlpha(THEME.text, isDarkMode ? 0.72 : 0.7),
+                    lineHeight: 1.1,
+                    cursor: "text",
+                  }}
+                >
+                  {tr("ALBUM", "ALBUM")}
+                </label>
+                <div style={{ position: "relative" }}>
+                  {albumCreateOpen ? (
+                    <input
+                      id="album-new-input"
+                      ref={newAlbumInputRef}
+                      value={newAlbumDraft}
+                      onChange={(e) => setNewAlbumDraft(e.target.value)}
+                      placeholder="New album name"
+                      style={{ ...field, fontWeight: 800 }}
+                      onBlur={() => {
+                        if (String(newAlbumDraft || "").trim()) {
+                          confirmCreateAlbum();
+                          return;
+                        }
+                        setAlbumCreateOpen(false);
+                        setNewAlbumDraft("");
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          confirmCreateAlbum();
+                          return;
+                        }
+                        if (e.key === "Escape") {
+                          e.preventDefault();
+                          setAlbumCreateOpen(false);
+                          setNewAlbumDraft("");
+                          focusKeyCapture();
+                          return;
+                        }
+                        if (e.key === "Tab" && !String(newAlbumDraft || "").trim()) {
+                          setAlbumCreateOpen(false);
+                          setNewAlbumDraft("");
+                        }
+                      }}
+                    />
+                  ) : (
+                    <>
+                      <button
+                        id="album-select"
+                        ref={albumSelectRef}
+                        type="button"
+                        onClick={() => {
+                          setAlbumMenuOpen((v) => !v);
+                          setArtistMenuOpen(false);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key !== "Escape") return;
+                          e.preventDefault();
+                          e.stopPropagation();
+                          e.currentTarget.blur();
+                          focusKeyCapture();
+                        }}
+                        style={{
+                          ...field,
+                          fontWeight: 800,
+                          textAlign: "left",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          cursor: "pointer",
+                          borderColor: albumMenuOpen ? THEME.accent : THEME.border,
+                          boxShadow: albumMenuOpen ? `0 0 0 3px ${withAlpha(THEME.accent, 0.16)}` : "none",
+                        }}
+                      >
+                        <span>
+                          {effectiveAlbumLabel ||
+                            (effectiveArtistLabel
+                              ? albumsForCurrentArtist.length
+                                ? "Select Album"
+                                : "Create Album"
+                              : "Select Album")}
+                        </span>
+                        <span style={{ opacity: 0.8 }}>{albumMenuOpen ? "▲" : "▼"}</span>
+                      </button>
+                      {albumMenuOpen && (
+                        <div
+                          ref={albumMenuRef}
+                          style={{
+                            position: "absolute",
+                            top: "calc(100% + 6px)",
+                            left: 0,
+                            zIndex: 1000,
+                            width: "100%",
+                            background: THEME.surfaceWarm,
+                            border: `1px solid ${THEME.border}`,
+                            borderRadius: 16,
+                            boxShadow: "0 24px 70px rgba(0,0,0,0.18)",
+                            padding: 10,
+                            boxSizing: "border-box",
+                          }}
+                          onPointerDown={(e) => e.stopPropagation()}
+                        >
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                            <div style={{ fontWeight: 950 }}>Albums</div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAlbumMenuOpen(false);
+                                focusKeyCapture();
+                              }}
+                              style={{ ...btnSmallPillClose }}
+                            >
+                              Close
+                            </button>
+                          </div>
+                          <div
+                            style={{
+                              display: "grid",
+                              gap: 6,
+                              marginTop: 10,
+                              maxHeight: 300,
+                              overflowY: "auto",
+                              overscrollBehavior: "contain",
+                              paddingRight: 4,
+                            }}
+                            onWheel={(e) => e.stopPropagation()}
+                          >
+                            {!effectiveArtistLabel && (
+                              <div
+                                style={{
+                                  padding: "8px 4px 6px",
+                                  fontSize: 13,
+                                  color: withAlpha(THEME.text, 0.74),
+                                }}
+                              >
+                                Select an artist first.
+                              </div>
+                            )}
+                            {albumsForCurrentArtist.map((name) => {
+                                const selected = name === effectiveAlbumLabel;
+                                return (
+                                  <button
+                                    key={name}
+                                    type="button"
+                                    onClick={() => {
+                                      setAlbumCreateOpen(false);
+                                      setNewAlbumDraft("");
+                                      if (selected) {
+                                        setAlbumName("");
+                                      } else {
+                                        setAlbumName(name);
+                                      }
+                                      setAlbumMenuOpen(false);
+                                      focusKeyCapture();
+                                    }}
+                                    style={{
+                                      textAlign: "left",
+                                      padding: "10px 10px",
+                                      borderRadius: 14,
+                                      border: `1px solid ${selected ? THEME.accent : THEME.border}`,
+                                      background: THEME.surfaceWarm,
+                                      cursor: "pointer",
+                                      fontWeight: 900,
+                                      color: THEME.text,
+                                      display: "flex",
+                                      alignItems: "center",
+                                      justifyContent: "space-between",
+                                      gap: 10,
+                                      boxSizing: "border-box",
+                                    }}
+                                  >
+                                    <span>{name}</span>
+                                    {selected ? (
+                                      <span style={{ color: THEME.accent, fontWeight: 900 }}>✓</span>
+                                    ) : (
+                                      <span />
+                                    )}
+                                  </button>
+                                );
+                              })}
+                            {effectiveArtistLabel && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAlbumMenuOpen(false);
+                                  setNewAlbumDraft("");
+                                  setAlbumCreateOpen(true);
+                                  setArtistCreateOpen(false);
+                                }}
+                                style={{
+                                  textAlign: "left",
+                                  padding: "10px 10px",
+                                  borderRadius: 14,
+                                  border: `1px solid ${THEME.border}`,
+                                  background: THEME.surfaceWarm,
+                                  cursor: "pointer",
+                                  fontWeight: 900,
+                                  color: THEME.text,
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "space-between",
+                                  gap: 10,
+                                  boxSizing: "border-box",
+                                }}
+                              >
+                                <span>+ New album...</span>
+                                <span />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: songMetaGridColumns,
+                gap: 12,
+                marginTop: 12,
+                alignItems: "center",
+              }}
+            >
+              <div style={{ minWidth: 0, position: "relative" }}>
+                <label
+                  style={{
+                    display: "block",
+                    margin: "0 0 7px 10px",
+                    fontSize: 11,
+                    fontWeight: 800,
+                    letterSpacing: "0.08em",
+                    textTransform: "uppercase",
+                    color: withAlpha(THEME.text, isDarkMode ? 0.72 : 0.7),
+                    lineHeight: 1.1,
+                  }}
+                >
+                  INSTRUMENT
+                </label>
+                <button
+                  ref={instrumentBtnRef}
+                  type="button"
+                  onClick={() => setInstrumentOpen((v) => !v)}
+                  style={{
+                    ...field,
+                    width: "100%",
+                    textAlign: "left",
+                    fontWeight: 800,
+                    fontFamily: "inherit",
+                    fontSize: 16,
+                    lineHeight: 1.2,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    cursor: "pointer",
+                    borderColor: instrumentOpen ? THEME.accent : THEME.border,
+                    boxShadow: instrumentOpen ? `0 0 0 3px ${withAlpha(THEME.accent, 0.16)}` : "none",
+                  }}
+                >
+                  <span>{`${currentInstrument.stringCount} String ${currentInstrument.group}`}</span>
+                  <span style={{ opacity: 0.8 }}>{instrumentOpen ? "▲" : "▼"}</span>
+                </button>
+                {instrumentOpen && (
+                  <div
+                    ref={instrumentPanelRef}
+                    style={{
+                      position: "absolute",
+                      top: 74,
+                      left: 0,
+                      zIndex: 1000,
+                      width: "100%",
+                      background: THEME.surfaceWarm,
+                      border: `1px solid ${THEME.border}`,
+                      borderRadius: 16,
+                      boxShadow: "0 24px 70px rgba(0,0,0,0.18)",
+                      padding: 10,
+                      boxSizing: "border-box",
+                    }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 8,
+                        marginBottom: 6,
+                      }}
+                    >
+                      <div style={{ fontWeight: 950 }}>Instruments</div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setInstrumentOpen(false);
+                          focusKeyCapture();
+                        }}
+                        style={{ ...btnSmallPillClose }}
+                      >
+                        Close
+                      </button>
+                    </div>
+
+                    <div
+                      style={{
+                        maxHeight: 340,
+                        overflowY: "auto",
+                        paddingRight: 4,
+                        display: "grid",
+                        gap: 6,
+                      }}
+                      onWheel={(e) => e.stopPropagation()}
+                    >
+                      {[
+                        { group: "Favourites", items: favouriteInstruments, isFavourites: true },
+                        ...groupedInstruments.map((g) => ({ ...g, isFavourites: false })),
+                      ].map(({ group, items, isFavourites }) => {
+                        const expanded = expandedInstrumentGroup === group;
+                        return (
+                          <div
+                            key={group}
+                            style={{
+                              marginBottom: 6,
+                            }}
+                          >
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExpandedInstrumentGroup((prev) => (prev === group ? null : group))
+                              }
+                              style={{
+                                ...btnSecondary,
+                                width: "100%",
+                                height: 42,
+                                padding: "0 10px",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                borderRadius: 12,
+                                borderColor: expanded ? THEME.accent : THEME.border,
+                                background: THEME.surfaceWarm,
+                                cursor: "pointer",
+                                fontSize: 16,
+                                lineHeight: 1,
+                                fontWeight: 900,
+                                color: THEME.text,
+                                boxSizing: "border-box",
+                                boxShadow: expanded ? `inset 0 0 0 1px ${withAlpha(THEME.accent, 0.22)}` : "none",
+                              }}
+                            >
+                              <span>{group}</span>
+                              <span style={{ fontSize: 13, opacity: 0.8 }}>{expanded ? "▲" : "▼"}</span>
+                            </button>
+                            {expanded && (
+                              <div
+                                style={{
+                                  display: "grid",
+                                  gap: 6,
+                                  padding: "6px 4px 2px",
+                                }}
+                              >
+                                {isFavourites && items.length === 0 ? (
+                                  <div
+                                    style={{
+                                      fontSize: 12,
+                                      color: THEME.textFaint,
+                                      lineHeight: 1.4,
+                                      fontWeight: 700,
+                                      padding: "10px 10px 12px",
+                                      border: `1px solid ${THEME.border}`,
+                                      borderRadius: 12,
+                                      background: THEME.surfaceWarm,
+                                    }}
+                                  >
+                                    You haven&apos;t added any favourites yet. Click the star next to an instrument to
+                                    add it here.
+                                  </div>
+                                ) : (
+                                  items.map((inst) => {
+                                    const active = inst.id === instrumentId;
+                                    const fav = favInstrumentIds.includes(inst.id);
+                                    return (
+                                      <div
+                                        key={inst.id}
+                                        style={{
+                                          display: "grid",
+                                          gridTemplateColumns: "minmax(0,1fr) auto",
+                                          gap: 6,
+                                          alignItems: "center",
+                                        }}
+                                      >
+                                        <button
+                                          type="button"
+                                          onClick={() => handleInstrumentChange(inst.id)}
+                                          style={{
+                                            textAlign: "left",
+                                            padding: "9px 10px",
+                                            borderRadius: 12,
+                                            border: `1px solid ${active ? THEME.accent : THEME.border}`,
+                                            background: THEME.surfaceWarm,
+                                            cursor: "pointer",
+                                            fontWeight: 800,
+                                            fontSize: 13,
+                                            color: active ? THEME.accent : THEME.text,
+                                            display: "flex",
+                                            alignItems: "center",
+                                            justifyContent: "space-between",
+                                            gap: 8,
+                                            boxSizing: "border-box",
+                                            boxShadow: active
+                                              ? `inset 0 0 0 1px ${withAlpha(THEME.accent, 0.2)}`
+                                              : "none",
+                                          }}
+                                        >
+                                          <span>{`${inst.stringCount} String ${inst.group}`}</span>
+                                          {isFavourites ? (
+                                            active ? (
+                                              <span style={{ fontSize: 12, color: THEME.accent, fontWeight: 900 }}>✓</span>
+                                            ) : (
+                                              <span />
+                                            )
+                                          ) : (
+                                            <span
+                                              style={{
+                                                fontSize: 12,
+                                                color: THEME.textFaint,
+                                                fontWeight: 800,
+                                              }}
+                                            >
+                                              {inst.stringCount} strings
+                                            </span>
+                                          )}
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleFavouriteInstrument(inst.id)}
+                                          style={{
+                                            width: 28,
+                                            height: 28,
+                                            border: `1px solid ${THEME.border}`,
+                                            borderRadius: 8,
+                                            background: "transparent",
+                                            cursor: "pointer",
+                                            display: "flex",
+                                            alignItems: "center",
+                                            justifyContent: "center",
+                                            padding: 0,
+                                            opacity: fav ? 1 : 0.9,
+                                          }}
+                                          title={fav ? "Remove from favourites" : "Add to favourites"}
+                                        >
+                                          <span
+                                            style={{
+                                              color: fav ? THEME.starActive : THEME.textFaint,
+                                              fontSize: 16,
+                                            }}
+                                          >
+                                            {fav ? "★" : "☆"}
+                                          </span>
+                                        </button>
+                                      </div>
+                                    );
+                                  })
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div style={{ fontSize: 11, color: THEME.textFaint, marginTop: 6 }}>
+                      You can mix multiple instruments in the same song – each completed row remembers which instrument it
+                      was written for.
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div style={{ minWidth: 0, position: "relative" }}>
+                <label
+                  style={{
+                    display: "block",
+                    margin: "0 0 7px 10px",
+                    fontSize: 11,
+                    fontWeight: 800,
+                    letterSpacing: "0.08em",
+                    textTransform: "uppercase",
+                    color: withAlpha(THEME.text, isDarkMode ? 0.72 : 0.7),
+                    lineHeight: 1.1,
+                  }}
+                >
+                  TUNING
+                </label>
+                <button
+                  ref={tuningBtnRef}
+                  type="button"
+                  onClick={() => {
+                    setTuningOpen((v) => !v);
+                    if (!tuningOpen) setCustomOpen(false);
+                  }}
+                  style={{
+                    ...field,
+                    width: "100%",
+                    textAlign: "left",
+                    fontWeight: 800,
+                    fontFamily: "inherit",
+                    fontSize: 16,
+                    lineHeight: 1.2,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    cursor: "pointer",
+                    borderColor: tuningOpen ? THEME.accent : THEME.border,
+                    boxShadow: tuningOpen ? `0 0 0 3px ${withAlpha(THEME.accent, 0.16)}` : "none",
+                    gap: 10,
+                  }}
+                >
+                  <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {tuningLabel}
+                  </span>
+                  <span
+                    style={{
+                      marginLeft: "auto",
+                      fontSize: 12,
+                      opacity: 0.72,
+                      fontWeight: 900,
+                      color: THEME.textFaint,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {formatLowToHighString(appToLowToHigh(tuning))}
+                  </span>
+                  <span style={{ opacity: 0.8, marginLeft: 4 }}>{tuningOpen ? "▲" : "▼"}</span>
+                </button>
+                {tuningOpen && (
+                  <div
+                    ref={tuningPanelRef}
+                    style={{
+                      position: "absolute",
+                      top: 74,
+                      left: 0,
+                      zIndex: 1000,
+                      width: "100%",
+                      background: THEME.surfaceWarm,
+                      border: `1px solid ${THEME.border}`,
+                      borderRadius: 16,
+                      boxShadow: "0 24px 70px rgba(0,0,0,0.18)",
+                      padding: 10,
+                      boxSizing: "border-box",
+                    }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                      <div style={{ fontWeight: 950 }}>Tunings</div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTuningOpen(false);
+                          setCustomOpen(false);
+                          focusKeyCapture();
+                        }}
+                        style={{ ...btnSmallPillClose }}
+                      >
+                        Close
+                      </button>
+                    </div>
+
+                    <div
+                      style={{
+                        display: "grid",
+                        gap: 6,
+                        marginTop: 10,
+                        maxHeight: 360,
+                        overflowY: "auto",
+                        overscrollBehavior: "contain",
+                        paddingRight: 4,
+                      }}
+                      onWheel={(e) => e.stopPropagation()}
+                    >
+                      {allTunings.map((t) => {
+                        const isUser = currentInstrument.stringCount === 6 && userTuningsById.has(t.id);
+                        return (
+                          <div
+                            key={t.id}
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "1fr auto",
+                              gap: 8,
+                              alignItems: "center",
+                            }}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => applyTuningOption(t)}
+                              style={{
+                                textAlign: "left",
+                                padding: "10px 10px",
+                                borderRadius: 14,
+                                border: `1px solid ${THEME.border}`,
+                                background: THEME.surfaceWarm,
+                                cursor: "pointer",
+                                fontWeight: 900,
+                                color: THEME.text,
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                gap: 10,
+                                boxSizing: "border-box",
+                                minWidth: 0,
+                              }}
+                            >
+                              <span>{formatTuningName(t.name)}</span>
+                              <span
+                                style={{
+                                  fontSize: 12,
+                                  opacity: 0.7,
+                                  fontWeight: 900,
+                                  color: THEME.textFaint,
+                                }}
+                              >
+                                {formatLowToHighString(t.lowToHigh)}
+                              </span>
+                            </button>
+                            {isUser ? (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  deleteUserTuning(t.id);
+                                }}
+                                title="Delete saved tuning"
+                                style={{
+                                  ...actionDeleteBtn,
+                                  width: 40,
+                                  minWidth: 40,
+                                  height: 40,
+                                  borderRadius: 12,
+                                  fontSize: 20,
+                                }}
+                              >
+                                ×
+                              </button>
+                            ) : (
+                              <span />
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {currentInstrument.stringCount === 6 && (
+                      <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            resetCustomFormToCurrent();
+                            setCustomOpen(true);
+                          }}
+                          style={{
+                            ...btnSecondary,
+                            height: 36,
+                            padding: "0 10px",
+                            borderColor: customOpen ? THEME.accent : THEME.border,
+                            background: THEME.surfaceWarm,
+                          }}
+                        >
+                          + Add custom tuning
+                        </button>
+                      </div>
+                    )}
+
+                    <div style={{ fontSize: 12, color: THEME.textFaint, marginTop: 10 }}>
+                      Chord tools currently only work in <b>6-string guitar</b> with <b>Standard</b> tuning.
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div
+                style={{
+                  minWidth: 0,
+                  display: "grid",
+                  gridTemplateColumns: showCapoControl && showTempoControl ? "repeat(2, minmax(0, 1fr))" : "minmax(0, 1fr)",
+                  gap: 12,
+                  alignItems: "start",
+                }}
+              >
+                {showCapoControl && (
+                  <div style={{ minWidth: 0, position: "relative" }}>
+                    <label
+                      style={{
+                        display: "block",
+                        margin: "0 0 7px 10px",
+                        fontSize: 11,
+                        fontWeight: 800,
+                        letterSpacing: "0.08em",
+                        textTransform: "uppercase",
+                        color: withAlpha(THEME.text, isDarkMode ? 0.72 : 0.7),
+                        lineHeight: 1.1,
+                      }}
+                    >
+                      CAPO
+                    </label>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <button
+                        ref={capoBtnRef}
+                        type="button"
+                        onClick={() => setCapoOpen((v) => !v)}
+                        style={{
+                          ...field,
+                          flex: 1,
+                          textAlign: "left",
+                          fontWeight: 800,
+                          fontFamily: "inherit",
+                          fontSize: 16,
+                          lineHeight: 1.2,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          cursor: "pointer",
+                          borderColor: capoOpen ? THEME.accent : THEME.border,
+                          boxShadow: capoOpen ? `0 0 0 3px ${withAlpha(THEME.accent, 0.16)}` : "none",
+                        }}
+                      >
+                        <span>{capoLabel}</span>
+                        <span style={{ opacity: 0.8 }}>{capoOpen ? "▲" : "▼"}</span>
+                      </button>
+
+                      {capoEnabled && (
+                        <input
+                          ref={capoInputRef}
+                          type="text"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          value={capoFret}
+                          onMouseDown={() => {
+                            setCapoReplaceOnType(true);
+                            capoReplaceOnTypeRef.current = true;
+                          }}
+                          onChange={(e) => {
+                            const raw = String(e.target.value ?? "").replace(/[^\d]/g, "");
+                            setCapoFret(raw);
+                            if (!raw) setCapoEnabled(false);
+                          }}
+                          onFocus={() => {
+                            setCapoFretFocused(true);
+                            setCapoReplaceOnType(true);
+                            capoReplaceOnTypeRef.current = true;
+                          }}
+                          onBlur={() => {
+                            setCapoFretFocused(false);
+                            setCapoReplaceOnType(false);
+                            capoReplaceOnTypeRef.current = false;
+                            validateCapo();
+                          }}
+                          onKeyDown={(e) => {
+                            if (/^\d$/.test(e.key)) {
+                              e.preventDefault();
+                              const replace = capoReplaceOnTypeRef.current;
+                              setCapoFret((prev) => {
+                                const base = replace ? "" : String(prev ?? "");
+                                return `${base}${e.key}`.replace(/[^\d]/g, "");
+                              });
+                              if (replace) {
+                                setCapoReplaceOnType(false);
+                                capoReplaceOnTypeRef.current = false;
+                              }
+                              return;
+                            }
+                            if (e.key === "Backspace") {
+                              e.preventDefault();
+                              setCapoReplaceOnType(false);
+                              capoReplaceOnTypeRef.current = false;
+                              setCapoFret((prev) => {
+                                const next = String(prev ?? "").slice(0, -1);
+                                if (!next) setCapoEnabled(false);
+                                return next;
+                              });
+                              return;
+                            }
+                            if (e.key === "Delete") {
+                              e.preventDefault();
+                              setCapoReplaceOnType(false);
+                              capoReplaceOnTypeRef.current = false;
+                              setCapoFret("");
+                              setCapoEnabled(false);
+                              return;
+                            }
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              setCapoReplaceOnType(false);
+                              capoReplaceOnTypeRef.current = false;
+                              const ok = validateCapo();
+                              if (ok) {
+                                capoInputRef.current?.blur?.();
+                                focusKeyCapture();
+                              }
+                              return;
+                            }
+                            if (e.key === "Tab") return;
+                            e.preventDefault();
+                          }}
+                          style={{
+                            width: cellSize,
+                            height: cellSize,
+                            borderRadius: 12,
+                            border: `1px solid ${capoFretFocused ? THEME.accent : THEME.border}`,
+                            outline: "none",
+                            boxShadow: capoFretFocused ? `0 0 0 3px ${withAlpha(THEME.accent, 0.18)}` : "none",
+                            textAlign: "center",
+                            ...pillMono,
+                            background: THEME.surfaceWarm,
+                            color: THEME.text,
+                            boxSizing: "border-box",
+                            caretColor: "transparent",
+                          }}
+                          title="Capo fret (1–24)"
+                        />
+                      )}
+                    </div>
+
+                    {capoOpen && (
+                      <div
+                        ref={capoPanelRef}
+                        style={{
+                          position: "absolute",
+                          top: 74,
+                          left: 0,
+                          zIndex: 1000,
+                          width: "100%",
+                          background: THEME.surfaceWarm,
+                          border: `1px solid ${THEME.border}`,
+                          borderRadius: 16,
+                          boxShadow: "0 24px 70px rgba(0,0,0,0.18)",
+                          padding: 10,
+                          boxSizing: "border-box",
+                        }}
+                        onPointerDown={(e) => e.stopPropagation()}
+                      >
+                        <div
+                          style={{
+                            marginBottom: 8,
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            gap: 8,
+                          }}
+                        >
+                          <div style={{ fontWeight: 950 }}>Capo</div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCapoOpen(false);
+                              focusKeyCapture();
+                            }}
+                            style={{ ...btnSmallPillClose }}
+                          >
+                            Close
+                          </button>
+                        </div>
+
+                        <div style={{ display: "grid", gap: 6 }}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCapoEnabled(false);
+                              setCapoOpen(false);
+                              focusKeyCapture();
+                            }}
+                            style={{
+                              textAlign: "left",
+                              padding: "10px 10px",
+                              borderRadius: 14,
+                              border: `1px solid ${THEME.border}`,
+                              background: THEME.surfaceWarm,
+                              cursor: "pointer",
+                              fontWeight: 900,
+                              color: THEME.text,
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              gap: 10,
+                              boxSizing: "border-box",
+                            }}
+                          >
+                            <span>No</span>
+                            {!capoEnabled ? <span style={{ color: THEME.accent, fontWeight: 950 }}>✓</span> : <span />}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCapoEnabled(true);
+                              setCapoOpen(false);
+                              setCapoFret("");
+                              requestAnimationFrame(() => {
+                                try {
+                                  capoInputRef.current?.focus?.({ preventScroll: true });
+                                } catch {
+                                  capoInputRef.current?.focus?.();
+                                }
+                              });
+                            }}
+                            style={{
+                              textAlign: "left",
+                              padding: "10px 10px",
+                              borderRadius: 14,
+                              border: `1px solid ${THEME.border}`,
+                              background: THEME.surfaceWarm,
+                              cursor: "pointer",
+                              fontWeight: 900,
+                              color: THEME.text,
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              gap: 10,
+                              boxSizing: "border-box",
+                            }}
+                          >
+                            <span>Yes</span>
+                            {capoEnabled ? <span style={{ color: THEME.accent, fontWeight: 950 }}>✓</span> : <span />}
+                          </button>
+                        </div>
+
+                        <div style={{ fontSize: 12, color: THEME.textFaint, marginTop: 10 }}>
+                          If enabled, enter the fret number in the box (1–24).
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {showTempoControl && (
+                  <div style={{ minWidth: 0 }}>
+                    <label
+                      style={{
+                        display: "block",
+                        margin: "0 0 7px 10px",
+                        fontSize: 11,
+                        fontWeight: 800,
+                        letterSpacing: "0.08em",
+                        textTransform: "uppercase",
+                        color: withAlpha(THEME.text, isDarkMode ? 0.72 : 0.7),
+                        lineHeight: 1.1,
+                      }}
+                    >
+                      TEMPO
+                    </label>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <div
+                        style={{
+                          ...field,
+                          flex: 1,
+                          display: "flex",
+                          alignItems: "center",
+                          minWidth: 0,
+                          overflow: "hidden",
+                          whiteSpace: "nowrap",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {`Tempo: ${
+                          (() => {
+                            const parsed = Number(String(tempoBpm ?? "").trim());
+                            if (!Number.isFinite(parsed)) return 120;
+                            return Math.max(30, Math.min(300, parsed));
+                          })()
+                        } BPM`}
+                      </div>
+                      <input
+                        ref={tempoInputRef}
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        value={tempoBpm}
+                        onMouseDown={() => {
+                          clearTempoAutoCommitTimer();
+                          setTempoReplaceOnType(true);
+                          tempoReplaceOnTypeRef.current = true;
+                        }}
+                        onPointerDown={(e) => {
+                          if (e.button !== 0) return;
+                          tempoDragRef.current = {
+                            active: true,
+                            pointerId: e.pointerId,
+                            lastY: e.clientY,
+                            carry: 0,
+                          };
+                          try {
+                            e.currentTarget.setPointerCapture(e.pointerId);
+                          } catch {}
+                        }}
+                        onPointerMove={(e) => {
+                          const drag = tempoDragRef.current;
+                          if (!drag.active || drag.pointerId !== e.pointerId) return;
+                          const deltaPx = drag.lastY - e.clientY;
+                          drag.lastY = e.clientY;
+                          drag.carry += deltaPx;
+                          const stepPx = 10;
+                          if (Math.abs(drag.carry) < stepPx) return;
+                          const steps = drag.carry > 0 ? Math.floor(drag.carry / stepPx) : Math.ceil(drag.carry / stepPx);
+                          drag.carry -= steps * stepPx;
+                          nudgeTempo(steps);
+                        }}
+                        onPointerUp={(e) => {
+                          const drag = tempoDragRef.current;
+                          if (drag.pointerId !== e.pointerId) return;
+                          drag.active = false;
+                          drag.pointerId = null;
+                          drag.carry = 0;
+                          try {
+                            e.currentTarget.releasePointerCapture(e.pointerId);
+                          } catch {}
+                        }}
+                        onPointerCancel={(e) => {
+                          const drag = tempoDragRef.current;
+                          if (drag.pointerId !== e.pointerId) return;
+                          drag.active = false;
+                          drag.pointerId = null;
+                          drag.carry = 0;
+                        }}
+                        onSelect={(e) => {
+                          const len = String(tempoBpm ?? "").length;
+                          try {
+                            e.currentTarget.setSelectionRange(len, len);
+                          } catch {}
+                        }}
+                        onDragStart={(e) => e.preventDefault()}
+                        onChange={(e) => {
+                          const raw = String(e.target.value ?? "").replace(/[^\d]/g, "").slice(0, 3);
+                          setTempoBpm(raw);
+                          scheduleTempoAutoCommit(raw);
+                        }}
+                        onFocus={() => {
+                          setTempoFocused(true);
+                          clearTempoAutoCommitTimer();
+                          setTempoReplaceOnType(true);
+                          tempoReplaceOnTypeRef.current = true;
+                        }}
+                        onBlur={() => {
+                          setTempoFocused(false);
+                          clearTempoAutoCommitTimer();
+                          commitTempoInput();
+                          setTempoReplaceOnType(false);
+                          tempoReplaceOnTypeRef.current = false;
+                        }}
+                        onKeyDown={(e) => {
+                          if (/^\d$/.test(e.key)) {
+                            e.preventDefault();
+                            const replace = tempoReplaceOnTypeRef.current;
+                            setTempoBpm((prev) => {
+                              const base = replace ? "" : String(prev ?? "");
+                              const nextRaw = `${base}${e.key}`.replace(/[^\d]/g, "").slice(0, 3);
+                              scheduleTempoAutoCommit(nextRaw);
+                              return nextRaw;
+                            });
+                            if (replace) {
+                              setTempoReplaceOnType(false);
+                              tempoReplaceOnTypeRef.current = false;
+                            }
+                            return;
+                          }
+                          if (e.key === "Backspace") {
+                            e.preventDefault();
+                            const nextRaw = String(tempoBpm ?? "").slice(0, -1);
+                            setTempoReplaceOnType(false);
+                            tempoReplaceOnTypeRef.current = false;
+                            setTempoBpm(nextRaw);
+                            scheduleTempoAutoCommit(nextRaw);
+                            return;
+                          }
+                          if (e.key === "Delete") {
+                            e.preventDefault();
+                            setTempoReplaceOnType(false);
+                            tempoReplaceOnTypeRef.current = false;
+                            setTempoBpm("");
+                            clearTempoAutoCommitTimer();
+                            return;
+                          }
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            clearTempoAutoCommitTimer();
+                            commitTempoInput();
+                            setTempoReplaceOnType(false);
+                            tempoReplaceOnTypeRef.current = false;
+                            e.currentTarget.blur();
+                            focusKeyCapture();
+                            return;
+                          }
+                          if (e.key === "Tab") return;
+                          e.preventDefault();
+                        }}
+                        style={{
+                          width: 56,
+                          height: cellSize,
+                          borderRadius: 12,
+                          border: `1px solid ${tempoFocused ? THEME.accent : THEME.border}`,
+                          outline: "none",
+                          boxShadow: tempoFocused ? `0 0 0 3px ${withAlpha(THEME.accent, 0.18)}` : "none",
+                          textAlign: "center",
+                          ...pillMono,
+                          background: THEME.surfaceWarm,
+                          color: THEME.text,
+                          caretColor: "transparent",
+                          cursor: "pointer",
+                          userSelect: "none",
+                          WebkitUserSelect: "none",
+                          boxSizing: "border-box",
+                        }}
+                        title="Tempo (30–300 BPM)"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div ref={tabWriterAreaRef}>
+          {/* Toolbar */}
+          <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 12, flexWrap: "wrap" }}>
+            {/* Columns */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                border: `1px solid ${THEME.border}`,
+                borderRadius: 14,
+                overflow: "hidden",
+                background: THEME.surfaceWarm,
+                height: 42,
+                boxSizing: "border-box",
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setCols((c) => Math.max(MIN_COLS, c - 1))}
+                {...pressHandlers("colsDec")}
+                style={{
+                  width: 42,
+                  height: 42,
+                  border: "none",
+                  outline: "none",
+                  boxShadow: "none",
+                  background: "transparent",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontWeight: 1000,
+                  fontSize: 20,
+                  lineHeight: 1,
+                  color: THEME.text,
+                  padding: 0,
+                  ...(pressedBtnId === "colsDec"
+                    ? {
+                        color: THEME.accent,
+                        transform: "translateY(1px)",
+                        textShadow: `0 0 8px ${withAlpha(THEME.accent, 0.35)}`,
+                      }
+                    : {
+                        transform: "translateY(0)",
+                        textShadow: "none",
+                      }),
+                  transition: "transform 100ms ease, color 120ms ease, text-shadow 120ms ease",
+                }}
+                title="Decrease columns"
+                aria-label="Decrease columns"
+              >
+                −
+              </button>
+
+              <div style={{ width: 1, height: "100%", background: THEME.border }} />
+
+              <input
+                ref={colsInputRef}
+                className="tab-cols-input"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={colsInput}
+                onMouseDown={(e) => {
+                  if (handleColsTripleClickReset(e)) {
+                    e.preventDefault();
+                    return;
+                  }
+                  clearColsAutoCommitTimer();
+                  setColsReplaceOnType(true);
+                  colsReplaceOnTypeRef.current = true;
+                }}
+                onClick={(e) => {
+                  if (handleColsTripleClickReset(e)) {
+                    e.preventDefault();
+                  }
+                }}
+                onPointerDown={(e) => {
+                  if (e.button !== 0) return;
+                  colsDragRef.current = {
+                    active: true,
+                    pointerId: e.pointerId,
+                    lastY: e.clientY,
+                    carry: 0,
+                  };
+                  try {
+                    e.currentTarget.setPointerCapture(e.pointerId);
+                  } catch {}
+                }}
+                onPointerMove={(e) => {
+                  const drag = colsDragRef.current;
+                  if (!drag.active || drag.pointerId !== e.pointerId) return;
+                  const deltaPx = drag.lastY - e.clientY;
+                  drag.lastY = e.clientY;
+                  drag.carry += deltaPx;
+                  const stepPx = 10;
+                  if (Math.abs(drag.carry) < stepPx) return;
+                  const steps = drag.carry > 0 ? Math.floor(drag.carry / stepPx) : Math.ceil(drag.carry / stepPx);
+                  drag.carry -= steps * stepPx;
+                  nudgeCols(steps);
+                }}
+                onPointerUp={(e) => {
+                  const drag = colsDragRef.current;
+                  if (drag.pointerId !== e.pointerId) return;
+                  drag.active = false;
+                  drag.pointerId = null;
+                  drag.carry = 0;
+                  try {
+                    e.currentTarget.releasePointerCapture(e.pointerId);
+                  } catch {}
+                }}
+                onPointerCancel={(e) => {
+                  const drag = colsDragRef.current;
+                  if (drag.pointerId !== e.pointerId) return;
+                  drag.active = false;
+                  drag.pointerId = null;
+                  drag.carry = 0;
+                }}
+                onSelect={(e) => {
+                  const len = String(colsInput ?? "").length;
+                  try {
+                    e.currentTarget.setSelectionRange(len, len);
+                  } catch {}
+                }}
+                onDragStart={(e) => e.preventDefault()}
+                onFocus={() => {
+                  clearColsAutoCommitTimer();
+                  setColsReplaceOnType(true);
+                  colsReplaceOnTypeRef.current = true;
+                }}
+                onChange={(e) => {
+                  const raw = String(e.target.value ?? "").replace(/[^\d]/g, "");
+                  setColsInput(raw);
+                  scheduleColsAutoCommit(raw);
+                }}
+                onBlur={() => {
+                  clearColsAutoCommitTimer();
+                  commitColsInput();
+                  setColsReplaceOnType(false);
+                  colsReplaceOnTypeRef.current = false;
+                  colsRapidClickRef.current = { count: 0, lastTs: 0 };
+                }}
+                onKeyDown={(e) => {
+                  if (/^\d$/.test(e.key)) {
+                    e.preventDefault();
+                    const replace = colsReplaceOnTypeRef.current;
+                    setColsInput((prev) => {
+                      const base = replace ? "" : String(prev ?? "");
+                      const nextRaw = `${base}${e.key}`.replace(/[^\d]/g, "");
+                      scheduleColsAutoCommit(nextRaw);
+                      return nextRaw;
+                    });
+                    if (replace) {
+                      setColsReplaceOnType(false);
+                      colsReplaceOnTypeRef.current = false;
+                    }
+                    return;
+                  }
+                  if (e.key === "Backspace") {
+                    e.preventDefault();
+                    const nextRaw = String(colsInput ?? "").slice(0, -1);
+                    setColsReplaceOnType(false);
+                    colsReplaceOnTypeRef.current = false;
+                    setColsInput(nextRaw);
+                    scheduleColsAutoCommit(nextRaw);
+                    return;
+                  }
+                  if (e.key === "Delete") {
+                    e.preventDefault();
+                    setColsReplaceOnType(false);
+                    colsReplaceOnTypeRef.current = false;
+                    setColsInput("");
+                    clearColsAutoCommitTimer();
+                    return;
+                  }
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    clearColsAutoCommitTimer();
+                    commitColsInput();
+                    setColsReplaceOnType(false);
+                    colsReplaceOnTypeRef.current = false;
+                    e.currentTarget.blur();
+                    focusKeyCapture();
+                    return;
+                  }
+                  if (e.key === "Tab") return;
+                  e.preventDefault();
+                }}
+                style={{
+                  width: 92,
+                  height: 42,
+                  border: "none",
+                  outline: "none",
+                  boxShadow: "none",
+                  caretColor: "transparent",
+                  cursor: "pointer",
+                  userSelect: "none",
+                  WebkitUserSelect: "none",
+                  textAlign: "center",
+                  fontWeight: 900,
+                  fontSize: 16,
+                  background: "transparent",
+                  color: THEME.text,
+                  boxSizing: "border-box",
+                }}
+              />
+
+              <div style={{ width: 1, height: "100%", background: THEME.border }} />
+
+              <button
+                type="button"
+                onClick={() => setCols((c) => Math.min(MAX_COLS, c + 1))}
+                {...pressHandlers("colsInc")}
+                style={{
+                  width: 42,
+                  height: 42,
+                  border: "none",
+                  outline: "none",
+                  boxShadow: "none",
+                  background: "transparent",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontWeight: 1000,
+                  fontSize: 20,
+                  lineHeight: 1,
+                  color: THEME.text,
+                  padding: 0,
+                  ...(pressedBtnId === "colsInc"
+                    ? {
+                        color: THEME.accent,
+                        transform: "translateY(1px)",
+                        textShadow: `0 0 8px ${withAlpha(THEME.accent, 0.35)}`,
+                      }
+                    : {
+                        transform: "translateY(0)",
+                        textShadow: "none",
+                      }),
+                  transition: "transform 100ms ease, color 120ms ease, text-shadow 120ms ease",
+                }}
+                title="Increase columns"
+                aria-label="Increase columns"
+              >
+                +
+              </button>
+            </div>
+
+            {/* Chords */}
+            <div style={{ position: "relative", marginLeft: 34 }}>
+              <button
+                ref={chordsBtnRef}
+                type="button"
+                onClick={() => setChordsOpen((v) => !v)}
+                disabled={!standard}
+                title={
+                  standard
+                    ? "Chord tools (6-string guitar, Standard tuning)"
+                    : "Chords currently only available for 6-string guitar in Standard tuning"
+                }
+                style={{
+                  ...toolbarMenuBtn,
+                  ...toolbarToggleVisual(chordsOpen),
+                  cursor: standard ? "pointer" : "not-allowed",
+                  opacity: standard ? 1 : 0.55,
+                }}
+              >
+                <span>{tr("Chords", "Acordes")}</span>
+                <span style={{ opacity: 0.8 }}>{chordsOpen ? "▲" : "▼"}</span>
+              </button>
+
+              {chordsOpen && (
+                <div
+                  ref={chordsPanelRef}
+                  style={{
+                    position: "absolute",
+                    top: 50,
+                    left: 0,
+                    transform: `translateX(${chordsPanelShiftX}px)`,
+                    zIndex: 1000,
+                    width: "min(860px, calc(100vw - 36px))",
+                    maxHeight: "min(620px, calc(100vh - 120px))",
+                    background: THEME.surfaceWarm,
+                    border: `1px solid ${THEME.border}`,
+                    borderRadius: 16,
+                    boxShadow: "0 24px 70px rgba(0,0,0,0.18)",
+                    padding: 10,
+                    boxSizing: "border-box",
+                    display: "flex",
+                    flexDirection: "column",
+                    overflow: "hidden",
+                  }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                >
+                  <div style={{ display: "flex", alignItems: "start", justifyContent: "space-between", gap: 12 }}>
+                    <div style={{ display: "grid", gap: 4 }}>
+                      <div style={{ fontWeight: 950 }}>Chord tools</div>
+                      <div style={{ fontSize: 12, color: THEME.textFaint }}>
+                        Presets for 6-string guitar in Standard tuning. Save your own chord shapes from the selected
+                        column. Your saved chords and any preset edits are only stored for your TabStudio account in
+                        this browser.
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setChordsOpen(false);
+                        focusKeyCapture();
+                      }}
+                      style={{ ...btnSmallPillClose }}
+                    >
+                      Close
+                    </button>
+                  </div>
+
+                  {/* Save & apply */}
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "minmax(220px, 1fr) 110px 1fr",
+                      gap: 10,
+                      alignItems: "end",
+                      marginTop: 12,
+                    }}
+                  >
+                    <div>
+                      <input
+                        value={chordName}
+                        onChange={(e) => setChordName(e.target.value)}
+                        placeholder="Chord name (e.g. Em, G, Cadd9)"
+                        style={{ ...field, minWidth: 0 }}
+                      />
+                    </div>
+
+                    <button type="button" onClick={saveChordFromSelectedColumn} style={btnSecondary}>
+                      Save
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={applyChordToSelectedColumn}
+                      disabled={!selectedChordId}
+                      style={{
+                        ...btnPrimary,
+                        cursor: selectedChordId ? "pointer" : "not-allowed",
+                        opacity: selectedChordId ? 1 : 0.55,
+                        justifySelf: "start",
+                        minWidth: 220,
+                        height: 42,
+                      }}
+                    >
+                      Apply to selected column
+                    </button>
+                  </div>
+
+                  {/* Chord list */}
+                  <div
+                    style={{
+                      marginTop: 12,
+                      borderTop: `1px solid ${THEME.border}`,
+                      paddingTop: 12,
+                      minHeight: 0,
+                      display: "flex",
+                      flexDirection: "column",
+                      flex: 1,
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
+                      <div style={{ fontWeight: 950 }}>Chords</div>
+                      <div style={{ display: "inline-flex", gap: 6 }}>
+                        <button
+                          type="button"
+                          onClick={() => setChordsSection("presets")}
+                          style={{
+                            ...btnSecondary,
+                            height: 32,
+                            padding: "0 12px",
+                            borderRadius: 10,
+                            fontSize: 12,
+                            fontWeight: 900,
+                            borderColor: chordsSection === "presets" ? THEME.accent : THEME.border,
+                            color: chordsSection === "presets" ? THEME.accent : THEME.text,
+                          }}
+                        >
+                          Presets
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setChordsSection("custom")}
+                          style={{
+                            ...btnSecondary,
+                            height: 32,
+                            padding: "0 12px",
+                            borderRadius: 10,
+                            fontSize: 12,
+                            fontWeight: 900,
+                            borderColor: chordsSection === "custom" ? THEME.accent : THEME.border,
+                            color: chordsSection === "custom" ? THEME.accent : THEME.text,
+                          }}
+                        >
+                          Custom
+                        </button>
+                      </div>
+                    </div>
+
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                        gap: 10,
+                        minHeight: 0,
+                        flex: 1,
+                        overflowY: "auto",
+                        overscrollBehavior: "contain",
+                        paddingRight: 4,
+                      }}
+                      onWheel={(e) => e.stopPropagation()}
+                    >
+                      {chordsSection === "presets"
+                        ? effectivePresetChords.map((c) => {
+                            const selected = selectedChordId === c.id;
+                            return (
+                              <div
+                                key={c.id}
+                                style={{
+                                  position: "relative",
+                                }}
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedChordId(c.id)}
+                                  style={{
+                                    textAlign: "left",
+                                    padding: "0 38px 0 10px",
+                                    height: 38,
+                                    borderRadius: 12,
+                                    border: `1px solid ${selected ? withAlpha(THEME.accent, 0.75) : THEME.border}`,
+                                    background: selected ? withAlpha(THEME.accent, 0.1) : THEME.surfaceWarm,
+                                    cursor: "pointer",
+                                    fontWeight: 900,
+                                    color: selected ? THEME.accent : THEME.text,
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "flex-start",
+                                    gap: 8,
+                                    boxSizing: "border-box",
+                                    width: "100%",
+                                    boxShadow: selected ? `inset 0 0 0 1px ${withAlpha(THEME.accent, 0.22)}` : "none",
+                                  }}
+                                >
+                                  <span
+                                    style={{
+                                      minWidth: 0,
+                                      overflow: "hidden",
+                                      textOverflow: "ellipsis",
+                                      whiteSpace: "nowrap",
+                                    }}
+                                  >
+                                    {c.name}
+                                  </span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => openEditChordModal(c)}
+                                  style={{
+                                    ...actionEditBtn,
+                                    position: "absolute",
+                                    right: 5,
+                                    top: "50%",
+                                    transform: "translateY(-50%)",
+                                    height: 28,
+                                    minWidth: 28,
+                                    width: 28,
+                                    padding: 0,
+                                    fontSize: 10,
+                                  }}
+                                  title={`Edit ${c.name} shape`}
+                                  aria-label={`Edit ${c.name} shape`}
+                                >
+                                  <EditIcon size={13} />
+                                </button>
+                              </div>
+                            );
+                          })
+                        : userChords.length === 0
+                          ? (
+                            <div
+                              style={{
+                                gridColumn: "1 / -1",
+                                fontSize: 12,
+                                color: THEME.textFaint,
+                                padding: "6px 2px",
+                              }}
+                            >
+                              No saved chords yet. Save one from the selected column above.
+                            </div>
+                          )
+                          : userChords.map((c) => {
+                              const selected = selectedChordId === c.id;
+                              return (
+                                <div
+                                  key={c.id}
+                                  style={{
+                                    position: "relative",
+                                  }}
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedChordId(c.id)}
+                                    style={{
+                                      textAlign: "left",
+                                      padding: "0 66px 0 10px",
+                                      height: 38,
+                                      borderRadius: 12,
+                                      border: `1px solid ${selected ? withAlpha(THEME.accent, 0.75) : THEME.border}`,
+                                      background: selected ? withAlpha(THEME.accent, 0.1) : THEME.surfaceWarm,
+                                      cursor: "pointer",
+                                      fontWeight: 900,
+                                      color: selected ? THEME.accent : THEME.text,
+                                      display: "flex",
+                                      alignItems: "center",
+                                      justifyContent: "flex-start",
+                                      gap: 8,
+                                      boxSizing: "border-box",
+                                      minWidth: 0,
+                                      width: "100%",
+                                      boxShadow: selected ? `inset 0 0 0 1px ${withAlpha(THEME.accent, 0.22)}` : "none",
+                                    }}
+                                  >
+                                    <span
+                                      style={{
+                                        minWidth: 0,
+                                        overflow: "hidden",
+                                        textOverflow: "ellipsis",
+                                        whiteSpace: "nowrap",
+                                      }}
+                                    >
+                                      {c.name}
+                                    </span>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => openEditChordModal(c)}
+                                    style={{
+                                      ...actionEditBtn,
+                                      position: "absolute",
+                                      right: 37,
+                                      top: "50%",
+                                      transform: "translateY(-50%)",
+                                      height: 28,
+                                      minWidth: 28,
+                                      width: 28,
+                                      padding: 0,
+                                      fontSize: 10,
+                                    }}
+                                    title={`Edit ${c.name} shape`}
+                                    aria-label={`Edit ${c.name} shape`}
+                                  >
+                                    <EditIcon size={13} />
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      requestDeleteUserChord(c.id);
+                                    }}
+                                    title="Delete saved chord"
+                                    style={{
+                                      ...actionDeleteBtn,
+                                      position: "absolute",
+                                      right: 5,
+                                      top: "50%",
+                                      transform: "translateY(-50%)",
+                                      height: 28,
+                                      minWidth: 28,
+                                      width: 28,
+                                      fontSize: 16,
+                                      padding: 0,
+                                    }}
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                              );
+                            })}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Repeat last applied chord (compact) */}
+            {standard && lastAppliedChordId && (
+              <button
+                type="button"
+                onClick={repeatLastChord}
+                title="Repeat last chord into the next column"
+                aria-label="Repeat last chord into the next column"
+                style={{
+                  ...toolbarMenuBtn,
+                  width: 42,
+                  minWidth: 42,
+                  padding: 0,
+                  justifyContent: "center",
+                  border: `2px solid ${THEME.accent}`,
+                  background: THEME.surfaceWarm,
+                  color: THEME.accent,
+                  fontSize: 18,
+                  fontWeight: 950,
+                }}
+              >
+                ↻
+              </button>
+            )}
+
+            {/* Insert */}
+            <div style={{ position: "relative" }}>
+              <button
+                ref={insertBtnRef}
+                type="button"
+                onClick={() => setInsertOpen((v) => !v)}
+                title="Insert a technique/symbol (+ opens this menu)"
+                style={{
+                  ...toolbarMenuBtn,
+                  ...toolbarToggleVisual(insertOpen),
+                }}
+              >
+                <span>{tr("Insert", "Insertar")}</span>
+                <span style={{ opacity: 0.8 }}>{insertOpen ? "▲" : "▼"}</span>
+              </button>
+
+              {insertOpen && (
+                <div
+                  ref={insertPanelRef}
+                  style={{
+                    position: "absolute",
+                    top: 50,
+                    left: 0,
+                    transform: `translateX(${insertPanelShiftX}px)`,
+                    zIndex: 1000,
+                    width: "min(560px, calc(100vw - 36px))",
+                    maxHeight: "min(560px, calc(100vh - 150px))",
+                    background: THEME.surfaceWarm,
+                    border: `1px solid ${THEME.border}`,
+                    borderRadius: 16,
+                    boxShadow: "0 24px 70px rgba(0,0,0,0.18)",
+                    padding: 10,
+                    boxSizing: "border-box",
+                    display: "grid",
+                    gridTemplateRows: "auto minmax(0,1fr) auto",
+                    gap: 8,
+                    overflow: "hidden",
+                  }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 8,
+                    }}
+                  >
+                    <div style={{ fontWeight: 950 }}>Insert</div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setInsertOpen(false);
+                        focusKeyCapture();
+                      }}
+                      style={{ ...btnSmallPillClose }}
+                    >
+                      Close
+                    </button>
+                  </div>
+                  <div style={{ display: "grid", gap: 6, gridTemplateColumns: "repeat(2, minmax(0, 1fr))", overflowY: "auto", paddingRight: 2 }}>
+                    {INSERT_OPTIONS.map((opt) => (
+                      <button
+                        key={`${opt.mode}:${opt.insert}`}
+                        type="button"
+                        onClick={() => {
+                          if (opt.mode === "column") fillSelectedColumnWith(opt.insert);
+                          else insertIntoSelectedCell(opt.insert);
+                        }}
+                        style={{
+                          textAlign: "left",
+                          padding: "9px 10px",
+                          borderRadius: 14,
+                          border: `1px solid ${THEME.border}`,
+                          background: THEME.surfaceWarm,
+                          cursor: "pointer",
+                          fontWeight: 850,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: 10,
+                          color: THEME.text,
+                        boxSizing: "border-box",
+                      }}
+                    >
+                      <span>{opt.label}</span>
+                      <span style={{ ...pillMono, color: THEME.textFaint, opacity: 0.9 }}>{opt.insert}</span>
+                      </button>
+                    ))}
+
+                    {/* Harmonic helper */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const { r, c } = cursorRef.current;
+                        const cur = String(gridRef.current?.[r]?.[c] ?? "");
+                        const trimmed = cur.trim();
+                        if (!trimmed) {
+                          setInsertOpen(false);
+                          focusKeyCapture();
+                          return;
+                        }
+                        let newVal = trimmed;
+                        if (!(trimmed.startsWith("(") && trimmed.endsWith(")"))) {
+                          newVal = `(${trimmed})`;
+                        }
+                        setCell(r, c, newVal);
+                        setOverwriteNext(false);
+                        setInsertOpen(false);
+                        focusKeyCapture();
+                      }}
+                      style={{
+                        textAlign: "left",
+                        padding: "9px 10px",
+                        borderRadius: 14,
+                        border: `1px solid ${THEME.border}`,
+                        background: THEME.surfaceWarm,
+                        cursor: "pointer",
+                        fontWeight: 850,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 10,
+                        color: THEME.text,
+                        boxSizing: "border-box",
+                      }}
+                    >
+                      <span>Harmonic</span>
+                      <span style={{ ...pillMono, color: THEME.textFaint, opacity: 0.9 }}>(12)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (hasCellSelection) {
+                          clearSelectedCells();
+                          setInsertOpen(false);
+                          focusKeyCapture();
+                          return;
+                        }
+                        const { r, c } = cursorRef.current;
+                        setCell(r, c, "");
+                        setOverwriteNext(true);
+                        setInsertOpen(false);
+                        focusKeyCapture();
+                      }}
+                      style={{
+                        textAlign: "left",
+                        padding: "9px 10px",
+                        borderRadius: 14,
+                        border: `1px solid ${THEME.border}`,
+                        background: THEME.surfaceWarm,
+                        cursor: "pointer",
+                        fontWeight: 850,
+                        color: THEME.danger,
+                        boxSizing: "border-box",
+                        gridColumn: "1 / -1",
+                      }}
+                    >
+                      Clear Cell
+                    </button>
+                  </div>
+
+                </div>
+              )}
+            </div>
+
+            {/* Clear all current grid */}
+            {hasGridContent && (
+              <button
+                type="button"
+                onClick={clearAll}
+                {...pressHandlers("clearAll")}
+                style={{
+                  ...btnSecondary,
+                  ...pressVisual(pressedBtnId === "clearAll"),
+                  transition: "transform 100ms ease, background 120ms ease, border-color 120ms ease, color 120ms ease",
+                }}
+              >
+                {tr("Clear All", "Limpiar todo")}
+              </button>
+            )}
+
+            {/* Complete row */}
+            <button
+              type="button"
+              onClick={() => setTapSyncOpen((v) => !v)}
+              {...pressHandlers("tapSync")}
+              style={{
+                ...btnSecondary,
+                ...pressVisual(pressedBtnId === "tapSync"),
+                height: 42,
+                borderColor: tapSyncOpen ? withAlpha(THEME.accent, 0.74) : THEME.border,
+                color: tapSyncOpen ? THEME.accent : THEME.text,
+                transition: "transform 100ms ease, background 120ms ease, border-color 120ms ease, color 120ms ease",
+              }}
+            >
+              Tap to Sync
+            </button>
+            <button
+              type="button"
+              onClick={completeRow}
+              {...pressHandlers("completeRow")}
+              style={{
+                ...btnSecondary,
+                ...pressVisual(pressedBtnId === "completeRow"),
+                height: 42,
+                marginLeft: "auto",
+                transition: "transform 100ms ease, background 120ms ease, border-color 120ms ease, color 120ms ease",
+              }}
+            >
+              {tr("Complete Row", "Completar fila")}
+            </button>
+          </div>
+
+          {tapSyncOpen && (
+            <div style={{ ...card, marginTop: 12, padding: 12, display: "grid", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                <div style={{ display: "grid", gap: 3 }}>
+                  <div style={{ fontWeight: 950, fontSize: 16 }}>Tap to Sync</div>
+                  <div style={{ fontSize: 12, color: THEME.textFaint }}>
+                    Press Start Sync, then click each note or row in time as the music plays.
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={() => setTapSyncMode("note")}
+                    style={{
+                      ...btnSecondary,
+                      height: 34,
+                      padding: "0 10px",
+                      borderColor: tapSyncMode === "note" ? withAlpha(THEME.accent, 0.74) : THEME.border,
+                      color: tapSyncMode === "note" ? THEME.accent : THEME.text,
+                    }}
+                  >
+                    Note Sync
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTapSyncMode("row")}
+                    style={{
+                      ...btnSecondary,
+                      height: 34,
+                      padding: "0 10px",
+                      borderColor: tapSyncMode === "row" ? withAlpha(THEME.accent, 0.74) : THEME.border,
+                      color: tapSyncMode === "row" ? THEME.accent : THEME.text,
+                    }}
+                  >
+                    Row Sync
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: THEME.textFaint }}>
+                  <input type="checkbox" checked={tapSyncShowTimestamps} onChange={(e) => setTapSyncShowTimestamps(e.target.checked)} />
+                  Show timestamps on synced items
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: THEME.textFaint }}>
+                  Replay highlight duration
+                  <select
+                    value={tapSyncReplayDuration}
+                    onChange={(e) => setTapSyncReplayDuration(e.target.value)}
+                    style={{
+                      ...inputStyle,
+                      height: 30,
+                      minWidth: 98,
+                      padding: "0 8px",
+                      fontSize: 12,
+                      borderRadius: 8,
+                    }}
+                  >
+                    <option value="short">Short</option>
+                    <option value="medium">Medium</option>
+                    <option value="long">Long</option>
+                  </select>
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: THEME.textFaint }}>
+                  <input type="checkbox" checked={tapSyncReplaceOnClick} onChange={(e) => setTapSyncReplaceOnClick(e.target.checked)} />
+                  Replace Existing Timestamps on Click
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: THEME.textFaint }}>
+                  <input type="checkbox" checked={tapSyncAutoScroll} onChange={(e) => setTapSyncAutoScroll(e.target.checked)} />
+                  Replay Auto-Scroll
+                </label>
+              </div>
+
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <button type="button" onClick={startTapSyncRecording} disabled={tapSyncRecording} style={{ ...btnSecondary, height: 34, opacity: tapSyncRecording ? 0.6 : 1 }}>
+                  Start Sync
+                </button>
+                <button type="button" onClick={stopTapSyncRecording} disabled={!tapSyncRecording} style={{ ...btnSecondary, height: 34, opacity: tapSyncRecording ? 1 : 0.6 }}>
+                  Stop Sync
+                </button>
+                <button type="button" onClick={replayTapSync} disabled={tapSyncReplayRunning} style={{ ...btnSecondary, height: 34, opacity: tapSyncReplayRunning ? 0.6 : 1 }}>
+                  Replay Preview
+                </button>
+                <button type="button" onClick={() => clearTapSyncForMode(tapSyncMode)} style={{ ...btnSecondary, height: 34 }}>
+                  Clear Timings
+                </button>
+                <button type="button" onClick={redoTapSync} style={{ ...btnSecondary, height: 34 }}>
+                  Redo Sync
+                </button>
+                <span style={{ fontSize: 12, color: THEME.textFaint, marginLeft: "auto" }}>{tapSyncStatusText}</span>
+              </div>
+
+              <div style={{ ...card, padding: 8 }}>
+                {tapSyncTimingCount === 0 ? (
+                  <div style={{ fontSize: 12, color: THEME.textFaint }}>No sync timings recorded yet.</div>
+                ) : (
+                  <div style={{ display: "grid", gap: 6 }}>
+                    {tapSyncMode === "note"
+                      ? Object.entries(tapSyncNoteTimings)
+                          .sort((a, b) => Number(a[1]) - Number(b[1]))
+                          .map(([id, ms]) => (
+                            <div key={id} style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                              <span style={{ color: THEME.textFaint }}>Cell {id.replace(":", ", ")}</span>
+                              <span style={{ color: THEME.text }}>{formatTapSyncTimestamp(ms)}</span>
+                            </div>
+                          ))
+                      : Object.entries(tapSyncRowTimings)
+                          .sort((a, b) => Number(a[1]) - Number(b[1]))
+                          .map(([id, ms]) => {
+                            const row = completedRows.find((x) => String(x.id) === String(id));
+                            return (
+                              <div key={id} style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                                <span style={{ color: THEME.textFaint }}>{row?.name || "Row"}</span>
+                                <span style={{ color: THEME.text }}>{formatTapSyncTimestamp(ms)}</span>
+                              </div>
+                            );
+                          })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Grid */}
+          <div style={{ position: "relative", marginTop: 14 }}>
+            <div style={{ display: "grid", gap: 10 }}>
+              {Array.from({ length: tuning.length }, (_, r) => (
+                <div key={`row-${r}`} style={{ display: "grid" }}>
+                  <div
+                    className="tab-grid-row-scroll"
+                    ref={(el) => {
+                      gridRowScrollRefs.current[r] = el;
+                    }}
+                    onScroll={(e) => handleGridRowScroll(r, e)}
+                    style={{
+                      display: "grid",
+                      gridAutoFlow: "column",
+                      gridAutoColumns: `${cellSize}px`,
+                      gap: 8,
+                      overflowX: "auto",
+                      paddingBottom: 10,
+                      alignItems: "center",
+                      width: "100%",
+                      maxWidth: "100%",
+                      boxSizing: "border-box",
+                    }}
+                  >
+                    {Array.from({ length: cols }, (_, c) => {
+                      const val = String(gridView[r]?.[c] ?? "");
+                      const showGridTargeting = !capoFretFocused && gridTargetingActive;
+                      const isCursor = showGridTargeting && cursor.r === r && cursor.c === c;
+                      const selected = showGridTargeting && isCellSelected(r, c);
+                      const looksNumeric = /^\d{1,2}$/.test(val.trim());
+                      const looksX = /^[xX]$/.test(val.trim());
+                      const fontSizeCell = looksNumeric || looksX ? 16 : 14;
+                      const bg = cellIdleBg;
+                      const selectedBgTint = withAlpha(THEME.accent, isDarkMode ? 0.08 : 0.06);
+                      const noteSyncId = `${r}:${c}`;
+                      const noteTimestampMs = tapSyncNoteTimings[noteSyncId];
+                      const noteReplayActive = tapSyncReplayItemId === `note:${noteSyncId}`;
+                      const noteHasTiming = Number.isFinite(Number(noteTimestampMs));
+                      return (
+                        <div key={c} style={{ position: "relative", width: cellSize, height: cellSize }}>
+                          <button
+                            className="tab-grid-cell-button"
+                            type="button"
+                            data-grid-cell="true"
+                            data-sync-cell-id={noteSyncId}
+                            onPointerDown={(e) => onCellPointerDown(e, r, c)}
+                            onPointerEnter={(e) => onCellPointerEnter(e, r, c)}
+                            tabIndex={-1}
+                            style={{
+                              width: cellSize,
+                              height: cellSize,
+                              borderRadius: 12,
+                              border: selected
+                                ? `2px solid ${THEME.accent}`
+                                : isCursor
+                                ? `3px solid ${THEME.accent}`
+                                : noteReplayActive
+                                ? `2px solid ${THEME.accent}`
+                                : `1px solid ${THEME.border}`,
+                              background: noteReplayActive ? withAlpha(THEME.accent, isDarkMode ? 0.18 : 0.12) : selected ? selectedBgTint : bg,
+                              boxShadow: "none",
+                              color: THEME.text,
+                              fontFamily:
+                                "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace",
+                              fontSize: fontSizeCell,
+                              fontWeight: 950,
+                              cursor: "pointer",
+                              userSelect: "none",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                            lineHeight: 1,
+                            padding: 0,
+                            boxSizing: "border-box",
+                            position: "relative",
+                            overflow: "hidden",
+                            transition: "background 170ms ease, border-color 120ms ease, box-shadow 170ms ease",
+                          }}
+                        >
+                          {firstExportGlowActive && (
+                            <span
+                              aria-hidden="true"
+                              style={{
+                                position: "absolute",
+                                inset: 0,
+                                borderRadius: 11,
+                                background:
+                                  `radial-gradient(circle at 50% 48%, ${withAlpha("#FFD166", 0.86)} 0%, ${withAlpha(
+                                    "#FFD166",
+                                    0.56
+                                  )} 44%, ${withAlpha("#FFD166", 0.24)} 72%, ${withAlpha("#FFD166", 0)} 100%)`,
+                                boxShadow: "none",
+                                animation: "tabstudioFirstExportCellGlow 3600ms cubic-bezier(0.2, 0.72, 0.2, 1) forwards",
+                                pointerEvents: "none",
+                              }}
+                            />
+                          )}
+                         {val === "" ? (
+    "\u00A0"
+  ) : (() => {
+    const trimmed = val.trim();
+
+    // Match e.g. "1b(1/2)" or "7b(1)"
+    const bendMatch = /^(\d+)b\((1\/2|1)\)$/.exec(trimmed);
+
+    let mainText = trimmed;
+    let supText = "";
+
+    if (bendMatch) {
+      mainText = bendMatch[1]; // fret number
+      // Show ½ for half bend, 1 for full bend
+      supText = bendMatch[2] === "1/2" ? "½" : "1";
+    }
+
+    return (
+      <span
+        style={{
+          position: "relative",
+          width: "100%",
+          height: "100%",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <span>{mainText}</span>
+        {supText && (
+          <span
+            style={{
+              position: "absolute",
+              top: 4,
+              right: 5,
+              fontSize: 11,
+            }}
+          >
+            {supText}
+          </span>
+        )}
+      </span>
+                            );
+  })()}
+                          </button>
+                          {tapSyncShowTimestamps && tapSyncMode === "note" && noteHasTiming && (
+                            <div
+                              style={{
+                                position: "absolute",
+                                right: -2,
+                                bottom: -3,
+                                padding: "1px 4px",
+                                borderRadius: 999,
+                                border: `1px solid ${withAlpha(THEME.accent, 0.65)}`,
+                                background: THEME.surfaceWarm,
+                                color: THEME.accent,
+                                fontSize: 10,
+                                fontWeight: 900,
+                                lineHeight: 1.1,
+                                pointerEvents: "none",
+                              }}
+                            >
+                              {formatTapSyncTimestamp(noteTimestampMs)}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+          </div>
+          </div>
+
+          {/* Completed rows */}
+          {completedRows.length > 0 && (
+            <div ref={completedRowsSectionRef} style={{ marginTop: 16 }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 12,
+                  marginBottom: 8,
+                  flexWrap: "wrap",
+                }}
+              >
+                <button
+                  ref={completedRowsToggleRef}
+                  type="button"
+                  onClick={() =>
+                    setCompletedRowsOpen((v) => {
+                      const next = !v;
+                      if (!next) clearSelection();
+                      return next;
+                    })
+                  }
+                  style={{
+                    ...btnSecondary,
+                    height: 36,
+                    padding: "0 12px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  <span style={{ fontWeight: 950 }}>{tr("Completed Rows", "Filas completadas")}</span>
+                  <span style={{ fontSize: 12, opacity: 0.8 }}>{completedRowsOpen ? "▲" : "▼"}</span>
+                </button>
+
+                {completedRowsOpen && (
+                  <div ref={completedRowsActionsRef} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      onClick={addNoteRow}
+                      style={{ ...btnSecondary, height: 36, padding: "0 10px" }}
+                    >
+                      {tr("Add Note", "Añadir nota")}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (allRowsSelected) clearSelection();
+                        else selectAllRows();
+                      }}
+                      style={{
+                        ...btnSecondary,
+                        height: 36,
+                        padding: "0 10px",
+                        borderColor: allRowsSelected ? withAlpha(THEME.accent, 0.75) : THEME.border,
+                        color: allRowsSelected ? THEME.accent : THEME.text,
+                        boxShadow: allRowsSelected ? `inset 0 0 0 1px ${withAlpha(THEME.accent, 0.22)}` : "none",
+                      }}
+                    >
+                      {tr("Select All", "Seleccionar todo")}
+                    </button>
+
+                    {selectionCount > 0 && !allRowsSelected && (
+                      <button
+                        type="button"
+                        onClick={clearSelection}
+                        style={{ ...btnSecondary, height: 36, padding: "0 10px" }}
+                      >
+                        {tr("Clear Selection", "Limpiar selección")}
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={duplicateSelectedRows}
+                      disabled={selectionCount === 0}
+                      style={{
+                        ...iconActionBtnBase,
+                        marginLeft: 12,
+                        opacity: selectionCount === 0 ? 0.55 : 1,
+                        cursor: selectionCount === 0 ? "default" : "pointer",
+                      }}
+                      title={selectionCount > 0 ? `Duplicate selected (${selectionCount})` : "Duplicate selected"}
+                      aria-label={selectionCount > 0 ? `Duplicate selected rows (${selectionCount})` : "Duplicate selected rows"}
+                    >
+                      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <rect x="8" y="8" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="2.2" />
+                        <rect x="5" y="5" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="2.2" opacity="0.8" />
+                      </svg>
+                      {selectionCount > 0 && (
+                        <span
+                          style={{
+                            position: "absolute",
+                            top: -6,
+                            right: -6,
+                            minWidth: 18,
+                            height: 18,
+                            borderRadius: 999,
+                            border: `1px solid ${THEME.border}`,
+                            background: THEME.surfaceWarm,
+                            color: THEME.text,
+                            fontSize: 11,
+                            fontWeight: 900,
+                            lineHeight: "16px",
+                            textAlign: "center",
+                            padding: "0 4px",
+                            boxSizing: "border-box",
+                          }}
+                        >
+                          {selectionCount}
+                        </span>
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.currentTarget.blur();
+                        deleteSelectedRows();
+                      }}
+                      disabled={selectionCount === 0}
+                      style={{
+                        ...iconActionBtnBase,
+                        opacity: selectionCount === 0 ? 0.55 : 1,
+                        cursor: selectionCount === 0 ? "default" : "pointer",
+                        borderColor: deleteSelectedConfirmOpen
+                          ? THEME.danger
+                          : hasRowSelection
+                          ? "rgba(176,0,32,0.25)"
+                          : THEME.border,
+                        color: deleteSelectedConfirmOpen ? "#ffffff" : hasRowSelection ? THEME.danger : THEME.text,
+                        background: deleteSelectedConfirmOpen
+                          ? THEME.danger
+                          : hasRowSelection
+                          ? THEME.dangerBg
+                          : THEME.surfaceWarm,
+                        boxShadow: deleteSelectedConfirmOpen ? `0 0 0 1px ${THEME.danger}` : "none",
+                      }}
+                      title={selectionCount > 0 ? `Delete selected (${selectionCount})` : "Delete selected"}
+                      aria-label={selectionCount > 0 ? `Delete selected rows (${selectionCount})` : "Delete selected rows"}
+                    >
+                      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <path d="M4 7h16" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+                        <path d="M9 7V5.8C9 4.81 9.81 4 10.8 4h2.4C14.19 4 15 4.81 15 5.8V7" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+                        <path d="M7 7l.9 11.2c.08 1  .92 1.8 1.93 1.8h4.34c1.01 0 1.85-.8 1.93-1.8L17 7" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+                        <path d="M10 11v5M14 11v5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+                      </svg>
+                      {selectionCount > 0 && (
+                        <span
+                          style={{
+                            position: "absolute",
+                            top: -6,
+                            right: -6,
+                            minWidth: 18,
+                            height: 18,
+                            borderRadius: 999,
+                            border: deleteSelectedConfirmOpen ? "1px solid rgba(255,255,255,0.4)" : `1px solid ${THEME.border}`,
+                            background: deleteSelectedConfirmOpen ? withAlpha("#000000", 0.2) : THEME.surfaceWarm,
+                            color: deleteSelectedConfirmOpen ? "#ffffff" : THEME.text,
+                            fontSize: 11,
+                            fontWeight: 900,
+                            lineHeight: "16px",
+                            textAlign: "center",
+                            padding: "0 4px",
+                            boxSizing: "border-box",
+                          }}
+                        >
+                          {selectionCount}
+                        </span>
+                      )}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {completedRowsOpen && (
+                <div style={{ display: "grid", gap: 10 }}>
+                  {completedRows.map((row, idx) => {
+                    const isNote = row.kind === "note";
+                    const text = isNote ? String(row.noteText ?? "") : buildRowTabWithRepeat(row);
+                    const isRenaming = renamingRowId === row.id;
+                    const checked = selectedRowIds.has(row.id);
+                    const rowSyncTimestampMs = tapSyncRowTimings[row.id];
+                    const rowReplayActive = tapSyncReplayItemId === `row:${row.id}`;
+                    const rowHasTiming = Number.isFinite(Number(rowSyncTimestampMs));
+
+                    
+  return (
+                      <div
+                        key={row.id}
+                        data-sync-row-id={row.id}
+                        style={{
+                          ...card,
+                          borderColor: rowReplayActive ? withAlpha(THEME.accent, 0.9) : card.borderColor || THEME.border,
+                          boxShadow: rowReplayActive ? `0 0 0 1px ${withAlpha(THEME.accent, 0.28)} inset` : card.boxShadow || "none",
+                        }}
+                        draggable
+                        onDragStart={(e) => onDragStartRow(e, row.id)}
+                        onDragOver={onDragOverRow}
+                        onDrop={(e) => onDropRow(e, row.id)}
+                        onClick={(e) => {
+                          const target = e.target;
+                          if (target instanceof Element && target.closest("button,input,textarea,select,a")) return;
+                          recordTapSyncRow(row.id);
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            gap: 10,
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 10,
+                              minWidth: 240,
+                              flexWrap: "wrap",
+                            }}
+                          >
+                            {/* Custom select button */}
+                            <button
+                              type="button"
+                              onClick={() => toggleSelectedRow(row.id)}
+                              title="Select row"
+                              style={{
+                                width: 26,
+                                height: 26,
+                                borderRadius: 12,
+                                border: `1px solid ${checked ? THEME.accent : THEME.border}`,
+                                background: THEME.surfaceWarm,
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                cursor: "pointer",
+                                boxSizing: "border-box",
+                              }}
+                            >
+                              <span
+                                style={{
+                                  fontSize: 14,
+                                  fontWeight: 900,
+                                  color: checked ? THEME.accent : THEME.textFaint,
+                                }}
+                              >
+                                {checked ? "✓" : ""}
+                              </span>
+                            </button>
+
+                            {isRenaming ? (
+                              <input
+                                ref={renameInputRef}
+                                value={renameDraft}
+                                onChange={(e) => setRenameDraft(e.target.value)}
+                                onBlur={() => commitRenameRow(row.id)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    commitRenameRow(row.id);
+                                  } else if (e.key === "Escape") {
+                                    e.preventDefault();
+                                    cancelRenameRow();
+                                  }
+                                }}
+                                style={{
+                                  height: 34,
+                                  borderRadius: 12,
+                                  border: `1px solid ${THEME.border}`,
+                                  padding: "0 10px",
+                                  fontWeight: 950,
+                                  width: 260,
+                                  background: THEME.surfaceWarm,
+                                  color: THEME.text,
+                                  boxSizing: "border-box",
+                                }}
+                              />
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => startRenameRow(row)}
+                                title="Click to rename (Intro / Verse / Chorus etc)"
+                                style={{
+                                  background: THEME.surfaceWarm,
+                                  border: `1px solid ${THEME.border}`,
+                                  borderRadius: 12,
+                                  padding: "7px 10px",
+                                  fontWeight: 950,
+                                  cursor: "pointer",
+                                  color: THEME.text,
+                                  boxSizing: "border-box",
+                                }}
+                              >
+                                {row.name || `Row ${idx + 1}`}
+                              </button>
+                            )}
+
+                            <span style={{ fontSize: 12, color: THEME.textFaint }}>({idx + 1})</span>
+                            {tapSyncShowTimestamps && tapSyncMode === "row" && rowHasTiming && (
+                              <span style={{ fontSize: 11, fontWeight: 900, color: THEME.accent }}>
+                                {formatTapSyncTimestamp(rowSyncTimestampMs)}
+                              </span>
+                            )}
+                          </div>
+
+                          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                            {!isNote && (
+                              <div
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 6,
+                                }}
+                              >
+                                <span
+                                  style={{
+                                    fontSize: 12,
+                                    fontWeight: 850,
+                                    color: THEME.textFaint,
+                                    textTransform: "uppercase",
+                                    letterSpacing: 0.4,
+                                  }}
+                                >
+                                  Loops
+                                </span>
+                                <div
+                                  style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    border: `1px solid ${THEME.border}`,
+                                    borderRadius: 12,
+                                    overflow: "hidden",
+                                    background: THEME.surfaceWarm,
+                                    height: 36,
+                                    boxSizing: "border-box",
+                                  }}
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() => nudgeRowRepeat(row.id, -1)}
+                                    style={{
+                                      width: 30,
+                                      height: 36,
+                                      border: "none",
+                                      outline: "none",
+                                      boxShadow: "none",
+                                      background: "transparent",
+                                      cursor: "pointer",
+                                      display: "flex",
+                                      alignItems: "center",
+                                      justifyContent: "center",
+                                      fontWeight: 1000,
+                                      fontSize: 18,
+                                      lineHeight: 1,
+                                      color: THEME.text,
+                                      padding: 0,
+                                    }}
+                                    title="Decrease loops"
+                                    aria-label="Decrease loops"
+                                  >
+                                    −
+                                  </button>
+
+                                  <div style={{ width: 1, height: "100%", background: THEME.border }} />
+
+                                  <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    pattern="[0-9]*"
+                                    value={row.repeatCount ?? 1}
+                                    onMouseDown={(e) => {
+                                      if (e.detail === 3) {
+                                        e.preventDefault();
+                                        resetRowRepeat(row.id);
+                                        e.currentTarget.blur();
+                                        focusKeyCapture();
+                                        return;
+                                      }
+                                      repeatOverwriteRef.current = true;
+                                    }}
+                                    onClick={(e) => {
+                                      if (e.detail === 3) {
+                                        e.preventDefault();
+                                        resetRowRepeat(row.id);
+                                        e.currentTarget.blur();
+                                        focusKeyCapture();
+                                        return;
+                                      }
+                                      repeatOverwriteRef.current = true;
+                                    }}
+                                    onChange={(e) => {
+                                      const rawDom = String(e.target.value ?? "").replace(/[^\d]/g, "");
+                                      if (!rawDom) {
+                                        updateRowRepeat(row.id, "");
+                                        return;
+                                      }
+                                      let nextRaw = rawDom;
+                                      if (repeatOverwriteRef.current) {
+                                        nextRaw = rawDom.slice(-1);
+                                        repeatOverwriteRef.current = false;
+                                      }
+                                      updateRowRepeat(row.id, nextRaw);
+                                    }}
+                                    onFocus={(e) => {
+                                      repeatOverwriteRef.current = true;
+                                      e.target.select();
+                                    }}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") {
+                                        e.preventDefault();
+                                        e.currentTarget.blur();
+                                        focusKeyCapture();
+                                      }
+                                    }}
+                                    style={{
+                                      width: 46,
+                                      height: 36,
+                                      border: "none",
+                                      outline: "none",
+                                      boxShadow: "none",
+                                      caretColor: "transparent",
+                                      cursor: "pointer",
+                                      textAlign: "center",
+                                      ...pillMono,
+                                      fontSize: 16,
+                                      fontWeight: 900,
+                                      background: "transparent",
+                                      color: THEME.text,
+                                      boxSizing: "border-box",
+                                      padding: 0,
+                                    }}
+                                    title="Triple-click to reset loops to 1"
+                                  />
+
+                                  <div style={{ width: 1, height: "100%", background: THEME.border }} />
+
+                                  <button
+                                    type="button"
+                                    onClick={() => nudgeRowRepeat(row.id, 1)}
+                                    style={{
+                                      width: 30,
+                                      height: 36,
+                                      border: "none",
+                                      outline: "none",
+                                      boxShadow: "none",
+                                      background: "transparent",
+                                      cursor: "pointer",
+                                      display: "flex",
+                                      alignItems: "center",
+                                      justifyContent: "center",
+                                      fontWeight: 1000,
+                                      fontSize: 18,
+                                      lineHeight: 1,
+                                      color: THEME.text,
+                                      padding: 0,
+                                    }}
+                                    title="Increase loops"
+                                    aria-label="Increase loops"
+                                  >
+                                    +
+                                  </button>
+                                </div>
+                              </div>
+
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => duplicateRow(row.id)}
+                              style={{ ...btnSecondary, height: 36 }}
+                            >
+                              Duplicate
+                            </button>
+
+                            {isNote && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => insertIntoNoteText(row.id, "↑")}
+                                  style={{ ...btnSecondary, width: 36, minWidth: 36, height: 36, padding: 0, fontSize: 18 }}
+                                  title="Insert up arrow in note"
+                                >
+                                  ↑
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => insertIntoNoteText(row.id, "↓")}
+                                  style={{ ...btnSecondary, width: 36, minWidth: 36, height: 36, padding: 0, fontSize: 18 }}
+                                  title="Insert down arrow in note"
+                                >
+                                  ↓
+                                </button>
+                              </>
+                            )}
+
+                            {!isNote && (
+                              <button
+                                type="button"
+                                onClick={() => editCompletedRow(row.id)}
+                                style={{ ...actionEditBtn }}
+                                title="Edit row"
+                                aria-label="Edit row"
+                              >
+                                <EditIcon />
+                              </button>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => deleteCompletedRow(row.id)}
+                              style={{ ...rowDeleteBtn }}
+                              title="Delete row"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        </div>
+
+                        {isNote ? (
+                          <textarea
+                            ref={(el) => {
+                              if (!noteTextAreaRefs.current) noteTextAreaRefs.current = {};
+                              if (el) noteTextAreaRefs.current[row.id] = el;
+                              else if (noteTextAreaRefs.current[row.id]) delete noteTextAreaRefs.current[row.id];
+                            }}
+                            value={text}
+                            onChange={(e) => updateNoteText(row.id, e.target.value)}
+                            placeholder="Write a note (e.g. strumming pattern, dynamics, lyrics)..."
+                            style={{
+                              margin: "10px 0 0 0",
+                              width: "100%",
+                              minHeight: 60,
+                              resize: "vertical",
+                              borderRadius: 12,
+                              border: `1px solid ${THEME.border}`,
+                              padding: "8px 10px",
+                              fontSize: 13,
+                              lineHeight: 1.4,
+                              fontFamily:
+                                "-apple-system, BlinkMacSystemFont, system-ui, 'Segoe UI', sans-serif",
+                              color: THEME.text,
+                              background: THEME.surfaceWarm,
+                              boxSizing: "border-box",
+                            }}
+                          />
+                        ) : (
+                          <pre
+                            style={{
+                              margin: "10px 0 0 0",
+                              whiteSpace: "pre",
+                              overflowX: "auto",
+                              fontSize: 14,
+                              lineHeight: 1.35,
+                              fontFamily:
+                                "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace",
+                              color: THEME.text,
+                            }}
+                          >
+                            {text}
+                          </pre>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {milestoneConfetti && (
+            <div
+              aria-hidden="true"
+              style={{
+                position: "absolute",
+                left: milestoneConfetti.left ?? 0,
+                top: milestoneConfetti.top ?? 0,
+                width: milestoneConfetti.width,
+                height: milestoneConfetti.height,
+                pointerEvents: "none",
+                zIndex: 1300,
+                overflow: "hidden",
+              }}
+            >
+              {milestoneConfetti.particles.map((particle) => (
+                <span
+                  key={particle.id}
+                  style={{
+                    position: "absolute",
+                    left: `${particle.startX}px`,
+                    top: `${particle.startY}px`,
+                    width: particle.size,
+                    height: Math.max(3, particle.size * 0.62),
+                    borderRadius: 999,
+                    background: particle.color,
+                    opacity: 0,
+                    transform: "translate(0, 0)",
+                    boxShadow: `0 0 8px ${withAlpha(particle.color, 0.36)}`,
+                    animation: `tabstudioConfettiBurst ${particle.duration}ms linear ${particle.delay}ms forwards`,
+                    ["--xPeak"]: `${particle.xPeak}px`,
+                    ["--yPeak"]: `${particle.yPeak}px`,
+                    ["--xApexEase"]: `${particle.xApexEase}px`,
+                    ["--yApexEase"]: `${particle.yApexEase}px`,
+                    ["--xMid1"]: `${particle.xMid1}px`,
+                    ["--yMid1"]: `${particle.yMid1}px`,
+                    ["--xMid2"]: `${particle.xMid2}px`,
+                    ["--yMid2"]: `${particle.yMid2}px`,
+                    ["--xMid3"]: `${particle.xMid3}px`,
+                    ["--yMid3"]: `${particle.yMid3}px`,
+                    ["--xNearFloor"]: `${particle.xNearFloor}px`,
+                    ["--yNearFloor"]: `${particle.yNearFloor}px`,
+                    ["--xFade"]: `${particle.xFade}px`,
+                    ["--yFade"]: `${particle.yFade}px`,
+                    ["--xEnd"]: `${particle.xEnd}px`,
+                    ["--yEnd"]: `${particle.yEnd}px`,
+                    ["--rotPeak"]: particle.rotPeak,
+                    ["--rotApexEase"]: particle.rotApexEase,
+                    ["--rotMid1"]: particle.rotMid1,
+                    ["--rotMid2"]: particle.rotMid2,
+                    ["--rotMid3"]: particle.rotMid3,
+                    ["--rotNearFloor"]: particle.rotNearFloor,
+                    ["--rotFade"]: particle.rotFade,
+                    ["--rotEnd"]: particle.rotEnd,
+                  }}
+                />
+              ))}
+            </div>
+          )}
+
+          {milestoneToast && (
+            <div
+              style={{
+                position: "absolute",
+                right: 14,
+                bottom: 14,
+                zIndex: 1302,
+                pointerEvents: "none",
+                borderRadius: 10,
+                border: `1px solid ${withAlpha(THEME.accent, 0.45)}`,
+                background: withAlpha(THEME.surfaceWarm, 0.95),
+                color: THEME.text,
+                padding: "8px 10px",
+                fontSize: 12,
+                fontWeight: 850,
+                lineHeight: 1.25,
+                boxShadow: "0 10px 22px rgba(0,0,0,0.2)",
+                animation: "tabstudioMilestoneToast 2000ms ease forwards",
+              }}
+            >
+              {milestoneToast}
+            </div>
+          )}
+
+          {uiDialog && (
+            <div
+              style={{
+                position: "fixed",
+                inset: 0,
+                background: "rgba(0,0,0,0.52)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 16,
+                zIndex: 5250,
+              }}
+              onPointerDown={(e) => {
+                if (e.target === e.currentTarget) closeUiDialog();
+              }}
+            >
+              <div
+                style={{
+                  width: "min(430px, 100%)",
+                  ...card,
+                  padding: 16,
+                  boxShadow: "0 30px 70px rgba(0,0,0,0.35)",
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                  <div style={{ fontSize: 20, fontWeight: 950, color: THEME.text }}>{uiDialog.title || "Confirm"}</div>
+                  <button type="button" onClick={closeUiDialog} style={{ ...btnSmallPillClose }}>
+                    Close
+                  </button>
+                </div>
+                {!!String(uiDialog.message || "").trim() && (
+                  <div style={{ marginTop: 8, color: THEME.textFaint, fontSize: 14 }}>{uiDialog.message}</div>
+                )}
+                {uiDialog.type === "prompt" && (
+                  <input
+                    ref={uiDialogInputRef}
+                    value={String(uiDialog.value || "")}
+                    onChange={(e) => setUiDialog((prev) => (prev ? { ...prev, value: e.target.value } : prev))}
+                    placeholder={String(uiDialog.placeholder || "")}
+                    style={{ ...field, marginTop: 12, fontWeight: 800 }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        submitUiDialog();
+                        return;
+                      }
+                      if (e.key === "Escape") {
+                        e.preventDefault();
+                        closeUiDialog();
+                      }
+                    }}
+                  />
+                )}
+                <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                  {uiDialog.type === "prompt" && typeof uiDialog.onExtraAction === "function" && (
+                    <button
+                      type="button"
+                      onClick={runUiDialogExtraAction}
+                      style={{
+                        ...btnSecondary,
+                        height: 36,
+                        padding: "0 12px",
+                        marginRight: "auto",
+                        borderColor: uiDialog.extraActionDanger ? "rgba(176,0,32,0.25)" : THEME.border,
+                        color: uiDialog.extraActionDanger ? THEME.danger : THEME.text,
+                        background: uiDialog.extraActionDanger ? THEME.dangerBg : THEME.surfaceWarm,
+                      }}
+                    >
+                      {uiDialog.extraActionLabel || "Delete"}
+                    </button>
+                  )}
+                  <button type="button" onClick={closeUiDialog} style={{ ...btnSecondary, height: 36, padding: "0 12px" }}>
+                    {uiDialog.cancelLabel || "Cancel"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={submitUiDialog}
+                    style={{
+                      ...btnSecondary,
+                      height: 36,
+                      padding: "0 12px",
+                      borderColor: uiDialog.danger ? "rgba(176,0,32,0.25)" : withAlpha(THEME.accent, 0.6),
+                      color: uiDialog.danger ? THEME.danger : THEME.accent,
+                      background: uiDialog.danger ? THEME.dangerBg : THEME.surfaceWarm,
+                    }}
+                  >
+                    {uiDialog.confirmLabel || "Confirm"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {rowDeleteConfirmIds && (
+            <div
+              style={{
+                position: "fixed",
+                inset: 0,
+                background: "rgba(0,0,0,0.52)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 16,
+                zIndex: 5200,
+              }}
+              onPointerDown={(e) => {
+                if (e.target === e.currentTarget) closeDeleteRowsConfirm();
+              }}
+            >
+              <div
+                style={{
+                  width: "min(430px, 100%)",
+                  ...card,
+                  padding: 16,
+                  boxShadow: "0 30px 70px rgba(0,0,0,0.35)",
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                  <div style={{ fontSize: 20, fontWeight: 950, color: THEME.text }}>
+                    {deleteConfirmCount > 1 ? "Delete selected rows?" : "Delete row?"}
+                  </div>
+                  <button type="button" onClick={closeDeleteRowsConfirm} style={{ ...btnSmallPillClose }}>
+                    Close
+                  </button>
+                </div>
+                <div style={{ marginTop: 8, color: THEME.textFaint, fontSize: 14 }}>
+                  {deleteConfirmCount > 1
+                    ? `You are about to delete ${deleteConfirmCount} rows. This action cannot be undone.`
+                    : "This row will be removed from Completed Rows. This action cannot be undone."}
+                </div>
+                <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                  <button type="button" onClick={closeDeleteRowsConfirm} style={{ ...btnSecondary, height: 36, padding: "0 12px" }}>
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={confirmDeleteRows}
+                    style={{
+                      ...btnSecondary,
+                      height: 36,
+                      padding: "0 12px",
+                      borderColor: "rgba(176,0,32,0.25)",
+                      color: THEME.danger,
+                      background: THEME.dangerBg,
+                    }}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {songDeleteConfirmTarget && (
+            <div
+              style={{
+                position: "fixed",
+                inset: 0,
+                background: "rgba(0,0,0,0.52)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 16,
+                zIndex: 5200,
+              }}
+              onPointerDown={(e) => {
+                if (e.target === e.currentTarget) closeDeleteLibrarySongConfirm();
+              }}
+            >
+              <div
+                style={{
+                  width: "min(430px, 100%)",
+                  ...card,
+                  padding: 16,
+                  boxShadow: "0 30px 70px rgba(0,0,0,0.35)",
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                  <div style={{ fontSize: 20, fontWeight: 950, color: THEME.text }}>Delete song?</div>
+                  <button type="button" onClick={closeDeleteLibrarySongConfirm} style={{ ...btnSmallPillClose }}>
+                    Close
+                  </button>
+                </div>
+                <div style={{ marginTop: 8, color: THEME.textFaint, fontSize: 14 }}>
+                  {`"${songDeleteConfirmTarget.song}" will be removed from this album. This action cannot be undone.`}
+                </div>
+                <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={closeDeleteLibrarySongConfirm}
+                    style={{ ...btnSecondary, height: 36, padding: "0 12px" }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={confirmDeleteLibrarySong}
+                    style={{
+                      ...btnSecondary,
+                      height: 36,
+                      padding: "0 12px",
+                      borderColor: "rgba(176,0,32,0.25)",
+                      color: THEME.danger,
+                      background: THEME.dangerBg,
+                    }}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {libraryDeleteConfirmTarget && (
+            <div
+              style={{
+                position: "fixed",
+                inset: 0,
+                background: "rgba(0,0,0,0.52)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 16,
+                zIndex: 5200,
+              }}
+              onPointerDown={(e) => {
+                if (e.target === e.currentTarget) closeDeleteLibraryConfirm();
+              }}
+            >
+              <div
+                style={{
+                  width: "min(430px, 100%)",
+                  ...card,
+                  padding: 16,
+                  boxShadow: "0 30px 70px rgba(0,0,0,0.35)",
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                  <div style={{ fontSize: 20, fontWeight: 950, color: THEME.text }}>
+                    {libraryDeleteConfirmTarget.type === "artist" ? "Delete artist?" : "Delete album?"}
+                  </div>
+                  <button type="button" onClick={closeDeleteLibraryConfirm} style={{ ...btnSmallPillClose }}>
+                    Close
+                  </button>
+                </div>
+                <div style={{ marginTop: 8, color: THEME.textFaint, fontSize: 14 }}>
+                  {libraryDeleteConfirmTarget.type === "artist"
+                    ? `"${libraryDeleteConfirmTarget.artistName}" and all albums/songs will be removed.`
+                    : `"${libraryDeleteConfirmTarget.album}" and all songs in it will be removed.`}
+                </div>
+                <div style={{ marginTop: 8, color: THEME.textFaint, fontSize: 13 }}>
+                  {libraryDeleteConfirmTarget.stage === "countdown" &&
+                    `Delete unlocks in ${libraryDeleteConfirmTarget.remaining}s. You can still cancel.`}
+                </div>
+                <div style={{ marginTop: 14, display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                  <div>
+                    {libraryDeleteConfirmTarget.stage === "countdown" && (
+                      <button
+                        type="button"
+                        onClick={skipDeleteLibraryWaitAndDeleteNow}
+                        style={{
+                          ...btnSecondary,
+                          height: 36,
+                          padding: "0 12px",
+                          borderColor: "rgba(176,0,32,0.25)",
+                          color: THEME.danger,
+                          background: THEME.dangerBg,
+                        }}
+                      >
+                        Delete now
+                      </button>
+                    )}
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      type="button"
+                      onClick={closeDeleteLibraryConfirm}
+                      style={{ ...btnSecondary, height: 36, padding: "0 12px" }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={confirmDeleteLibraryConfirm}
+                      disabled={libraryDeleteConfirmTarget.stage === "countdown"}
+                      style={{
+                        ...btnSecondary,
+                        height: 36,
+                        padding: "0 12px",
+                        borderColor: "rgba(176,0,32,0.25)",
+                        color: libraryDeleteConfirmTarget.stage === "countdown" ? THEME.textMuted : THEME.danger,
+                        background:
+                          libraryDeleteConfirmTarget.stage === "countdown"
+                            ? withAlpha(THEME.surfaceWarm, 0.55)
+                            : THEME.dangerBg,
+                        cursor: libraryDeleteConfirmTarget.stage === "countdown" ? "default" : "pointer",
+                      }}
+                    >
+                      {libraryDeleteConfirmTarget.stage === "idle" && "Delete"}
+                      {libraryDeleteConfirmTarget.stage === "countdown" &&
+                        `Delete (${libraryDeleteConfirmTarget.remaining})`}
+                      {libraryDeleteConfirmTarget.stage === "armed" && "Delete"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {chordDeleteConfirmId && (
+            <div
+              style={{
+                position: "fixed",
+                inset: 0,
+                background: "rgba(0,0,0,0.52)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 16,
+                zIndex: 5200,
+              }}
+              onPointerDown={(e) => {
+                if (e.target === e.currentTarget) closeDeleteUserChordConfirm();
+              }}
+            >
+              <div
+                style={{
+                  width: "min(430px, 100%)",
+                  ...card,
+                  padding: 16,
+                  boxShadow: "0 30px 70px rgba(0,0,0,0.35)",
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                  <div style={{ fontSize: 20, fontWeight: 950, color: THEME.text }}>Delete chord?</div>
+                  <button type="button" onClick={closeDeleteUserChordConfirm} style={{ ...btnSmallPillClose }}>
+                    Close
+                  </button>
+                </div>
+                <div style={{ marginTop: 8, color: THEME.textFaint, fontSize: 14 }}>
+                  {`"${
+                    userChords.find((c) => c.id === chordDeleteConfirmId)?.name || "This saved chord"
+                  }" will be removed. This action cannot be undone.`}
+                </div>
+                <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={closeDeleteUserChordConfirm}
+                    style={{ ...btnSecondary, height: 36, padding: "0 12px" }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={confirmDeleteUserChord}
+                    style={{
+                      ...btnSecondary,
+                      height: 36,
+                      padding: "0 12px",
+                      borderColor: "rgba(176,0,32,0.25)",
+                      color: THEME.danger,
+                      background: THEME.dangerBg,
+                    }}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Account & Profile modal */}
+          {accountProfileOpen && (
+            <div
+              style={{
+                position: "fixed",
+                inset: "72px 0 0 0",
+                background: THEME.bg,
+                display: "flex",
+                zIndex: 5300,
+                overflow: "hidden",
+              }}
+              onPointerDown={(e) => {
+                if (e.target === e.currentTarget) setAccountProfileOpen(false);
+              }}
+            >
+              <div
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  minHeight: 0,
+                  background: THEME.surfaceWarm,
+                  border: "none",
+                  boxShadow: "none",
+                  padding: 0,
+                  boxSizing: "border-box",
+                  display: "grid",
+                  gridTemplateColumns: "260px minmax(0, 1fr)",
+                  overflow: "visible",
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                <div
+                  style={{
+                    borderRight: `1px solid ${THEME.border}`,
+                    background: isDarkMode ? "#101010" : "#FFFFFF",
+                    padding: 16,
+                    boxSizing: "border-box",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 10,
+                    overflowY: "auto",
+                  }}
+                >
+                  <div style={{ fontWeight: 950, fontSize: 18, color: THEME.text }}>Account</div>
+
+                  <div
+                    style={{
+                      width: 44,
+                      height: 44,
+                      borderRadius: 999,
+                      border: `1px solid ${THEME.border}`,
+                      background: THEME.surfaceWarm,
+                      color: THEME.textFaint,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: 14,
+                      fontWeight: 900,
+                      flexShrink: 0,
+                    }}
+                    aria-hidden="true"
+                  >
+                    {String(accountFullName || "?")
+                      .split(" ")
+                      .map((s) => s[0] || "")
+                      .join("")
+                      .slice(0, 2)
+                      .toUpperCase()}
+                  </div>
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: 17, fontWeight: 900, color: THEME.text, lineHeight: 1.1 }}>{accountFullName}</div>
+                    <div style={{ marginTop: 4, fontSize: 13, color: THEME.textFaint, fontWeight: 800 }}>{accountTier}</div>
+                  </div>
+
+                  {[
+                    { id: "overview", label: "Overview" },
+                    { id: "profile", label: "Profile" },
+                    { id: "security", label: "Security" },
+                    { id: "subscription", label: "Subscription" },
+                    { id: "billing", label: "Billing" },
+                  ].map((item) => {
+                    const active = accountProfileSection === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => setAccountProfileSection(item.id)}
+                        style={{
+                          ...toolbarMenuBtn,
+                          width: "100%",
+                          justifyContent: "flex-start",
+                          minHeight: 44,
+                          background: THEME.surfaceWarm,
+                          borderColor: active ? withAlpha(THEME.accent, 0.7) : THEME.border,
+                          color: active ? THEME.accent : THEME.text,
+                          boxShadow: "none",
+                        }}
+                      >
+                        {item.label}
+                      </button>
+                    );
+                  })}
+
+                  <div style={{ marginTop: "auto", fontSize: 12, color: THEME.textFaint, lineHeight: 1.4 }}>
+                    {accountEmail}
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    padding: 18,
+                    boxSizing: "border-box",
+                    minWidth: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 12,
+                    minHeight: 0,
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                    <div style={{ fontWeight: 950, fontSize: 18, color: THEME.text }}>Account</div>
+                    <button type="button" onClick={() => setAccountProfileOpen(false)} style={{ ...btnSmallPillClose }}>
+                      Close
+                    </button>
+                  </div>
+
+                  {(() => {
+                    const sectionMeta = {
+                      overview: { title: "Overview", sub: "Membership, usage, and quick account summary." },
+                      profile: { title: "Profile", sub: "Public profile details and creator identity settings." },
+                      security: { title: "Security", sub: "Login, authentication, and active session controls." },
+                      subscription: { title: "Subscription", sub: "Plan details, renewals, and subscription options." },
+                      billing: { title: "Billing", sub: "Payment methods, invoices, and billing contact details." },
+                    };
+                    const meta = sectionMeta[accountProfileSection] || sectionMeta.overview;
+                    return (
+                      <div style={{ ...card, padding: 12, borderColor: THEME.border, background: THEME.surfaceWarm }}>
+                        <div style={{ fontSize: 20, fontWeight: 950, color: THEME.text, lineHeight: 1.15 }}>{meta.title}</div>
+                        <div style={{ marginTop: 4, fontSize: 13, color: THEME.textFaint, fontWeight: 700 }}>{meta.sub}</div>
+                      </div>
+                    );
+                  })()}
+
+                  <div style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "grid", gap: 12, paddingRight: 4 }}>
+                  {accountProfileSection === "overview" && (
+                    <div style={{ display: "grid", gap: 12 }}>
+                      <div
+                        style={{
+                          ...card,
+                          padding: 14,
+                          borderColor: THEME.border,
+                          background: THEME.surfaceWarm,
+                        }}
+                      >
+                        <div style={{ fontWeight: 900, fontSize: 15, color: THEME.text }}>Membership</div>
+                        <div style={{ marginTop: 8, display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+                          <div>
+                            <div style={{ fontSize: 12, color: THEME.textFaint }}>Current tier</div>
+                            <div style={{ marginTop: 2, fontWeight: 900, fontSize: 15 }}>{accountTier}</div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 12, color: THEME.textFaint }}>Member since</div>
+                            <div style={{ marginTop: 2, fontWeight: 900, fontSize: 15 }}>{accountMemberSince}</div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 12, color: THEME.textFaint }}>Subscription renews</div>
+                            <div style={{ marginTop: 2, fontWeight: 900, fontSize: 15 }}>{accountRenewalDate}</div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 12, color: THEME.textFaint }}>Billing cycle</div>
+                            <div style={{ marginTop: 2, fontWeight: 900, fontSize: 15 }}>{accountBillingCycle}</div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
+                        <div style={{ ...card, padding: 12 }}>
+                          <div style={{ fontSize: 12, color: THEME.textFaint }}>Tabs created</div>
+                          <div style={{ marginTop: 4, fontSize: 22, fontWeight: 950, color: THEME.text }}>48</div>
+                        </div>
+                        <div style={{ ...card, padding: 12 }}>
+                          <div style={{ fontSize: 12, color: THEME.textFaint }}>PDF exports (30 days)</div>
+                          <div style={{ marginTop: 4, fontSize: 22, fontWeight: 950, color: THEME.text }}>17</div>
+                        </div>
+                        <div style={{ ...card, padding: 12 }}>
+                          <div style={{ fontSize: 12, color: THEME.textFaint }}>Storage used</div>
+                          <div style={{ marginTop: 4, fontSize: 22, fontWeight: 950, color: THEME.text }}>124 MB</div>
+                        </div>
+                        <div style={{ ...card, padding: 12 }}>
+                          <div style={{ fontSize: 12, color: THEME.textFaint }}>Last active</div>
+                          <div style={{ marginTop: 4, fontSize: 22, fontWeight: 950, color: THEME.text }}>Today</div>
+                        </div>
+                      </div>
+
+                      <div style={{ ...card, padding: 12 }}>
+                        <div style={{ fontWeight: 900, fontSize: 14 }}>Coming soon</div>
+                        <div style={{ marginTop: 6, fontSize: 13, color: THEME.textFaint, lineHeight: 1.5 }}>
+                          Quick links to invoices, devices and recent activity will appear here in a future update.
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {accountProfileSection === "profile" && (
+                    <div style={{ display: "grid", gap: 12 }}>
+                      <div style={{ ...card, padding: 14 }}>
+                        <div style={{ fontWeight: 900, fontSize: 15 }}>Public profile</div>
+                        <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+                          <div>
+                            <div style={{ fontSize: 12, fontWeight: 800, color: THEME.textFaint, marginBottom: 6 }}>Display name</div>
+                            <input
+                              value={profileDisplayName}
+                              onChange={(e) => setProfileDisplayName(e.target.value)}
+                              style={{ ...field }}
+                              placeholder="Display name"
+                            />
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 12, fontWeight: 800, color: THEME.textFaint, marginBottom: 6 }}>Username</div>
+                            <input
+                              value={profileHandle}
+                              onChange={(e) => setProfileHandle(e.target.value)}
+                              style={{ ...field }}
+                              placeholder="@username"
+                            />
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 12, fontWeight: 800, color: THEME.textFaint, marginBottom: 6 }}>Bio</div>
+                            <textarea
+                              value={profileBio}
+                              onChange={(e) => setProfileBio(e.target.value)}
+                              rows={3}
+                              style={{
+                                ...field,
+                                minHeight: 92,
+                                padding: "10px",
+                                resize: "vertical",
+                                fontFamily: "inherit",
+                                fontWeight: 700,
+                              }}
+                              placeholder="Short bio"
+                            />
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 12, fontWeight: 800, color: THEME.textFaint, marginBottom: 6 }}>Website</div>
+                            <input
+                              value={profileWebsite}
+                              onChange={(e) => setProfileWebsite(e.target.value)}
+                              style={{ ...field }}
+                              placeholder="https://"
+                            />
+                          </div>
+                          <div
+                            style={{
+                              ...card,
+                              borderRadius: 12,
+                              padding: 10,
+                              background: THEME.surfaceWarm,
+                            }}
+                          >
+                            <div style={{ fontSize: 12, color: THEME.textFaint, fontWeight: 800 }}>Public profile URL</div>
+                            <div style={{ marginTop: 4, fontSize: 13, fontWeight: 900, color: THEME.text }}>
+                              {`https://tabstudio.app/u/${String(profileHandle || "creator")
+                                .toLowerCase()
+                                .replace(/^@+/, "")
+                                .replace(/[^a-z0-9_-]/g, "") || "creator"}`}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {accountProfileSection === "security" && (
+                    <div style={{ display: "grid", gap: 12 }}>
+                      <div style={{ ...card, padding: 14 }}>
+                        <div style={{ fontWeight: 900, fontSize: 15 }}>Login & authentication</div>
+                        <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+                          <div>
+                            <div style={{ fontSize: 12, fontWeight: 800, color: THEME.textFaint, marginBottom: 6 }}>Account email</div>
+                            <input
+                              value={securityEmail}
+                              onChange={(e) => setSecurityEmail(e.target.value)}
+                              style={{ ...field }}
+                              placeholder="Email"
+                            />
+                          </div>
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+                            <input style={{ ...field }} type="password" placeholder="New password" />
+                            <input style={{ ...field }} type="password" placeholder="Confirm password" />
+                          </div>
+                          <div
+                            style={{
+                              ...card,
+                              borderRadius: 12,
+                              padding: 10,
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                            }}
+                          >
+                            <div>
+                              <div style={{ fontWeight: 850, fontSize: 14 }}>Two-factor authentication</div>
+                              <div style={{ marginTop: 2, fontSize: 12, color: THEME.textFaint }}>
+                                Add an authenticator app for extra account protection.
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setSecurityTwoFactorEnabled((v) => !v)}
+                              style={{
+                                ...btnSmallPill,
+                                borderColor: securityTwoFactorEnabled ? withAlpha(THEME.accent, 0.7) : THEME.border,
+                                background: THEME.surfaceWarm,
+                                color: securityTwoFactorEnabled ? THEME.accent : THEME.text,
+                              }}
+                            >
+                              {securityTwoFactorEnabled ? "Enabled" : "Enable"}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{ ...card, padding: 14 }}>
+                        <div style={{ fontWeight: 900, fontSize: 15 }}>Recent sessions</div>
+                        <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
+                          {recentSessions.map((session) => (
+                            <div
+                              key={`${session.device}-${session.when}`}
+                              style={{
+                                ...card,
+                                borderRadius: 12,
+                                padding: 10,
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                gap: 10,
+                              }}
+                            >
+                              <div>
+                                <div style={{ fontWeight: 850, fontSize: 14 }}>{session.device}</div>
+                                <div style={{ marginTop: 2, fontSize: 12, color: THEME.textFaint }}>
+                                  {session.location}
+                                </div>
+                              </div>
+                              <div style={{ fontSize: 12, color: THEME.textFaint, fontWeight: 800 }}>{session.when}</div>
+                            </div>
+                          ))}
+                        </div>
+                        <div style={{ marginTop: 8, display: "flex", justifyContent: "flex-end" }}>
+                          <div style={{ display: "grid", gap: 4 }}>
+                            <button type="button" style={{ ...btnSmallPillDanger }}>
+                              Sign out all other sessions
+                            </button>
+                            <div style={{ fontSize: 11, color: THEME.textFaint, textAlign: "right" }}>
+                              You&apos;ll stay signed in on this device.
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {accountProfileSection === "subscription" && (
+                    <div style={{ display: "grid", gap: 12 }}>
+                      <div
+                        style={{
+                          ...card,
+                          padding: 14,
+                          borderColor: THEME.border,
+                          background: THEME.surfaceWarm,
+                        }}
+                      >
+                        <div style={{ fontWeight: 900, fontSize: 15 }}>Current plan</div>
+                        <div style={{ marginTop: 8, display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}>
+                          <div>
+                            <div style={{ fontSize: 12, color: THEME.textFaint }}>Plan</div>
+                            <div style={{ marginTop: 3, display: "flex", alignItems: "center", gap: 8 }}>
+                              <span style={{ fontWeight: 900, fontSize: 15 }}>{accountTier}</span>
+                              <span
+                                style={{
+                                  ...btnSmallPill,
+                                  height: 22,
+                                  padding: "0 8px",
+                                  borderColor: withAlpha(THEME.accent, 0.55),
+                                  background: "transparent",
+                                  color: THEME.accent,
+                                  cursor: "default",
+                                  fontSize: 11,
+                                }}
+                              >
+                                Current plan
+                              </span>
+                            </div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 12, color: THEME.textFaint }}>Renews</div>
+                            <div style={{ marginTop: 3, fontWeight: 900, fontSize: 15 }}>{accountRenewalDate}</div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 12, color: THEME.textFaint }}>Cycle</div>
+                            <div style={{ marginTop: 3, fontWeight: 900, fontSize: 15 }}>{accountBillingCycle}</div>
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{ ...card, padding: 14 }}>
+                        <div
+                          style={{
+                            ...card,
+                            borderRadius: 12,
+                            padding: 10,
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            gap: 10,
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontWeight: 850, fontSize: 14 }}>Automatic renewal</div>
+                            <div style={{ marginTop: 2, fontSize: 12, color: THEME.textFaint }}>
+                              Keep your subscription active without interruption.
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setSubscriptionAutoRenew((v) => !v)}
+                            style={{
+                              ...btnSmallPill,
+                              borderColor: subscriptionAutoRenew ? withAlpha(THEME.accent, 0.7) : THEME.border,
+                              background: THEME.surfaceWarm,
+                              color: subscriptionAutoRenew ? THEME.accent : THEME.text,
+                            }}
+                          >
+                            {subscriptionAutoRenew ? "On" : "Off"}
+                          </button>
+                        </div>
+                        <div style={{ marginTop: 10, display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                          <button type="button" style={{ ...btnSmallPill }}>Compare Plans</button>
+                          <button type="button" style={{ ...btnSmallPillDanger }}>Cancel Subscription</button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {accountProfileSection === "billing" && (
+                    <div style={{ display: "grid", gap: 12 }}>
+                      <div style={{ ...card, padding: 14 }}>
+                        <div style={{ fontWeight: 900, fontSize: 15 }}>Payment method</div>
+                        <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+                          <input
+                            value={defaultPaymentMethod}
+                            onChange={(e) => setDefaultPaymentMethod(e.target.value)}
+                            style={{ ...field }}
+                            placeholder="Card or payment method"
+                          />
+                          <input
+                            value={billingEmail}
+                            onChange={(e) => setBillingEmail(e.target.value)}
+                            style={{ ...field }}
+                            placeholder="Billing email"
+                          />
+                        </div>
+                        <div style={{ marginTop: 10, display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                          <button type="button" style={{ ...btnSmallPill }}>Update Payment Method</button>
+                        </div>
+                      </div>
+                      <div style={{ ...card, padding: 14 }}>
+                        <div style={{ fontWeight: 900, fontSize: 15 }}>Invoices</div>
+                        <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
+                          {recentInvoices.map((invoice) => (
+                            <div
+                              key={invoice.id}
+                              style={{
+                                ...card,
+                                borderRadius: 12,
+                                padding: 10,
+                                display: "grid",
+                                gridTemplateColumns: "minmax(0, 1fr) auto auto auto",
+                                gap: 10,
+                                alignItems: "center",
+                              }}
+                            >
+                              <div style={{ fontWeight: 850, fontSize: 14 }}>{invoice.id}</div>
+                              <div style={{ fontSize: 12, color: THEME.textFaint }}>{invoice.date}</div>
+                              <div style={{ fontSize: 13, fontWeight: 900 }}>{invoice.amount}</div>
+                              <div
+                                style={{
+                                  ...btnSmallPill,
+                                  height: 24,
+                                  padding: "0 8px",
+                                  borderColor:
+                                    invoice.status === "Paid"
+                                      ? withAlpha(THEME.accent, 0.55)
+                                      : invoice.status === "Upcoming"
+                                      ? withAlpha("#E49D3A", 0.55)
+                                      : withAlpha("#6FA8FF", 0.55),
+                                  background:
+                                    invoice.status === "Paid"
+                                      ? "transparent"
+                                      : invoice.status === "Upcoming"
+                                      ? "transparent"
+                                      : "transparent",
+                                  color:
+                                    invoice.status === "Paid"
+                                      ? THEME.accent
+                                      : invoice.status === "Upcoming"
+                                      ? "#E49D3A"
+                                      : "#6FA8FF",
+                                  cursor: "default",
+                                }}
+                              >
+                                {invoice.status}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  </div>
+
+                  {(() => {
+                    const primaryLabelBySection = {
+                      overview: "Save Changes",
+                      profile: "Save Profile",
+                      security: "Save Changes",
+                      subscription: "Update Plan",
+                      billing: "Save Changes",
+                    };
+                    const primaryLabel = primaryLabelBySection[accountProfileSection] || "Save Changes";
+                    return (
+                      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: "auto" }}>
+                        <button type="button" onClick={() => setAccountProfileOpen(false)} style={{ ...btnSmallPill }}>
+                          Close
+                        </button>
+                        <button
+                          type="button"
+                          style={{
+                            ...btnSmallPill,
+                            borderColor: withAlpha(THEME.accent, 0.7),
+                            background: "transparent",
+                            color: THEME.accent,
+                          }}
+                        >
+                          {primaryLabel}
+                        </button>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Projects & Library panel */}
+          {projectsLibraryOpen && (
+            <div
+              style={{
+                position: "fixed",
+                inset: 0,
+                background: THEME.bg,
+                zIndex: 5000,
+              }}
+            >
+              <div
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  background: THEME.surfaceWarm,
+                  border: "none",
+                  boxShadow: "none",
+                  padding: 18,
+                  boxSizing: "border-box",
+                  display: "grid",
+                  gridTemplateRows: "auto auto minmax(0, 1fr) auto",
+                  gap: 10,
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: 10,
+                    gap: 10,
+                  }}
+                >
+                  <div style={{ fontWeight: 950, fontSize: 20, color: THEME.text }}>Projects &amp; Library</div>
+                  <button type="button" onClick={() => setProjectsLibraryOpen(false)} style={{ ...btnSmallPillClose }}>
+                    Close
+                  </button>
+                </div>
+
+                <div style={{ fontSize: 13, color: THEME.textFaint, lineHeight: 1.55 }}>
+                  Browse saved songs by artist and album, then load directly into the editor.
+                </div>
+
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.15fr)",
+                    gap: 10,
+                    minHeight: 0,
+                  }}
+                >
+                  <div style={{ ...card, padding: 10, minHeight: 0, overflowY: "auto" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, gap: 8 }}>
+                      <div style={{ fontSize: 13, color: THEME.textFaint, fontWeight: 900 }}>Artists</div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setArtistCreateOpen(true);
+                          setNewArtistDraft("");
+                          setAlbumCreateOpen(false);
+                        }}
+                        {...microBtnHoverHandlers("projectsArtistAdd")}
+                        {...pressHandlers("projectsArtistAdd")}
+                        style={microBtnInteractiveStyle(
+                          "projectsArtistAdd",
+                          { ...btnSmallPillClose, height: 28, padding: "0 10px", fontSize: 14, fontWeight: 900 },
+                          false
+                        )}
+                        title="Create artist"
+                      >
+                        +
+                      </button>
+                    </div>
+                    <div style={{ display: "grid", gap: 6 }}>
+                      {artistCreateOpen && (
+                        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 6 }}>
+                          <input
+                            id="projects-artist-new-input"
+                            ref={newArtistInputRef}
+                            value={newArtistDraft}
+                            onChange={(e) => setNewArtistDraft(e.target.value)}
+                            placeholder="New artist name"
+                            style={{
+                              ...field,
+                              height: 36,
+                              minHeight: 36,
+                              fontWeight: 800,
+                              boxSizing: "border-box",
+                            }}
+                            onBlur={() => {
+                              if (String(newArtistDraft || "").trim()) return;
+                              setArtistCreateOpen(false);
+                              setNewArtistDraft("");
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                confirmCreateArtist();
+                                return;
+                              }
+                              if (e.key === "Escape") {
+                                e.preventDefault();
+                                setArtistCreateOpen(false);
+                                setNewArtistDraft("");
+                              }
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setArtistCreateOpen(false);
+                              setNewArtistDraft("");
+                            }}
+                            style={{ ...btnSmallPillClose, height: 36, padding: "0 10px", fontSize: 12 }}
+                            title="Cancel"
+                            aria-label="Cancel new artist"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      )}
+                      {availableArtistNames.length === 0 ? (
+                        <div style={{ fontSize: 13, color: THEME.textFaint, padding: "8px 4px" }}>
+                          Press <b>+</b> to create your first artist.
+                        </div>
+                      ) : (
+                        availableArtistNames.map((artistName) => {
+                          const active = selectedLibraryArtistLabel === artistName;
+                          return (
+                            <div key={artistName}>
+                              <div
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => {
+                                  setSelectedLibraryArtistKey(artistName);
+                                  setSelectedLibraryAlbumName("");
+                                  setSelectedLibrarySongName("");
+                                  setArtist(artistName);
+                                  setAlbumName("");
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key !== "Enter" && e.key !== " ") return;
+                                  e.preventDefault();
+                                  setSelectedLibraryArtistKey(artistName);
+                                  setSelectedLibraryAlbumName("");
+                                  setSelectedLibrarySongName("");
+                                  setArtist(artistName);
+                                  setAlbumName("");
+                                }}
+                                style={{
+                                  ...btnSecondary,
+                                  width: "100%",
+                                  display: "grid",
+                                  gridTemplateColumns: "minmax(0, 1fr) auto",
+                                  alignItems: "center",
+                                  gap: 6,
+                                  textAlign: "left",
+                                  background: THEME.surfaceWarm,
+                                  borderColor: active ? withAlpha(THEME.accent, 0.7) : THEME.border,
+                                  color: active ? THEME.accent : THEME.text,
+                                  boxShadow: "none",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                  {artistName}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    renameLibraryArtist(artistName);
+                                  }}
+                                  style={{ ...actionEditBtn, height: 28, width: 28, minWidth: 28, borderRadius: 8 }}
+                                  title={`Edit ${artistName}`}
+                                  aria-label={`Edit ${artistName}`}
+                                >
+                                  <EditIcon size={12} />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+
+                  <div style={{ ...card, padding: 10, minHeight: 0, overflowY: "auto" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, gap: 8 }}>
+                      <div style={{ fontSize: 13, color: THEME.textFaint, fontWeight: 900 }}>Albums</div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const targetArtistName =
+                            selectedLibraryArtistLabel || (availableArtistNames.length === 1 ? availableArtistNames[0] : "");
+                          if (!targetArtistName) return;
+                          if (!selectedLibraryArtistLabel) setSelectedLibraryArtistKey(targetArtistName);
+                          setLibraryAlbumCreateOpen(true);
+                          setLibraryNewAlbumDraft("");
+                          setLibrarySongCreateOpen(false);
+                          setLibraryNewSongDraft("");
+                        }}
+                        disabled={!selectedLibraryArtistLabel && availableArtistNames.length !== 1}
+                        {...microBtnHoverHandlers(
+                          "projectsAlbumAdd",
+                          !selectedLibraryArtistLabel && availableArtistNames.length !== 1
+                        )}
+                        {...pressHandlers("projectsAlbumAdd", !selectedLibraryArtistLabel && availableArtistNames.length !== 1)}
+                        style={microBtnInteractiveStyle(
+                          "projectsAlbumAdd",
+                          {
+                            ...btnSmallPillClose,
+                            height: 28,
+                            padding: "0 10px",
+                            fontSize: 14,
+                            fontWeight: 900,
+                            opacity: selectedLibraryArtistLabel || availableArtistNames.length === 1 ? 1 : 0.5,
+                          },
+                          !selectedLibraryArtistLabel && availableArtistNames.length !== 1
+                        )}
+                        title={
+                          selectedLibraryArtistLabel || availableArtistNames.length === 1
+                            ? "Create album"
+                            : "Select artist first"
+                        }
+                      >
+                        +
+                      </button>
+                    </div>
+                    <div style={{ display: "grid", gap: 6 }}>
+                      {libraryAlbumCreateOpen && (
+                        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 6 }}>
+                          <input
+                            ref={libraryNewAlbumInputRef}
+                            value={libraryNewAlbumDraft}
+                            onChange={(e) => setLibraryNewAlbumDraft(e.target.value)}
+                            placeholder="New album name"
+                            style={{ ...field, height: 36, minHeight: 36, fontWeight: 800, boxSizing: "border-box" }}
+                            onBlur={() => {
+                              if (String(libraryNewAlbumDraft || "").trim()) {
+                                confirmCreateLibraryAlbum();
+                                return;
+                              }
+                              setLibraryAlbumCreateOpen(false);
+                              setLibraryNewAlbumDraft("");
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                confirmCreateLibraryAlbum();
+                                return;
+                              }
+                              if (e.key === "Escape") {
+                                e.preventDefault();
+                                setLibraryAlbumCreateOpen(false);
+                                setLibraryNewAlbumDraft("");
+                              }
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setLibraryAlbumCreateOpen(false);
+                              setLibraryNewAlbumDraft("");
+                            }}
+                            style={{ ...btnSmallPillClose, height: 36, padding: "0 10px", fontSize: 12 }}
+                            title="Cancel"
+                            aria-label="Cancel new album"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      )}
+                      {selectedLibraryAlbums.length === 0 ? (
+                        <div style={{ fontSize: 13, color: THEME.textFaint, padding: "8px 4px" }}>
+                          {selectedLibraryArtistLabel
+                            ? "No albums found for this artist yet."
+                            : "Press + to create your first album."}
+                        </div>
+                      ) : (
+                        selectedLibraryAlbums.map((albumEntry) => {
+                          const { artistName, albumName: album } = albumEntry;
+                          const active = selectedLibraryArtistLabel === artistName && selectedLibraryAlbumName === album;
+                          return (
+                            <div key={albumEntry.key}>
+                              <div
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => {
+                                  setSelectedLibraryArtistKey(artistName);
+                                  setSelectedLibraryAlbumName(album);
+                                  setSelectedLibrarySongName("");
+                                  setArtist(artistName);
+                                  setAlbumName(album);
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key !== "Enter" && e.key !== " ") return;
+                                  e.preventDefault();
+                                  setSelectedLibraryArtistKey(artistName);
+                                  setSelectedLibraryAlbumName(album);
+                                  setSelectedLibrarySongName("");
+                                  setArtist(artistName);
+                                  setAlbumName(album);
+                                }}
+                                style={{
+                                  ...btnSecondary,
+                                  width: "100%",
+                                  display: "grid",
+                                  gridTemplateColumns: "minmax(0, 1fr) auto",
+                                  alignItems: "center",
+                                  gap: 6,
+                                  textAlign: "left",
+                                  background: THEME.surfaceWarm,
+                                  borderColor: active ? withAlpha(THEME.accent, 0.7) : THEME.border,
+                                  color: active ? THEME.accent : THEME.text,
+                                  boxShadow: "none",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                  {album}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    renameLibraryAlbum(artistName, album);
+                                  }}
+                                  style={{ ...actionEditBtn, height: 28, width: 28, minWidth: 28, borderRadius: 8 }}
+                                  title={`Edit ${album}`}
+                                  aria-label={`Edit ${album}`}
+                                >
+                                  <EditIcon size={12} />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+
+                  <div style={{ ...card, padding: 10, minHeight: 0, overflowY: "auto" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, gap: 8 }}>
+                      <div style={{ fontSize: 13, color: THEME.textFaint, fontWeight: 900 }}>Songs</div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!selectedLibraryArtistLabel || !selectedLibraryAlbumName) return;
+                          setLibrarySongCreateOpen(true);
+                          setLibraryNewSongDraft("");
+                          setLibraryAlbumCreateOpen(false);
+                          setLibraryNewAlbumDraft("");
+                        }}
+                        disabled={!selectedLibraryArtistLabel || !selectedLibraryAlbumName}
+                        {...microBtnHoverHandlers("projectsSongAdd", !selectedLibraryArtistLabel || !selectedLibraryAlbumName)}
+                        {...pressHandlers("projectsSongAdd", !selectedLibraryArtistLabel || !selectedLibraryAlbumName)}
+                        style={microBtnInteractiveStyle(
+                          "projectsSongAdd",
+                          {
+                            ...btnSmallPillClose,
+                            height: 28,
+                            padding: "0 10px",
+                            fontSize: 14,
+                            fontWeight: 900,
+                            opacity: selectedLibraryArtistLabel && selectedLibraryAlbumName ? 1 : 0.5,
+                          },
+                          !selectedLibraryArtistLabel || !selectedLibraryAlbumName
+                        )}
+                        title={selectedLibraryArtistLabel && selectedLibraryAlbumName ? "Create song" : "Select album first"}
+                      >
+                        +
+                      </button>
+                    </div>
+                    <div style={{ display: "grid", gap: 6 }}>
+                      {librarySongCreateOpen && (
+                        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 6 }}>
+                          <input
+                            ref={libraryNewSongInputRef}
+                            value={libraryNewSongDraft}
+                            onChange={(e) => setLibraryNewSongDraft(e.target.value)}
+                            placeholder="New song name"
+                            style={{ ...field, height: 36, minHeight: 36, fontWeight: 800, boxSizing: "border-box" }}
+                            onBlur={() => {
+                              if (String(libraryNewSongDraft || "").trim()) {
+                                confirmCreateLibrarySong();
+                                return;
+                              }
+                              setLibrarySongCreateOpen(false);
+                              setLibraryNewSongDraft("");
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                confirmCreateLibrarySong();
+                                return;
+                              }
+                              if (e.key === "Escape") {
+                                e.preventDefault();
+                                setLibrarySongCreateOpen(false);
+                                setLibraryNewSongDraft("");
+                              }
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setLibrarySongCreateOpen(false);
+                              setLibraryNewSongDraft("");
+                            }}
+                            style={{ ...btnSmallPillClose, height: 36, padding: "0 10px", fontSize: 12 }}
+                            title="Cancel"
+                            aria-label="Cancel new song"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      )}
+                      {selectedLibrarySongs.length === 0 ? (
+                        <div style={{ fontSize: 13, color: THEME.textFaint, padding: "8px 4px" }}>
+                          {selectedLibraryAlbumName
+                            ? "No songs found in this album yet."
+                            : selectedLibraryArtistLabel
+                            ? "No songs found for this artist yet."
+                            : "Press + to create your first song."}
+                        </div>
+                      ) : (
+                        selectedLibrarySongs.map((songEntry) => {
+                          const { artistName, albumName: album, songName: song } = songEntry;
+                          const active =
+                            selectedLibraryArtistLabel === artistName &&
+                            selectedLibraryAlbumName === album &&
+                            selectedLibrarySongName === song;
+                          return (
+                            <div key={songEntry.key}>
+                              <div
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => loadLibrarySongByPath(artistName, album, song)}
+                                onKeyDown={(e) => {
+                                  if (e.key !== "Enter" && e.key !== " ") return;
+                                  e.preventDefault();
+                                  loadLibrarySongByPath(artistName, album, song);
+                                }}
+                                style={{
+                                  ...btnSecondary,
+                                  width: "100%",
+                                  display: "grid",
+                                  gridTemplateColumns: "minmax(0, 1fr) auto auto auto",
+                                  alignItems: "center",
+                                  gap: 6,
+                                  textAlign: "left",
+                                  background: THEME.surfaceWarm,
+                                  borderColor: active ? withAlpha(THEME.accent, 0.7) : THEME.border,
+                                  color: active ? THEME.accent : THEME.text,
+                                  boxShadow: "none",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                  {song}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    loadLibrarySongByPath(artistName, album, song);
+                                  }}
+                                  style={{
+                                    ...btnSecondary,
+                                    height: 28,
+                                    padding: "0 9px",
+                                    fontSize: 11,
+                                    borderRadius: 8,
+                                  }}
+                                >
+                                  Load
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    renameLibrarySong(artistName, album, song);
+                                  }}
+                                  style={{
+                                    ...actionEditBtn,
+                                    height: 28,
+                                    width: 28,
+                                    minWidth: 28,
+                                    borderRadius: 8,
+                                  }}
+                                  title={`Edit ${song}`}
+                                  aria-label={`Edit ${song}`}
+                                >
+                                  <EditIcon size={12} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    requestDeleteLibrarySong(artistName, album, song);
+                                  }}
+                                  style={{
+                                    ...actionDeleteBtn,
+                                    height: 28,
+                                    width: 28,
+                                    minWidth: 28,
+                                    borderRadius: 8,
+                                  }}
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center" }}>
+                  <button type="button" onClick={() => setProjectsLibraryOpen(false)} style={{ ...btnSecondary }}>
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Export modal */}
+          {exportModalOpen && (
+            <div
+              style={{
+                position: "fixed",
+                inset: 0,
+                background: "rgba(0,0,0,0.4)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                zIndex: 5200,
+                padding: 16,
+                boxSizing: "border-box",
+              }}
+              onPointerDown={(e) => {
+                if (e.target !== e.currentTarget) return;
+                if (imageExportBusy) return;
+                setExportModalOpen(false);
+                setImageExportProgress("");
+              }}
+            >
+              <div
+                style={{
+                  width: "calc(100vw - 32px)",
+                  height: "calc(100vh - 32px)",
+                  borderRadius: 16,
+                  background: THEME.surfaceWarm,
+                  border: `1px solid ${THEME.border}`,
+                  boxShadow: "0 24px 72px rgba(0,0,0,0.34)",
+                  padding: 14,
+                  boxSizing: "border-box",
+                  display: "grid",
+                  gridTemplateRows: "auto auto minmax(0,1fr)",
+                  gap: 12,
+                  overflow: "hidden",
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (imageExportBusy) return;
+                      setExportModalOpen(false);
+                      setImageExportProgress("");
+                    }}
+                    style={{
+                      width: 34,
+                      height: 34,
+                      borderRadius: 10,
+                      border: `1px solid ${THEME.border}`,
+                      background: "transparent",
+                      color: THEME.text,
+                      fontSize: 20,
+                      lineHeight: 1,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      padding: 0,
+                    }}
+                    aria-label="Close export modal"
+                    title="Close"
+                  >
+                    ×
+                  </button>
+                  <div>
+                    <div style={{ fontWeight: 950, fontSize: 18, color: THEME.text }}>Export</div>
+                    <div style={{ marginTop: 2, fontSize: 12, color: THEME.textFaint }}>
+                      Choose full-song PDF or creator image exports.
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ ...card, padding: 10 }}>
+                  <div style={{ fontSize: 12, fontWeight: 900, color: THEME.textFaint, marginBottom: 8 }}>Select Export Format:</div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      onClick={() => setExportFormat("pdf")}
+                      style={{
+                        ...btnSecondary,
+                        borderColor: exportFormat === "pdf" ? withAlpha(THEME.accent, 0.7) : THEME.border,
+                        color: exportFormat === "pdf" ? THEME.accent : THEME.text,
+                        background: THEME.surfaceWarm,
+                        boxShadow: "none",
+                      }}
+                    >
+                      PDF
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setExportFormat("image")}
+                      style={{
+                        ...btnSecondary,
+                        borderColor: exportFormat === "image" ? withAlpha(THEME.accent, 0.7) : THEME.border,
+                        color: exportFormat === "image" ? THEME.accent : THEME.text,
+                        background: THEME.surfaceWarm,
+                        boxShadow: "none",
+                      }}
+                    >
+                      PNG
+                    </button>
+                  </div>
+                </div>
+
+                {exportFormat === "pdf" ? (
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "minmax(340px, 420px) minmax(0, 1fr)",
+                      gap: 12,
+                      minHeight: 0,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateRows: "minmax(0,1fr) auto",
+                        gap: 10,
+                        minHeight: 0,
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "grid",
+                          gap: 10,
+                          minHeight: 0,
+                          overflowY: "auto",
+                          paddingRight: 4,
+                          alignContent: "start",
+                          gridAutoRows: "max-content",
+                        }}
+                      >
+                        <div style={{ ...card, padding: 0, overflow: "hidden" }}>
+                          <button
+                            type="button"
+                            onClick={() => togglePdfSettingsSection("rows")}
+                            style={{
+                              width: "100%",
+                              ...btnSecondary,
+                              height: 42,
+                              padding: "0 10px",
+                              borderRadius: 0,
+                              border: "none",
+                              background: "transparent",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              fontSize: 16,
+                              fontWeight: 900,
+                              lineHeight: 1,
+                              boxSizing: "border-box",
+                            }}
+                          >
+                            <span>Row Settings</span>
+                            <span style={{ fontSize: 12, opacity: 0.8 }}>{pdfSettingsOpenSection === "rows" ? "▲" : "▼"}</span>
+                          </button>
+                          {pdfSettingsOpenSection === "rows" && (
+                            <div style={{ padding: 8, borderTop: `1px solid ${THEME.border}`, display: "grid", gap: 8 }}>
+                              <div style={{ fontSize: 13, color: THEME.text }}>
+                                {completedRows.length} completed row{completedRows.length === 1 ? "" : "s"} included
+                              </div>
+                              <div style={{ fontSize: 12, color: THEME.textFaint }}>
+                                PDF export includes the full song on A4 pages.
+                              </div>
+                              <div style={{ fontSize: 12, fontWeight: 900, color: THEME.textFaint, marginTop: 4 }}>Row spacing</div>
+                              <div style={{ fontSize: 12, color: THEME.textFaint }}>
+                                Control how tab rows are arranged across pages when printing.
+                              </div>
+                              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                                <button
+                                  type="button"
+                                  onClick={() => setPdfRowGrouping("fill")}
+                                  style={{
+                                    ...btnSecondary,
+                                    height: 34,
+                                    borderColor: THEME.border,
+                                    color: pdfRowGrouping === "fill" ? THEME.text : THEME.textFaint,
+                                    background:
+                                      pdfRowGrouping === "fill"
+                                        ? withAlpha(THEME.text, THEME.isDark ? 0.12 : 0.08)
+                                        : THEME.surface,
+                                    fontWeight: pdfRowGrouping === "fill" ? 900 : 700,
+                                  }}
+                                >
+                                  Compact
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setPdfRowGrouping("grouped")}
+                                  style={{
+                                    ...btnSecondary,
+                                    height: 34,
+                                    borderColor: THEME.border,
+                                    color: pdfRowGrouping === "grouped" ? THEME.text : THEME.textFaint,
+                                    background:
+                                      pdfRowGrouping === "grouped"
+                                        ? withAlpha(THEME.text, THEME.isDark ? 0.12 : 0.08)
+                                        : THEME.surface,
+                                    fontWeight: pdfRowGrouping === "grouped" ? 900 : 700,
+                                  }}
+                                >
+                                  Comfortable
+                                </button>
+                              </div>
+                              <div style={{ fontSize: 11, color: THEME.textFaint }}>
+                                {pdfRowGrouping === "grouped"
+                                  ? "Comfortable keeps rows grouped to avoid single rows on a page where possible."
+                                  : "Compact fits as many rows as possible on each page."}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        <div style={{ ...card, padding: 0, overflow: "hidden" }}>
+                          <button
+                            type="button"
+                            onClick={() => togglePdfSettingsSection("text")}
+                            style={{
+                              width: "100%",
+                              ...btnSecondary,
+                              height: 42,
+                              padding: "0 10px",
+                              borderRadius: 0,
+                              border: "none",
+                              background: "transparent",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              fontSize: 16,
+                              fontWeight: 900,
+                              lineHeight: 1,
+                              boxSizing: "border-box",
+                            }}
+                          >
+                            <span>Text Settings</span>
+                            <span style={{ fontSize: 12, opacity: 0.8 }}>{pdfSettingsOpenSection === "text" ? "▲" : "▼"}</span>
+                          </button>
+                        {pdfSettingsOpenSection === "text" && (
+                          <div style={{ padding: 8, borderTop: `1px solid ${THEME.border}`, display: "grid", gap: 8 }}>
+                            <div style={{ fontSize: 12, color: THEME.textFaint }}>Thickness</div>
+                            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                              {[
+                                ["A", "A (Thin)"],
+                                ["B", "B (Medium)"],
+                                ["C", "C (Thick)"],
+                              ].map(([id, label]) => (
+                                <button
+                                  key={id}
+                                  type="button"
+                                  onClick={() => setImageThickness(id)}
+                                  style={{
+                                    ...btnSecondary,
+                                    borderColor: THEME.border,
+                                    color: imageThickness === id ? THEME.text : THEME.textFaint,
+                                    background:
+                                      imageThickness === id
+                                        ? withAlpha(THEME.text, THEME.isDark ? 0.12 : 0.08)
+                                        : THEME.surface,
+                                    fontWeight: imageThickness === id ? 900 : 700,
+                                  }}
+                                >
+                                  {label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                        <div style={{ ...card, padding: 0, overflow: "hidden" }}>
+                          <button
+                            type="button"
+                            onClick={() => togglePdfSettingsSection("song")}
+                            style={{
+                              width: "100%",
+                              ...btnSecondary,
+                              height: 42,
+                              padding: "0 10px",
+                              borderRadius: 0,
+                              border: "none",
+                              background: "transparent",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              fontSize: 16,
+                              fontWeight: 900,
+                              lineHeight: 1,
+                              boxSizing: "border-box",
+                            }}
+                          >
+                            <span>Song Details</span>
+                            <span style={{ fontSize: 12, opacity: 0.8 }}>{pdfSettingsOpenSection === "song" ? "▲" : "▼"}</span>
+                          </button>
+                          {pdfSettingsOpenSection === "song" && (
+                            <div
+                              style={{
+                                padding: 8,
+                                borderTop: `1px solid ${THEME.border}`,
+                                display: "grid",
+                                gap: 6,
+                                fontSize: 12,
+                                color: THEME.textFaint,
+                              }}
+                            >
+                              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <input type="checkbox" checked={pdfShowArtist} onChange={(e) => setPdfShowArtist(e.target.checked)} />
+                                Artist
+                              </label>
+                              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <input type="checkbox" checked={pdfShowAlbum} onChange={(e) => setPdfShowAlbum(e.target.checked)} />
+                                Album
+                              </label>
+                              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <input type="checkbox" checked={pdfShowSong} onChange={(e) => setPdfShowSong(e.target.checked)} />
+                                Song name
+                              </label>
+                              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <input
+                                  type="checkbox"
+                                  checked={pdfShowInstrument}
+                                  onChange={(e) => setPdfShowInstrument(e.target.checked)}
+                                />
+                                Instrument
+                              </label>
+                              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <input type="checkbox" checked={pdfShowTuning} onChange={(e) => setPdfShowTuning(e.target.checked)} />
+                                Tuning
+                              </label>
+                              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <input type="checkbox" checked={pdfShowCapo} onChange={(e) => setPdfShowCapo(e.target.checked)} />
+                                Capo
+                              </label>
+                              {showTempoControl && (
+                                <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                  <input type="checkbox" checked={pdfShowTempo} onChange={(e) => setPdfShowTempo(e.target.checked)} />
+                                  Tempo
+                                </label>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={exportPdfNow}
+                        onPointerEnter={() => setExportPdfHover(true)}
+                        onPointerLeave={() => setExportPdfHover(false)}
+                        style={{
+                          ...btnSecondary,
+                          borderColor: exportPdfHover ? withAlpha(THEME.accent, 0.7) : THEME.border,
+                          color: exportPdfHover ? THEME.accent : THEME.text,
+                          background: exportPdfHover ? withAlpha(THEME.accent, THEME.isDark ? 0.1 : 0.08) : THEME.surfaceWarm,
+                        }}
+                      >
+                        Export PDF
+                      </button>
+                    </div>
+
+                    <div style={{ ...card, padding: 10, display: "grid", gap: 8, minHeight: 0 }}>
+                      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                        <div style={{ fontSize: 12, fontWeight: 900, color: THEME.textFaint }}>Preview</div>
+                        <label
+                          style={{
+                            display: "grid",
+                            gap: 4,
+                            minWidth: 180,
+                            marginLeft: "auto",
+                          }}
+                        >
+                          <span style={{ fontSize: 11, fontWeight: 800, color: THEME.textFaint, textAlign: "right" }}>Preview zoom</span>
+                          <input
+                            type="range"
+                            min="0.45"
+                            max="0.9"
+                            step="0.01"
+                            value={pdfPreviewScale}
+                            onChange={(e) => setPdfPreviewScale(Number(e.target.value))}
+                            style={{ width: "100%", accentColor: THEME.accent, cursor: "pointer" }}
+                          />
+                        </label>
+                      </div>
+                      <div style={{ minHeight: 0, height: "100%", overflow: "auto", padding: 8 }}>
+                        <div style={{ display: "grid", gap: 16, justifyItems: "center", alignContent: "start", paddingBottom: 8 }}>
+                          {pdfPreviewLayout.pages.map((pageLines, pageIndex) => (
+                            <div key={`pdf-preview-page-${pageIndex}`} style={{ display: "grid", gap: 6, justifyItems: "center" }}>
+                              <div style={{ fontSize: 11, fontWeight: 800, color: THEME.textFaint }}>
+                                A4 · Page {pageIndex + 1} / {pdfPreviewLayout.pages.length}
+                              </div>
+                              <div
+                                style={{
+                                  width: `${pdfPreviewLayout.pageW * pdfPreviewScale}px`,
+                                  minHeight: `${pdfPreviewLayout.pageH * pdfPreviewScale}px`,
+                                  background: "#fff",
+                                  color: "#111",
+                                  borderRadius: 8,
+                                  boxShadow: "0 10px 30px rgba(0,0,0,0.28)",
+                                  padding: `${pdfPreviewLayout.margin * pdfPreviewScale}px`,
+                                  boxSizing: "border-box",
+                                  border: "1px solid rgba(0,0,0,0.08)",
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    fontFamily:
+                                      'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                                    fontSize: `${Math.max(7, pdfPreviewLayout.fontSize * pdfPreviewScale)}px`,
+                                    lineHeight: `${Math.max(8, pdfPreviewLayout.lineH * pdfPreviewScale)}px`,
+                                  }}
+                                >
+                                  {pageLines.map((ln, lineIndex) => (
+                                    <div
+                                      key={`pdf-preview-page-${pageIndex}-line-${lineIndex}`}
+                                      style={{
+                                        whiteSpace: "pre",
+                                        fontWeight:
+                                          imageThickness === "A"
+                                            ? 500
+                                            : imageThickness === "C"
+                                              ? 900
+                                              : ln?.font === "F2"
+                                                ? 800
+                                                : 500,
+                                      }}
+                                    >
+                                      {String(ln?.text || "").length ? String(ln.text) : "\u00A0"}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "minmax(340px, 420px) minmax(0, 1fr)",
+                      gap: 12,
+                      minHeight: 0,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateRows: "minmax(0,1fr) auto",
+                        gap: 10,
+                        minHeight: 0,
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "grid",
+                          gap: 10,
+                          minHeight: 0,
+                          overflowY: "auto",
+                          paddingRight: 4,
+                          alignContent: "start",
+                          gridAutoRows: "max-content",
+                        }}
+                      >
+                      <div style={{ ...card, padding: 0, overflow: "hidden" }}>
+                        <button
+                          type="button"
+                          onClick={() => toggleImageSettingsSection("rows")}
+                          style={{
+                            width: "100%",
+                            ...btnSecondary,
+                            height: 42,
+                            padding: "0 10px",
+                            borderRadius: 0,
+                            border: "none",
+                            background: "transparent",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            fontSize: 16,
+                            fontWeight: 900,
+                            lineHeight: 1,
+                            boxSizing: "border-box",
+                          }}
+                        >
+                          <span>Row Settings</span>
+                          <span style={{ fontSize: 12, opacity: 0.8 }}>{imageSettingsOpenSection === "rows" ? "▲" : "▼"}</span>
+                        </button>
+                        {imageSettingsOpenSection === "rows" && (
+                          <div style={{ padding: 8, borderTop: `1px solid ${THEME.border}`, display: "grid", gap: 8, maxHeight: 320, overflowY: "auto" }}>
+                            <div style={{ fontSize: 13, color: THEME.text }}>
+                              {selectedExportCount} row{selectedExportCount === 1 ? "" : "s"} selected
+                            </div>
+                            <label
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 8,
+                                fontSize: 12,
+                                color: THEME.textFaint,
+                                cursor: "pointer",
+                                userSelect: "none",
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={imageShowRowNames}
+                                onChange={(e) => setImageShowRowNames(e.target.checked)}
+                              />
+                              Show row names
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setImageExportRowIds([]);
+                              }}
+                              style={{ ...btnSecondary, justifySelf: "start", height: 30, padding: "0 10px", fontSize: 13 }}
+                            >
+                              Clear selection
+                            </button>
+                            {selectedExportCount > 1 && (
+                              <div style={{ display: "grid", gap: 8, marginTop: 2 }}>
+                                <div style={{ fontSize: 12, fontWeight: 900, color: THEME.textFaint }}>Multi-row export</div>
+                                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => setImageMultiExportMode("individual")}
+                                    style={{
+                                      ...btnSecondary,
+                                      borderColor: THEME.border,
+                                      color: imageMultiExportMode === "individual" ? THEME.text : THEME.textFaint,
+                                      background:
+                                        imageMultiExportMode === "individual"
+                                          ? withAlpha(THEME.text, THEME.isDark ? 0.12 : 0.08)
+                                          : THEME.surface,
+                                      fontWeight: imageMultiExportMode === "individual" ? 900 : 700,
+                                    }}
+                                  >
+                                    Export rows individually
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setImageMultiExportMode("combined")}
+                                    style={{
+                                      ...btnSecondary,
+                                      borderColor: THEME.border,
+                                      color: imageMultiExportMode === "combined" ? THEME.text : THEME.textFaint,
+                                      background:
+                                        imageMultiExportMode === "combined"
+                                          ? withAlpha(THEME.text, THEME.isDark ? 0.12 : 0.08)
+                                          : THEME.surface,
+                                      fontWeight: imageMultiExportMode === "combined" ? 900 : 700,
+                                    }}
+                                  >
+                                    Export as single image
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                            <div
+                              style={{
+                                ...card,
+                                borderRadius: 10,
+                                padding: 8,
+                                display: "grid",
+                                gap: 6,
+                                maxHeight: 220,
+                                overflowY: "auto",
+                              }}
+                            >
+                              {completedRows.length === 0 ? (
+                                <div style={{ fontSize: 12, color: THEME.textFaint }}>No completed rows yet.</div>
+                              ) : (
+                                completedRows.map((row, idx) => {
+                                  const checked = imageExportRowIds.includes(row.id);
+                                  const rowLabel = makeExportRowLabel(row, idx);
+                                  return (
+                                    <label
+                                      key={row.id}
+                                      style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 8,
+                                        fontSize: 12,
+                                        color: THEME.text,
+                                        cursor: "pointer",
+                                      }}
+                                    >
+                                      <input type="checkbox" checked={checked} onChange={() => toggleImageExportRow(row.id)} />
+                                      <span
+                                        style={{
+                                          whiteSpace: "nowrap",
+                                          overflow: "hidden",
+                                          textOverflow: "ellipsis",
+                                          color: THEME.text,
+                                          fontWeight: 800,
+                                        }}
+                                      >
+                                        {rowLabel}
+                                      </span>
+                                    </label>
+                                  );
+                                })
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div style={{ ...card, padding: 0, overflow: "hidden" }}>
+                        <button
+                          type="button"
+                          onClick={() => toggleImageSettingsSection("background")}
+                          style={{
+                            width: "100%",
+                            ...btnSecondary,
+                            height: 42,
+                            padding: "0 10px",
+                            borderRadius: 0,
+                            border: "none",
+                            background: "transparent",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            fontSize: 16,
+                            fontWeight: 900,
+                            lineHeight: 1,
+                            boxSizing: "border-box",
+                          }}
+                        >
+                          <span>Backround Settings</span>
+                          <span style={{ fontSize: 12, opacity: 0.8 }}>{imageSettingsOpenSection === "background" ? "▲" : "▼"}</span>
+                        </button>
+                        {imageSettingsOpenSection === "background" && (
+                          <div style={{ padding: 8, borderTop: `1px solid ${THEME.border}`, display: "grid", gap: 8, maxHeight: 220, overflowY: "auto" }}>
+                            <div style={{ display: "flex", gap: 8 }}>
+                              <button
+                                type="button"
+                                onClick={() => setImageBgMode("transparent")}
+                                style={{
+                                  ...btnSecondary,
+                                  borderColor: THEME.border,
+                                  color: imageBgMode === "transparent" ? THEME.text : THEME.textFaint,
+                                  background:
+                                    imageBgMode === "transparent"
+                                      ? withAlpha(THEME.text, THEME.isDark ? 0.12 : 0.08)
+                                      : THEME.surface,
+                                  fontWeight: imageBgMode === "transparent" ? 900 : 700,
+                                }}
+                              >
+                                Transparent
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setImageBgMode("solid")}
+                                style={{
+                                  ...btnSecondary,
+                                  borderColor: THEME.border,
+                                  color: imageBgMode === "solid" ? THEME.text : THEME.textFaint,
+                                  background:
+                                    imageBgMode === "solid"
+                                      ? withAlpha(THEME.text, THEME.isDark ? 0.12 : 0.08)
+                                      : THEME.surface,
+                                  fontWeight: imageBgMode === "solid" ? 900 : 700,
+                                }}
+                              >
+                                Solid colour
+                              </button>
+                            </div>
+                            {imageBgMode === "solid" && (
+                              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: THEME.textFaint }}>
+                                Background color
+                                <input
+                                  type="color"
+                                  value={imageBgColor}
+                                  onChange={(e) => setImageBgColor(normalizeHexColorOrFallback(e.target.value, "#000000"))}
+                                  style={{ width: 38, height: 26, padding: 0, border: "none", background: "transparent" }}
+                                />
+                              </label>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      <div style={{ ...card, padding: 0, overflow: "hidden" }}>
+                        <button
+                          type="button"
+                          onClick={() => toggleImageSettingsSection("text")}
+                          style={{
+                            width: "100%",
+                            ...btnSecondary,
+                            height: 42,
+                            padding: "0 10px",
+                            borderRadius: 0,
+                            border: "none",
+                            background: "transparent",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            fontSize: 16,
+                            fontWeight: 900,
+                            lineHeight: 1,
+                            boxSizing: "border-box",
+                          }}
+                        >
+                          <span>Text Settings</span>
+                          <span style={{ fontSize: 12, opacity: 0.8 }}>{imageSettingsOpenSection === "text" ? "▲" : "▼"}</span>
+                        </button>
+                        {imageSettingsOpenSection === "text" && (
+                          <div style={{ padding: 8, borderTop: `1px solid ${THEME.border}`, display: "grid", gap: 8, maxHeight: 260, overflowY: "auto" }}>
+                            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: THEME.textFaint }}>
+                              Text color
+                              <input
+                                type="color"
+                                value={imageTextColor}
+                                onChange={(e) => setImageTextColor(normalizeHexColorOrFallback(e.target.value, "#ffffff"))}
+                                style={{ width: 38, height: 26, padding: 0, border: "none", background: "transparent" }}
+                              />
+                            </label>
+                            <div style={{ fontSize: 12, color: THEME.textFaint }}>Thickness</div>
+                            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                              {[
+                                ["A", "A (Thin)"],
+                                ["B", "B (Medium)"],
+                                ["C", "C (Thick)"],
+                              ].map(([id, label]) => (
+                                <button
+                                  key={id}
+                                  type="button"
+                                  onClick={() => setImageThickness(id)}
+                                  style={{
+                                    ...btnSecondary,
+                                    borderColor: THEME.border,
+                                    color: imageThickness === id ? THEME.text : THEME.textFaint,
+                                    background:
+                                      imageThickness === id
+                                        ? withAlpha(THEME.text, THEME.isDark ? 0.12 : 0.08)
+                                        : THEME.surface,
+                                    fontWeight: imageThickness === id ? 900 : 700,
+                                  }}
+                                >
+                                  {label}
+                                </button>
+                              ))}
+                            </div>
+                            <div style={{ fontSize: 12, color: THEME.textFaint }}>Text outline</div>
+                            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                              {[
+                                ["off", "Off"],
+                                ["subtle", "Subtle"],
+                                ["strong", "Strong"],
+                              ].map(([id, label]) => (
+                                <button
+                                  key={id}
+                                  type="button"
+                                  onClick={() => setImageTextOutline(id)}
+                                  style={{
+                                    ...btnSecondary,
+                                    borderColor: THEME.border,
+                                    color: imageTextOutline === id ? THEME.text : THEME.textFaint,
+                                    background:
+                                      imageTextOutline === id
+                                        ? withAlpha(THEME.text, THEME.isDark ? 0.12 : 0.08)
+                                        : THEME.surface,
+                                    fontWeight: imageTextOutline === id ? 900 : 700,
+                                  }}
+                                >
+                                  {label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div style={{ ...card, padding: 0, overflow: "hidden" }}>
+                        <button
+                          type="button"
+                          onClick={() => toggleImageSettingsSection("details")}
+                          style={{
+                            width: "100%",
+                            ...btnSecondary,
+                            height: 42,
+                            padding: "0 10px",
+                            borderRadius: 0,
+                            border: "none",
+                            background: "transparent",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            fontSize: 16,
+                            fontWeight: 900,
+                            lineHeight: 1,
+                            boxSizing: "border-box",
+                          }}
+                        >
+                          <span>Song Details</span>
+                          <span style={{ fontSize: 12, opacity: 0.8 }}>{imageSettingsOpenSection === "details" ? "▲" : "▼"}</span>
+                        </button>
+                        {imageSettingsOpenSection === "details" && (
+                          <div style={{ padding: 8, borderTop: `1px solid ${THEME.border}`, display: "grid", gap: 4, fontSize: 12, color: THEME.textFaint, maxHeight: 220, overflowY: "auto" }}>
+                            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none" }}>
+                              <input type="checkbox" checked={imageShowArtist} onChange={(e) => setImageShowArtist(e.target.checked)} />
+                              Artist
+                            </label>
+                            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none" }}>
+                              <input type="checkbox" checked={imageShowAlbum} onChange={(e) => setImageShowAlbum(e.target.checked)} />
+                              Album
+                            </label>
+                            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none" }}>
+                              <input type="checkbox" checked={imageShowSong} onChange={(e) => setImageShowSong(e.target.checked)} />
+                              Song name
+                            </label>
+                            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none" }}>
+                              <input
+                                type="checkbox"
+                                checked={imageShowInstrument}
+                                onChange={(e) => setImageShowInstrument(e.target.checked)}
+                              />
+                              Instrument
+                            </label>
+                            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none" }}>
+                              <input type="checkbox" checked={imageShowTuning} onChange={(e) => setImageShowTuning(e.target.checked)} />
+                              Tuning
+                            </label>
+                            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none" }}>
+                              <input type="checkbox" checked={imageShowCapo} onChange={(e) => setImageShowCapo(e.target.checked)} />
+                              Capo
+                            </label>
+                            {showTempoControl && (
+                              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none" }}>
+                                <input type="checkbox" checked={imageShowTempo} onChange={(e) => setImageShowTempo(e.target.checked)} />
+                                Tempo
+                              </label>
+                            )}
+                            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none" }}>
+                              <input
+                                type="checkbox"
+                                checked={imageShowBranding}
+                                onChange={(e) => setImageShowBranding(e.target.checked)}
+                              />
+                              TabStudio branding
+                            </label>
+                          </div>
+                        )}
+                      </div>
+
+                      </div>
+
+                      <div style={{ display: "grid", gap: 8 }}>
+                        <div style={{ fontSize: 12, color: THEME.textFaint, minHeight: 16 }}>{imageExportProgress}</div>
+                        <button
+                          type="button"
+                          disabled={imageExportBusy || selectedExportCount === 0}
+                          onClick={exportImagesNow}
+                          style={{
+                            ...btnSecondary,
+                            borderColor: withAlpha(THEME.accent, 0.7),
+                            color: THEME.accent,
+                            opacity: imageExportBusy || selectedExportCount === 0 ? 0.6 : 1,
+                          }}
+                        >
+                          {imageExportBusy ? "Exporting..." : "Export Images"}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div
+                      style={{
+                        ...card,
+                        padding: 10,
+                        display: "grid",
+                        gap: 8,
+                        minHeight: 0,
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                        <div style={{ fontSize: 12, fontWeight: 900, color: THEME.textFaint }}>Preview</div>
+                        <div style={{ fontSize: 11, color: THEME.textFaint, fontWeight: 800, textAlign: "right" }}>
+                          {imagePreviewMetaText || (selectedExportCount > 0 ? "Preparing preview..." : "No rows selected")}
+                        </div>
+                      </div>
+                      <div
+                        style={{
+                          border: `1px solid ${THEME.border}`,
+                          borderRadius: 10,
+                          padding: 10,
+                          minHeight: 0,
+                          height: "100%",
+                          overflow: "auto",
+                          background: THEME.surface,
+                          display: "grid",
+                          placeItems: "center",
+                        }}
+                      >
+                        {selectedExportCount <= 0 ? (
+                          <div style={{ fontSize: 12, color: THEME.textFaint }}>Select at least one row to preview export output.</div>
+                        ) : imagePreviewBusy ? (
+                          <div style={{ fontSize: 12, color: THEME.textFaint }}>Rendering image preview...</div>
+                        ) : imagePreviewUrl ? (
+                          <div
+                            style={{
+                              width: "100%",
+                              height: "100%",
+                              display: "grid",
+                              placeItems: "center",
+                              minHeight: 240,
+                            }}
+                          >
+                            <div
+                              style={{
+                                maxWidth: "100%",
+                                maxHeight: "100%",
+                                borderRadius: 10,
+                                border: `1px solid ${withAlpha(THEME.accent, 0.4)}`,
+                                boxShadow: `0 14px 28px ${withAlpha("#000000", THEME.isDark ? 0.28 : 0.14)}`,
+                                overflow: "hidden",
+                                ...(imageBgMode === "transparent" ? getTransparentPreviewSurface(imageTextColor) : { background: imageBgColor }),
+                              }}
+                            >
+                              <img
+                                src={imagePreviewUrl}
+                                alt="Export image preview"
+                                style={{
+                                  display: "block",
+                                  maxWidth: "min(100%, 920px)",
+                                  maxHeight: "62vh",
+                                  width: "auto",
+                                  height: "auto",
+                                }}
+                              />
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ fontSize: 12, color: THEME.textFaint }}>Unable to render preview.</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Edit chord modal */}
+          {editChordModalOpen && (
+            <div
+              style={{
+                position: "fixed",
+                inset: 0,
+                background: "rgba(0,0,0,0.35)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                zIndex: 5000,
+              }}
+              onPointerDown={(e) => {
+                if (e.target === e.currentTarget) closeEditChordModal();
+              }}
+            >
+              <div
+                style={{
+                  width: 420,
+                  maxWidth: "90vw",
+                  borderRadius: 18,
+                  background: THEME.surfaceWarm,
+                  border: `1px solid ${THEME.border}`,
+                  boxShadow: "0 24px 70px rgba(0,0,0,0.32)",
+                  padding: 16,
+                  boxSizing: "border-box",
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: 8,
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 950, fontSize: 16 }}>Edit {editChordNameHeader || "chord"}</div>
+                    <div style={{ fontSize: 12, color: THEME.textFaint, marginTop: 2 }}>Standard tuning only.</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={closeEditChordModal}
+                    style={{ ...btnSmallPillClose }}
+                  >
+                    Close
+                  </button>
+                </div>
+
+                <div
+                  style={{
+                    marginTop: 8,
+                    padding: 10,
+                    borderRadius: 14,
+                    border: `1px solid ${THEME.border}`,
+                    background: THEME.surfaceWarm,
+                    display: "grid",
+                    gap: 6,
+                  }}
+                >
+                  {editChordLabelStrings.map((label, idx) => (
+                    <div
+                      key={idx}
+                      style={{
+                        display: "flex",
+                        justifyContent: "center",
+                        alignItems: "center",
+                        gap: 8,
+                      }}
+                    >
+                      <div
+                        style={{
+                          ...pillMono,
+                          fontSize: 13,
+                          textAlign: "right",
+                          color: THEME.textFaint,
+                          width: 24,
+                        }}
+                      >
+                        {label.toUpperCase()}
+                      </div>
+                      <input
+                        value={editChordFrets[idx] ?? ""}
+                        onChange={(e) => {
+                          const v = e.target.value.trim();
+                          setEditChordFrets((prev) => {
+                            const next = prev.slice();
+                            next[idx] = v;
+                            return next;
+                          });
+                        }}
+                        placeholder="- / 0–24 / x"
+                        style={{
+                          width: cellSize,
+                          height: cellSize,
+                          borderRadius: 12,
+                          border: `1px solid ${THEME.border}`,
+                          textAlign: "center",
+                          ...pillMono,
+                          background: THEME.surfaceWarm,
+                          color: THEME.text,
+                          boxSizing: "border-box",
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginTop: 12,
+                    gap: 8,
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      onClick={handleSaveEditedChord}
+                      {...pressHandlers("editChordSave")}
+                      style={{
+                        ...btnSecondary,
+                        ...pressVisual(pressedBtnId === "editChordSave"),
+                        height: 38,
+                        padding: "0 12px",
+                      }}
+                    >
+                      Save Changes
+                    </button>
+                    {editChordIsPreset && (
+                      <button
+                        type="button"
+                        onClick={handleResetEditedChordToDefault}
+                        style={{
+                          ...btnSecondary,
+                          height: 38,
+                          padding: "0 12px",
+                        }}
+                        title="Reset this preset back to the original shape"
+                      >
+                        Reset to default
+                      </button>
+                    )}
+                  </div>
+
+                  <div style={{ fontSize: 11, color: THEME.textFaint }}>
+                    Tip: use <b>x</b> for muted strings and leave blank for no change.
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Custom tuning modal */}
+          {customOpen && (
+            <div
+              style={{
+                position: "fixed",
+                inset: 0,
+                background: "rgba(0,0,0,0.35)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                zIndex: 5000,
+              }}
+              onPointerDown={(e) => {
+                if (e.target === e.currentTarget) {
+                  setCustomOpen(false);
+                  setTuningOpen(true);
+                  focusKeyCapture();
+                }
+              }}
+            >
+              <div
+                ref={customTuningModalRef}
+                style={{
+                  width: 420,
+                  maxWidth: "90vw",
+                  borderRadius: 18,
+                  background: THEME.surfaceWarm,
+                  border: `1px solid ${THEME.border}`,
+                  boxShadow: "0 24px 70px rgba(0,0,0,0.32)",
+                  padding: 16,
+                  boxSizing: "border-box",
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: 8,
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 950, fontSize: 16 }}>Add custom tuning</div>
+                    <div style={{ fontSize: 12, color: THEME.textFaint, marginTop: 2 }}>
+                      Top box = high string (e). Bottom box = low string (E).
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCustomOpen(false);
+                      setTuningOpen(true);
+                      focusKeyCapture();
+                    }}
+                    style={{ ...btnSmallPillClose }}
+                  >
+                    Close
+                  </button>
+                </div>
+
+                <div style={{ display: "grid", gap: 8, marginTop: 6 }}>
+                  <input
+                    value={customName}
+                    onChange={(e) => setCustomName(e.target.value)}
+                    placeholder="Tuning name (e.g. My Drop C)"
+                    style={{ ...field, height: 40 }}
+                  />
+
+                  <div
+                    style={{
+                      marginTop: 4,
+                      padding: 10,
+                      borderRadius: 14,
+                      border: `1px solid ${THEME.border}`,
+                      background: THEME.surfaceWarm,
+                      display: "grid",
+                      gap: 6,
+                    }}
+                  >
+                    {customAppNotes.map((note, idx) => (
+                      <div
+                        key={idx}
+                        style={{
+                          display: "flex",
+                          justifyContent: "center",
+                          alignItems: "center",
+                          gap: 10,
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: 12,
+                            color: THEME.textFaint,
+                            width: 60,
+                            textAlign: "right",
+                            fontWeight: 900,
+                          }}
+                        >
+                          String {DEFAULT_TUNING.length - idx}
+                        </div>
+                        <input
+                          value={note}
+                          onChange={(e) => setCustomAppNote(idx, e.target.value)}
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            customNoteReplaceOnTypeRef.current[idx] = true;
+                            try {
+                              e.currentTarget.focus({ preventScroll: true });
+                            } catch {
+                              e.currentTarget.focus();
+                            }
+                            try {
+                              e.currentTarget.select();
+                            } catch {}
+                          }}
+                          onFocus={(e) => {
+                            customNoteReplaceOnTypeRef.current[idx] = true;
+                            try {
+                              e.currentTarget.select();
+                            } catch {}
+                          }}
+                          onBlur={() => {
+                            customNoteReplaceOnTypeRef.current[idx] = false;
+                          }}
+                          onPaste={(e) => {
+                            e.preventDefault();
+                            const pasted = e.clipboardData?.getData("text") ?? "";
+                            const normalized = sanitizeCustomNoteValue(pasted);
+                            setCustomAppNote(idx, normalized);
+                            customNoteReplaceOnTypeRef.current[idx] = false;
+                          }}
+                          onKeyDown={(e) => {
+                            const key = String(e.key || "");
+                            if (/^[a-z]$/i.test(key)) {
+                              e.preventDefault();
+                              const upper = key.toUpperCase();
+                              const replace = customNoteReplaceOnTypeRef.current[idx];
+                              if (replace) {
+                                setCustomAppNote(idx, upper);
+                                customNoteReplaceOnTypeRef.current[idx] = false;
+                                return;
+                              }
+                              setCustomAppNote(idx, upper);
+                              return;
+                            }
+                            if (key === "Backspace" || key === "Delete") {
+                              e.preventDefault();
+                              setCustomAppNote(idx, "");
+                              customNoteReplaceOnTypeRef.current[idx] = false;
+                              return;
+                            }
+                            if (key === "Tab") return;
+                            if (key === "Enter") {
+                              e.preventDefault();
+                              e.currentTarget.blur();
+                              return;
+                            }
+                            e.preventDefault();
+                          }}
+                          placeholder={DEFAULT_TUNING[idx].toUpperCase()}
+                          inputMode="text"
+                          autoCapitalize="characters"
+                          autoCorrect="off"
+                          spellCheck={false}
+                          style={{
+                            width: cellSize,
+                            height: cellSize,
+                            borderRadius: 12,
+                            border: `1px solid ${THEME.border}`,
+                            textAlign: "center",
+                            ...pillMono,
+                            background: THEME.surfaceWarm,
+                            color: THEME.text,
+                            boxSizing: "border-box",
+                          }}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginTop: 12,
+                    gap: 8,
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      type="button"
+                      onClick={saveCustomTuning}
+                      {...pressHandlers("saveTuning")}
+                      style={{
+                        ...btnSecondary,
+                        ...pressVisual(pressedBtnId === "saveTuning"),
+                        height: 38,
+                        padding: "0 12px",
+                      }}
+                    >
+                      Save Tuning
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomOpen(false);
+                        setTuningOpen(true);
+                        focusKeyCapture();
+                      }}
+                      style={{ ...btnSecondary, height: 38, padding: "0 12px" }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                  <div style={{ fontSize: 11, color: THEME.textFaint }}>
+                    Saved custom tunings only affect your own TabStudio account.
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+        </div>
+      </div>
+    </div>
+  );
+}
