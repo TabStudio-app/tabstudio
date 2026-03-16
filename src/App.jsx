@@ -124,6 +124,7 @@ const LS_RESTORE_DRAFT_AFTER_MEMBERSHIP_KEY = "tabstudioRestoreDraftAfterMembers
 const LS_RESTORE_DRAFT_AFTER_SIGNIN_KEY = "tabstudioRestoreDraftAfterSignin";
 const LS_MEMBERSHIP_SCROLL_TO_PLANS_KEY = "tabstudioMembershipScrollToPlans";
 const SESSION_CONVERSION_SIGNUP_KEY = "tabstudioConversionSignupStateV1";
+const SESSION_FORCE_PROFILE_SETUP_AFTER_PAYMENT_KEY = "tabstudioForceProfileSetupAfterPayment";
 const LS_HEADER_TABBY_NUDGE_SHOWN_SESSION_KEY = "tabstudioHeaderTabbyNudgeShown";
 const LS_HEADER_TABBY_ENGAGED_SESSION_KEY = "tabstudioHeaderTabbyEngaged";
 const LS_MEMBERSHIP_PRICING_GUIDE_SEEN_KEY = "tabstudioMembershipPricingGuideSeen";
@@ -228,6 +229,26 @@ function clearConversionSignupState() {
   if (typeof window === "undefined") return;
   try {
     window.sessionStorage.removeItem(SESSION_CONVERSION_SIGNUP_KEY);
+  } catch {}
+}
+
+function hasForcedProfileSetupAfterPayment() {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.sessionStorage.getItem(SESSION_FORCE_PROFILE_SETUP_AFTER_PAYMENT_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function setForcedProfileSetupAfterPayment(enabled) {
+  if (typeof window === "undefined") return;
+  try {
+    if (enabled) {
+      window.sessionStorage.setItem(SESSION_FORCE_PROFILE_SETUP_AFTER_PAYMENT_KEY, "true");
+    } else {
+      window.sessionStorage.removeItem(SESSION_FORCE_PROFILE_SETUP_AFTER_PAYMENT_KEY);
+    }
   } catch {}
 }
 
@@ -375,6 +396,7 @@ function resolvePlaceholderGuardPath(targetPath, routeState) {
     planTier = "free",
     isProfileComplete = false,
     hasCheckoutIntent = false,
+    forceProfileSetupAfterPayment = false,
   } = routeState || {};
   const hasPaidTier = isPaidPlanTier(planTier);
   let guardReason = "no-redirect";
@@ -414,6 +436,9 @@ function resolvePlaceholderGuardPath(targetPath, routeState) {
     } else if (!hasPaidTier) {
       guardReason = hasCheckoutIntent ? "profile-setup-without-paid-tier-but-has-checkout-intent" : "profile-setup-no-paid-tier";
       guardedPath = hasCheckoutIntent ? "/checkout" : "/membership";
+    } else if (forceProfileSetupAfterPayment) {
+      guardReason = "profile-setup-forced-post-payment";
+      guardedPath = "/profile-setup";
     } else {
       guardReason = isProfileComplete ? "profile-setup-already-complete" : "profile-setup-allowed-incomplete";
       guardedPath = isProfileComplete ? "/editor" : "/profile-setup";
@@ -480,6 +505,7 @@ function resolvePlaceholderGuardPath(targetPath, routeState) {
     planTier,
     hasCheckoutIntent,
     isProfileComplete,
+    forceProfileSetupAfterPayment,
     returnedGuardedPath: guardedPath,
     reason: guardReason,
   });
@@ -937,6 +963,7 @@ export default function App() {
     const reusableSignupState = loadConversionSignupState();
     return hasReusableConversionSignupState(reusableSignupState) || hasStoredPlanSelection();
   }, [path, userState]);
+  const forceProfileSetupAfterPayment = useMemo(() => hasForcedProfileSetupAfterPayment(), [path, userState]);
   const guardedPath = useMemo(() => {
     if (!authReady) return path;
     return resolvePlaceholderGuardPath(path, {
@@ -945,8 +972,9 @@ export default function App() {
       planTier,
       isProfileComplete,
       hasCheckoutIntent,
+      forceProfileSetupAfterPayment,
     });
-  }, [authReady, path, isAuthenticated, hasActiveMembership, planTier, isProfileComplete, hasCheckoutIntent]);
+  }, [authReady, path, isAuthenticated, hasActiveMembership, planTier, isProfileComplete, hasCheckoutIntent, forceProfileSetupAfterPayment]);
   const routePath = guardedPath;
 
   useEffect(() => {
@@ -1224,6 +1252,7 @@ export default function App() {
           profile: nextProfile,
         }));
       });
+      setForcedProfileSetupAfterPayment(false);
       console.log("[ONBOARDING TRACE] saveProfileSetup:local-profile-written", {
         finalLocalUserStateProfileWritten: nextProfile,
       });
@@ -1253,7 +1282,7 @@ export default function App() {
     let cancelled = false;
     let timerId = null;
 
-    const finalizePostPaymentRoute = (profileRow) => {
+      const finalizePostPaymentRoute = (profileRow) => {
       const membershipState = getMembershipStateFromProfileRow(profileRow);
       const nextProfile = buildProfileDataFromRow(profileRow);
       updateUserState((prev) => ({
@@ -1262,10 +1291,11 @@ export default function App() {
         profile: nextProfile,
       }));
       clearConversionSignupState();
+      setForcedProfileSetupAfterPayment(true);
       try {
         window.localStorage.setItem(LS_RESTORE_DRAFT_AFTER_MEMBERSHIP_KEY, "true");
       } catch {}
-      navigateTo(isProfileSetupComplete(nextProfile) ? "/editor" : "/profile-setup");
+      navigateTo("/profile-setup");
     };
 
     if (hasActiveMembership) {
@@ -4422,6 +4452,7 @@ function EditorApp({ navigateTo, pendingOpenPanel = "", onPendingPanelHandled, u
     if (error) throw error;
     setSupabaseSession(null);
     setSupabaseUser(null);
+    setForcedProfileSetupAfterPayment(false);
     updateUserState((prev) => ({
       ...prev,
       authUserId: "",

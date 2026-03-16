@@ -36,14 +36,19 @@ export default function BillingPage({ shared }) {
   }, [ACCENT_PRESETS, LS_ACCENT_COLOR_KEY, isDark, themeRefresh]);
   const accent = useMemo(() => (ACCENT_PRESETS.find((preset) => preset.id === accentId) || ACCENT_PRESETS[0]).hex, [ACCENT_PRESETS, accentId]);
   const THEME = useMemo(() => ({ ...(isDark ? DARK_THEME : LIGHT_THEME), accent }), [DARK_THEME, LIGHT_THEME, accent, isDark]);
+  const normalizedPlanTier = String(userState?.planTier || userState?.planType || "").trim().toLowerCase();
+  const membershipStatus = String(userState?.membershipStatus || "").trim().toLowerCase();
+  const billingCycle = String(userState?.billingCycle || "monthly").trim().toLowerCase() === "yearly" ? "yearly" : "monthly";
   const activePlan =
-    userState?.planType === "creator"
+    membershipStatus === "active" && normalizedPlanTier === "creator"
       ? "Creator Plan"
-      : userState?.planType === "band"
+      : membershipStatus === "active" && normalizedPlanTier === "band"
         ? "Band Plan"
-        : userState?.planType === "solo"
+        : membershipStatus === "active" && normalizedPlanTier === "solo"
           ? "Solo Plan"
           : "No active plan";
+  const membershipStatusLabel = membershipStatus === "active" ? "Active" : "Free";
+  const billingCycleLabel = billingCycle === "yearly" ? "Yearly" : "Monthly";
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
@@ -78,6 +83,9 @@ export default function BillingPage({ shared }) {
           <div style={{ fontSize: 22, fontWeight: 900 }}>{activePlan}</div>
           <div style={{ fontSize: 14, color: THEME.textMuted }}>
             Account: {String(userState?.email || "").trim() || "Not set"}
+          </div>
+          <div style={{ fontSize: 14, color: THEME.textMuted }}>
+            Status: {membershipStatusLabel} {membershipStatus === "active" ? `• ${billingCycleLabel} billing` : ""}
           </div>
         </div>
         <button

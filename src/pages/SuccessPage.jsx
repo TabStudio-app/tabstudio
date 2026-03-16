@@ -8,10 +8,7 @@ export default function SuccessPage({ shared }) {
     LIGHT_THEME,
     LS_ACCENT_COLOR_KEY,
     LS_THEME_MODE_KEY,
-    onBackToEditor,
-    onGoBilling,
     selectedPlan = "solo",
-    withAlpha,
   } = shared;
 
   const [themeRefresh, setThemeRefresh] = useState(0);
@@ -75,48 +72,12 @@ export default function SuccessPage({ shared }) {
           gap: 14,
         }}
       >
-        <h1 style={{ margin: 0, fontSize: 34, lineHeight: 1.1 }}>Membership is active.</h1>
+        <h1 style={{ margin: 0, fontSize: 34, lineHeight: 1.1 }}>Finalizing your membership...</h1>
         <div style={{ color: THEME.textFaint, fontSize: 16, fontWeight: 700 }}>
-          {planMeta.label} is now enabled for this account.
+          Confirming your {planMeta.label.toLowerCase()} purchase with TabStudio.
         </div>
         <div style={{ color: THEME.textMuted, fontSize: 14 }}>
-          You can return to the editor now. If a draft tab exists, it will be restored automatically.
-        </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-          <button
-            type="button"
-            onClick={onBackToEditor}
-            style={{
-              minHeight: 44,
-              padding: "0 16px",
-              borderRadius: 10,
-              border: `1px solid ${withAlpha(THEME.accent, 0.74)}`,
-              background: withAlpha(THEME.accent, isDark ? 0.16 : 0.1),
-              color: THEME.accent,
-              fontSize: 15,
-              fontWeight: 900,
-              cursor: "pointer",
-            }}
-          >
-            Go to Editor
-          </button>
-          <button
-            type="button"
-            onClick={onGoBilling}
-            style={{
-              minHeight: 44,
-              padding: "0 16px",
-              borderRadius: 10,
-              border: `1px solid ${THEME.border}`,
-              background: THEME.surfaceWarm,
-              color: THEME.text,
-              fontSize: 15,
-              fontWeight: 800,
-              cursor: "pointer",
-            }}
-          >
-            Open Billing
-          </button>
+          Please wait while we confirm payment and route you to profile setup.
         </div>
       </div>
     </div>
