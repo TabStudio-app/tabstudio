@@ -4378,7 +4378,7 @@ function EditorApp({ navigateTo, pendingOpenPanel = "", onPendingPanelHandled, u
   }, [THEME.bg, THEME.accent, isDarkMode]);
 
   useEffect(() => {
-    document.title = "TabStudio – tab editor";
+    document.title = "TabStudio — Tabs, Simplified.";
   }, []);
 
   const [songTitle, setSongTitle] = useState("");
