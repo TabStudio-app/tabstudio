@@ -1,6 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppHeader from "../components/AppHeader";
 import { getPlanMeta } from "../features/pricing";
+import { signUp } from "../lib/auth";
+import { getProfileByEmail } from "../lib/profile";
 import { inputErrorText, inputImmersive, inputLabel } from "../utils/uiTokens";
 
 export default function SignupPage({ shared }) {
@@ -15,6 +17,7 @@ export default function SignupPage({ shared }) {
     normalizeBillingCycle,
     onBack,
     onContinue,
+    onGoSignIn,
     selectedBillingCycle = "monthly",
     selectedPlan = "solo",
     siteHeaderBarStyle,
@@ -38,6 +41,8 @@ export default function SignupPage({ shared }) {
   const [isCheckoutCtaHover, setIsCheckoutCtaHover] = useState(false);
   const [isSubmittingSignup, setIsSubmittingSignup] = useState(false);
   const [signupCardHover, setSignupCardHover] = useState(false);
+  const [emailAvailability, setEmailAvailability] = useState("idle");
+  const emailAvailabilityRequestRef = useRef(0);
 
   const getSystemThemeForSignup = useCallback(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return "light";
@@ -73,6 +78,20 @@ export default function SignupPage({ shared }) {
     const base = isSignupDarkMode ? DARK_THEME : LIGHT_THEME;
     return { ...base, accent: signupAccent };
   }, [isSignupDarkMode, signupAccent]);
+  const activeBillingCycle = normalizeBillingCycle(selectedBillingCycle);
+  const planMeta = getPlanMeta(selectedPlan);
+  const selectedPlanPriceLabel = activeBillingCycle === "yearly" ? planMeta.yearly : planMeta.monthly;
+  const cleanEmail = String(email || "").trim();
+  const hasValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail);
+  const emailErrorMessage = String(errors.email || "").trim();
+  const isDuplicateEmailError = /already exists|already registered|sign in or use a different email/i.test(emailErrorMessage);
+  const duplicateEmailMessage = "An account with this email already exists. Sign in or use a different email.";
+  const shouldShowDuplicateEmailMessage = emailAvailability === "duplicate" || isDuplicateEmailError;
+  const shouldShowEmailValidIcon = hasValidEmail && emailAvailability === "available" && !emailErrorMessage;
+  const shouldShowEmailError =
+    cleanEmail.length > 0 &&
+    !hasValidEmail &&
+    (Boolean(signupTouchedFields.email) || Boolean(errors.email));
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
@@ -83,16 +102,68 @@ export default function SignupPage({ shared }) {
     return () => window.removeEventListener("storage", onStorage);
   }, [LS_ACCENT_COLOR_KEY, LS_THEME_MODE_KEY]);
 
-  const activeBillingCycle = normalizeBillingCycle(selectedBillingCycle);
-  const planMeta = getPlanMeta(selectedPlan);
-  const selectedPlanPriceLabel = activeBillingCycle === "yearly" ? planMeta.yearly : planMeta.monthly;
-  const cleanEmail = String(email || "").trim();
-  const hasValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail);
-  const shouldShowEmailError =
-    cleanEmail.length > 0 &&
-    !hasValidEmail &&
-    (Boolean(signupTouchedFields.email) || Boolean(errors.email));
-  const shouldShowEmailValidIcon = cleanEmail.length > 0 && hasValidEmail && Boolean(signupTouchedFields.email);
+  const runEmailAvailabilityCheck = useCallback(async (candidateEmail) => {
+    const normalizedEmail = String(candidateEmail || "").trim();
+    if (!normalizedEmail) {
+      setEmailAvailability("idle");
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      setEmailAvailability("idle");
+      return;
+    }
+
+    const requestId = emailAvailabilityRequestRef.current + 1;
+    emailAvailabilityRequestRef.current = requestId;
+    setEmailAvailability("checking");
+
+    try {
+      const { data, error } = await getProfileByEmail(normalizedEmail);
+      if (emailAvailabilityRequestRef.current !== requestId) return;
+      if (error) {
+        setEmailAvailability("idle");
+        return;
+      }
+      if (data) {
+        setEmailAvailability("duplicate");
+        setErrors((prev) => ({
+          ...prev,
+          email: duplicateEmailMessage,
+        }));
+        return;
+      }
+      setEmailAvailability("available");
+      setErrors((prev) => {
+        if (!prev.email) return prev;
+        const updated = { ...prev };
+        delete updated.email;
+        return updated;
+      });
+    } catch {
+      if (emailAvailabilityRequestRef.current === requestId) {
+        setEmailAvailability("idle");
+      }
+    }
+  }, [duplicateEmailMessage]);
+
+  useEffect(() => {
+    if (!cleanEmail) {
+      setEmailAvailability("idle");
+      return undefined;
+    }
+    if (!hasValidEmail) {
+      setEmailAvailability("idle");
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(async () => {
+      await runEmailAvailabilityCheck(cleanEmail);
+    }, 400);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [cleanEmail, hasValidEmail, runEmailAvailabilityCheck]);
 
   const inputStyle = (field, overrides = {}) => ({
     ...inputImmersive({
@@ -151,6 +222,17 @@ export default function SignupPage({ shared }) {
     String(confirmPassword || "").length > 0 &&
     password === confirmPassword;
 
+  const validateEmailOnBlur = useCallback(async () => {
+    const nextMessage = !cleanEmail ? "" : hasValidEmail ? "" : "Please enter a valid email address.";
+    setErrors((prev) => ({
+      ...prev,
+      email: nextMessage,
+    }));
+    if (hasValidEmail) {
+      await runEmailAvailabilityCheck(cleanEmail);
+    }
+  }, [cleanEmail, hasValidEmail, runEmailAvailabilityCheck]);
+
   const handleContinue = async (e) => {
     e.preventDefault();
     const nextErrors = {};
@@ -164,6 +246,21 @@ export default function SignupPage({ shared }) {
     if (Object.keys(nextErrors).length) return;
     setIsSubmittingSignup(true);
     try {
+      const { error } = await signUp(cleanEmail, password);
+
+      if (error) {
+        const errorMessage = String(error?.message || "").toLowerCase();
+        const duplicateEmail =
+          errorMessage.includes("already registered") ||
+          errorMessage.includes("already been registered") ||
+          errorMessage.includes("user already registered");
+        setErrors((prev) => ({
+          ...prev,
+          email: duplicateEmail ? duplicateEmailMessage : error.message,
+        }));
+        setIsSubmittingSignup(false);
+        return;
+      }
       await onContinue?.({ email: cleanEmail, password, selectedPlan, selectedBillingCycle: activeBillingCycle });
     } catch {
       setIsSubmittingSignup(false);
@@ -319,7 +416,13 @@ export default function SignupPage({ shared }) {
                       value={email}
                       onChange={(e) => {
                         setEmail(e.target.value);
-                        if (errors.email) setErrors((prev) => ({ ...prev, email: "" }));
+                        setEmailAvailability("idle");
+                        setErrors((prev) => {
+                          if (!prev.email) return prev;
+                          const updated = { ...prev };
+                          delete updated.email;
+                          return updated;
+                        });
                       }}
                       onMouseEnter={() => setSignupHoveredField("email")}
                       onMouseLeave={() => setSignupHoveredField((prev) => (prev === "email" ? "" : prev))}
@@ -327,6 +430,7 @@ export default function SignupPage({ shared }) {
                       onBlur={() => {
                         setSignupFocusedField((prev) => (prev === "email" ? "" : prev));
                         setSignupTouchedFields((prev) => ({ ...prev, email: true }));
+                        validateEmailOnBlur();
                       }}
                       style={inputStyle("email", { paddingRight: 40 })}
                     />
@@ -359,7 +463,37 @@ export default function SignupPage({ shared }) {
                       </svg>
                     </span>
                   </div>
-                  {shouldShowEmailError || errors.email ? <div style={errorTextStyle}>Please enter a valid email address.</div> : null}
+                  {shouldShowEmailError || shouldShowDuplicateEmailMessage || emailErrorMessage ? (
+                    <div style={errorTextStyle}>
+                      {shouldShowEmailError
+                        ? "Please enter a valid email address."
+                        : shouldShowDuplicateEmailMessage
+                        ? duplicateEmailMessage
+                        : emailErrorMessage}
+                      {shouldShowDuplicateEmailMessage && onGoSignIn ? (
+                        <>
+                          {" "}
+                          <button
+                            type="button"
+                            onClick={onGoSignIn}
+                            style={{
+                              border: "none",
+                              background: "transparent",
+                              padding: 0,
+                              margin: 0,
+                              color: "#34d399",
+                              fontSize: "inherit",
+                              fontWeight: 800,
+                              cursor: "pointer",
+                              textDecoration: "underline",
+                            }}
+                          >
+                            Sign in
+                          </button>
+                        </>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
                 <div style={{ display: "grid", gap: 7 }}>
                   <label style={getLabelStyle("password")}>Password</label>

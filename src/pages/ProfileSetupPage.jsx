@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import AppHeader from "../components/AppHeader";
 import { inputErrorText, inputHintText, inputImmersive, inputLabel } from "../utils/uiTokens";
 
+const DEFAULT_GENDER_VALUE = "prefer-not-to-say";
+
 function parseStoredBirthday(value) {
   const raw = String(value || "").trim();
   if (!raw) return { day: "", month: "", year: "" };
@@ -74,12 +76,13 @@ export default function ProfileSetupPage({ shared }) {
   const [onboardingStep, setOnboardingStep] = useState(1);
   const [displayName, setDisplayName] = useState(() => String(userState?.profile?.displayName || ""));
   const [heardAbout, setHeardAbout] = useState(() => String(userState?.profile?.heardAbout || ""));
-  const [gender, setGender] = useState(() => String(userState?.profile?.gender || ""));
+  const [gender, setGender] = useState(() => String(userState?.profile?.gender || DEFAULT_GENDER_VALUE));
   const storedBirthday = useMemo(() => parseStoredBirthday(userState?.profile?.birthday), [userState]);
   const [birthDay, setBirthDay] = useState(() => storedBirthday.day);
   const [birthMonth, setBirthMonth] = useState(() => storedBirthday.month);
   const [birthYear, setBirthYear] = useState(() => storedBirthday.year);
   const [avatarDataUrl, setAvatarDataUrl] = useState(() => String(userState?.profile?.avatarDataUrl || ""));
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [favoriteInstrumentIds, setFavoriteInstrumentIds] = useState(() => {
     const existing = Array.isArray(userState?.profile?.favoriteInstrumentIds)
       ? userState.profile.favoriteInstrumentIds
@@ -248,14 +251,35 @@ export default function ProfileSetupPage({ shared }) {
     });
   }, []);
 
-  const saveAndComplete = useCallback(() => {
-    onSaveProfile?.({
+  const saveAndComplete = useCallback(async () => {
+    console.log("[ONBOARDING TRACE] ProfileSetupPage.saveAndComplete:start", {
+      onboardingStep: 3,
+      payload: {
+        displayName: String(displayName || "").trim(),
+        heardAbout: String(heardAbout || "").trim(),
+        gender: String(gender || "").trim(),
+        birthday: String(birthday || "").trim(),
+        favoriteInstrumentIds,
+        avatarDataUrl: String(avatarDataUrl || ""),
+      },
+    });
+    const result = await onSaveProfile?.({
       displayName: String(displayName || "").trim(),
       heardAbout: String(heardAbout || "").trim(),
       gender: String(gender || "").trim(),
       birthday: String(birthday || "").trim(),
       favoriteInstrumentIds,
       avatarDataUrl: String(avatarDataUrl || ""),
+    });
+    if (result?.error) {
+      console.log("[ONBOARDING TRACE] ProfileSetupPage.saveAndComplete:save-error", {
+        error: result.error,
+      });
+      return;
+    }
+    console.log("[ONBOARDING TRACE] ProfileSetupPage.saveAndComplete:save-success");
+    console.log("[ONBOARDING TRACE] ProfileSetupPage.saveAndComplete:post-save-action", {
+      actionTriggeredAfterSave: "onBackToEditor",
     });
     onBackToEditor?.();
   }, [onSaveProfile, onBackToEditor, displayName, heardAbout, gender, birthday, favoriteInstrumentIds, avatarDataUrl]);
@@ -267,14 +291,27 @@ export default function ProfileSetupPage({ shared }) {
   const canContinueStep2 = favoriteInstrumentIds.length > 0;
   const canCompleteStep3 = String(heardAbout || "").trim().length > 0;
   const canAdvance = onboardingStep === 1 ? canContinueStep1 : onboardingStep === 2 ? canContinueStep2 : canCompleteStep3;
-  const handleOnboardingPrimary = useCallback(() => {
-    if (!canAdvance) return;
+  const handleOnboardingPrimary = useCallback(async () => {
+    console.log("[ONBOARDING TRACE] ProfileSetupPage.handleOnboardingPrimary", {
+      onboardingStep,
+      canAdvance,
+      isSavingProfile,
+    });
+    if (!canAdvance || isSavingProfile) return;
     if (onboardingStep === 3) {
-      saveAndComplete();
+      setIsSavingProfile(true);
+      try {
+        console.log("[ONBOARDING TRACE] ProfileSetupPage.handleOnboardingPrimary:save-start", {
+          onboardingStep,
+        });
+        await saveAndComplete();
+      } finally {
+        setIsSavingProfile(false);
+      }
       return;
     }
     goNextStep();
-  }, [canAdvance, onboardingStep, saveAndComplete, goNextStep]);
+  }, [canAdvance, isSavingProfile, onboardingStep, saveAndComplete, goNextStep]);
   const handleLockedExit = useCallback(() => {}, []);
   return (
     <div
@@ -298,6 +335,12 @@ export default function ProfileSetupPage({ shared }) {
         position: "relative",
       }}
     >
+      <style>{`
+        @keyframes tabstudio-onboarding-dot-fade {
+          0%, 20% { opacity: 0.2; }
+          50%, 100% { opacity: 1; }
+        }
+      `}</style>
       <AppHeader
         shared={{
           isDark,
@@ -504,7 +547,7 @@ export default function ProfileSetupPage({ shared }) {
                         onBlur={() => setProfileFocusedField((prev) => (prev === "gender" ? "" : prev))}
                         style={{ ...inputStyle("gender"), paddingRight: 28 }}
                       >
-                        <option value="">Prefer not to say</option>
+                        <option value={DEFAULT_GENDER_VALUE}>Prefer not to say</option>
                         <option value="female">Female</option>
                         <option value="male">Male</option>
                         <option value="non-binary">Non-binary</option>
@@ -651,6 +694,7 @@ export default function ProfileSetupPage({ shared }) {
                 <button
                   type="button"
                   onClick={handleOnboardingPrimary}
+                  disabled={!canAdvance || isSavingProfile}
                   style={{
                     minHeight: 46,
                     borderRadius: 11,
@@ -660,11 +704,38 @@ export default function ProfileSetupPage({ shared }) {
                     fontSize: 17,
                     fontWeight: 900,
                     padding: "0 18px",
-                    cursor: canAdvance ? "pointer" : "not-allowed",
-                    opacity: canAdvance ? 1 : 0.62,
+                    cursor: canAdvance && !isSavingProfile ? "pointer" : "not-allowed",
+                    opacity: canAdvance && !isSavingProfile ? 1 : 0.62,
                   }}
                 >
-                  {onboardingStep === 3 ? "Complete Setup" : "Next step"}
+                  {onboardingStep === 3 ? (
+                    isSavingProfile ? (
+                      <span
+                        aria-live="polite"
+                        style={{ display: "inline-flex", alignItems: "baseline", justifyContent: "center", minWidth: 112 }}
+                      >
+                        <span>Completing</span>
+                        <span aria-hidden="true" style={{ display: "inline-flex", width: 18, justifyContent: "flex-start" }}>
+                          {[0, 1, 2].map((index) => (
+                            <span
+                              key={index}
+                              style={{
+                                animation: "tabstudio-onboarding-dot-fade 1.2s steps(1, end) infinite",
+                                animationDelay: `${index * 0.2}s`,
+                                opacity: 0.2,
+                              }}
+                            >
+                              .
+                            </span>
+                          ))}
+                        </span>
+                      </span>
+                    ) : (
+                      "Complete Setup"
+                    )
+                  ) : (
+                    "Next step"
+                  )}
                 </button>
               </div>
             </div>

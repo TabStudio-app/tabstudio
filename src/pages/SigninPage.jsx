@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import tabbyLight from "../assets/tabby-light-v1-transparent.png";
 import tabbyDark from "../assets/tabby-dark-v1-transparent.png";
 import AppHeader from "../components/AppHeader";
+import { signIn } from "../lib/auth";
 import { inputErrorText, inputImmersive, inputLabel } from "../utils/uiTokens";
 
 export default function SigninPage({ shared }) {
@@ -151,7 +152,7 @@ export default function SigninPage({ shared }) {
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
   };
-  const onSubmit = (e) => {
+  const onSubmit = async (e) => {
     e.preventDefault();
     if (!validate()) return;
     if (mode === "forgot") {
@@ -166,7 +167,19 @@ export default function SigninPage({ shared }) {
       }, 3600);
       return;
     }
-    onAuthSuccess?.({ email: String(email || "").trim(), mode });
+    const cleanEmail = String(email || "").trim();
+    const { error } = await signIn(cleanEmail, password);
+
+    if (error) {
+      setErrors((prev) => ({
+        ...prev,
+        form: error.message || "Unable to sign in.",
+      }));
+      return;
+    }
+
+    setErrors({});
+    onAuthSuccess?.({ email: cleanEmail, mode });
   };
 
   const headerRightContent = (
@@ -332,6 +345,7 @@ export default function SigninPage({ shared }) {
                     {errors.password ? <div style={errorTextStyle}>{errors.password}</div> : null}
                   </div>
                 ) : null}
+                {errors.form ? <div style={errorTextStyle}>{errors.form}</div> : null}
                 <button
                   type="submit"
                   onMouseEnter={() => setSigninCtaHover(true)}

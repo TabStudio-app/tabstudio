@@ -5,12 +5,14 @@ import { getPlanMeta } from "../features/pricing";
 export default function CheckoutPlaceholderPage({ shared }) {
   const {
     ACCENT_PRESETS,
+    checkoutButtonLabel = "Continue to Secure Checkout",
     DARK_THEME,
     LIGHT_THEME,
     LS_ACCENT_COLOR_KEY,
     LS_THEME_MODE_KEY,
     TABBY_ASSIST_MINT,
     TABBY_ASSIST_MINT_STRONG,
+    isCheckoutProcessing = false,
     normalizeBillingCycle,
     onActivateMembership,
     onBack,
@@ -294,6 +296,7 @@ export default function CheckoutPlaceholderPage({ shared }) {
               <button
                 type="button"
                 onClick={onActivateMembership}
+                disabled={isCheckoutProcessing}
                 onMouseEnter={() => setCheckoutActivateHover(true)}
                 onMouseLeave={() => setCheckoutActivateHover(false)}
                 onFocus={() => setCheckoutActivateHover(true)}
@@ -307,14 +310,15 @@ export default function CheckoutPlaceholderPage({ shared }) {
                   color: "#04120a",
                   fontSize: 17,
                   fontWeight: 900,
-                  cursor: "pointer",
+                  cursor: isCheckoutProcessing ? "wait" : "pointer",
+                  opacity: isCheckoutProcessing ? 0.72 : 1,
                   boxShadow: checkoutActivateHover ? `0 10px 18px ${withAlpha(TABBY_ASSIST_MINT, 0.24)}` : "none",
                   transform: checkoutActivateHover ? "translateY(-1px)" : "translateY(0)",
                   filter: checkoutActivateHover ? "brightness(1.05)" : "brightness(1)",
                   transition: "transform 0.15s ease, filter 0.15s ease, box-shadow 0.15s ease, background 0.15s ease",
                 }}
               >
-                Continue to Secure Checkout (Developer Mode)
+                {isCheckoutProcessing ? "Opening secure checkout..." : checkoutButtonLabel}
               </button>
               <button
                 type="button"

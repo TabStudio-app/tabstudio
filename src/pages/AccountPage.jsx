@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import AccountAffiliateSection from "../components/account/AccountAffiliateSection";
 import AccountBillingSection from "../components/account/AccountBillingSection";
 import AccountOverviewSection from "../components/account/AccountOverviewSection";
@@ -28,7 +28,9 @@ export default function AccountPage({ shared }) {
     toolbarMenuBtn,
     THEME,
     withAlpha,
+    onSignOut,
   } = shared;
+  const [isSigningOut, setIsSigningOut] = useState(false);
 
   const { data, actions, fieldDrafts } = useAccountViewModel(shared);
 
@@ -266,6 +268,37 @@ export default function AccountPage({ shared }) {
                 </div>
               ) : null}
             </div>
+
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (isSigningOut) return;
+                      setIsSigningOut(true);
+                      try {
+                        await onSignOut?.();
+                      } catch {
+                        // Keep the current view intact if sign out fails.
+                      } finally {
+                        setIsSigningOut(false);
+                      }
+                    }}
+              disabled={isSigningOut}
+              style={{
+                ...toolbarMenuBtn,
+                width: "100%",
+                justifyContent: "flex-start",
+                minHeight: 42,
+                background: THEME.surfaceWarm,
+                borderColor: THEME.border,
+                color: THEME.text,
+                boxShadow: "none",
+                fontWeight: 850,
+                opacity: isSigningOut ? 0.65 : 1,
+                cursor: isSigningOut ? "default" : "pointer",
+              }}
+            >
+              {isSigningOut ? "Signing out..." : "Sign out"}
+            </button>
 
             <div
               style={{

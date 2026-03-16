@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import logoLight from "./assets/15.png";
 import logoDark from "./assets/16.png";
 import heroDark from "./assets/tabstudio-hero-dark.png";
@@ -29,6 +30,10 @@ import ProfileSetupPage from "./pages/ProfileSetupPage";
 import AccountPage from "./pages/AccountPage";
 import ProjectsPage from "./pages/ProjectsPage";
 import AffiliateApplicationPage from "./pages/AffiliateApplicationPage";
+import { signOut } from "./lib/auth";
+import { createProfile, getProfile, updateProfile } from "./lib/profile";
+import { supabase } from "./lib/supabaseClient";
+import { createStripeCheckoutSession } from "./utils/stripeCheckout";
 import EditorMetadataPanel from "./components/EditorMetadataPanel";
 import EditorToolbar from "./components/EditorToolbar";
 import SettingsPanel from "./components/SettingsPanel";
@@ -244,7 +249,7 @@ function normalizeProfileData(rawProfile) {
             diagram &&
             typeof diagram.chordName === "string" &&
             Array.isArray(diagram.stringFrets) &&
-            diagram.stringFrets.length === 6
+            diagram.stringFrets.length > 0
         )
         .map((diagram) => ({
           chordName: String(diagram.chordName || ""),
@@ -281,10 +286,28 @@ function normalizeProfileData(rawProfile) {
   };
 }
 
+function normalizeBirthdayForProfileRow(rawBirthday) {
+  const raw = String(rawBirthday || "").trim();
+  if (!raw) return null;
+  const displayMatch = raw.match(/^(\d{2}) \/ (\d{2}) \/ (\d{4})$/);
+  if (displayMatch) {
+    const [, day, month, year] = displayMatch;
+    return `${year}-${month}-${day}`;
+  }
+  const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) return raw;
+  return null;
+}
+
 function normalizePlanTier(rawPlanTier) {
   const raw = String(rawPlanTier || "").trim().toLowerCase();
   if (raw === "solo" || raw === "band" || raw === "creator") return raw;
   return "free";
+}
+
+function normalizeMembershipStatus(rawStatus) {
+  const value = String(rawStatus || "").trim().toLowerCase();
+  return value === "active" ? "active" : "free";
 }
 
 function isPaidPlanTier(planTier) {
@@ -292,16 +315,47 @@ function isPaidPlanTier(planTier) {
   return normalized === "solo" || normalized === "band" || normalized === "creator";
 }
 
+function buildProfileDataFromRow(profileRow) {
+  if (!profileRow || typeof profileRow !== "object") return normalizeProfileData(null);
+  return normalizeProfileData({
+    displayName: profileRow.display_name || "",
+    gender: profileRow.gender || "",
+    birthday: profileRow.birthday || "",
+    avatarDataUrl: profileRow.avatar_url || "",
+    favoriteInstrumentIds: Array.isArray(profileRow.favourite_instruments) ? profileRow.favourite_instruments : [],
+    heardAbout: profileRow.heard_about || "",
+  });
+}
+
+function getMembershipStateFromProfileRow(profileRow) {
+  const profilePlanTier = normalizePlanTier(profileRow?.plan_tier);
+  const planTier = profileRow ? profilePlanTier : "free";
+  const membershipStatus = profileRow?.membership_status ? normalizeMembershipStatus(profileRow.membership_status) : "free";
+  const billingCycle = normalizeBillingCycle(profileRow?.billing_cycle);
+  const hasMembership = membershipStatus === "active" && isPaidPlanTier(planTier);
+  return {
+    planTier: hasMembership ? planTier : "free",
+    planType: hasMembership ? planTier : null,
+    hasMembership,
+    everHadMembership: hasMembership,
+    membershipStatus: hasMembership ? membershipStatus : "free",
+    billingCycle,
+  };
+}
+
 function isProfileSetupComplete(rawProfile) {
   const profile = normalizeProfileData(rawProfile);
-  return (
-    String(profile.displayName || "").trim().length > 0 &&
-    String(profile.gender || "").trim().length > 0 &&
-    String(profile.birthday || "").trim().length > 0 &&
-    Array.isArray(profile.favoriteInstrumentIds) &&
-    profile.favoriteInstrumentIds.length > 0 &&
-    String(profile.heardAbout || "").trim().length > 0
-  );
+  const missingFields = [];
+  if (String(profile.displayName || "").trim().length === 0) missingFields.push("displayName");
+  if (String(profile.gender || "").trim().length === 0) missingFields.push("gender");
+  if (String(profile.birthday || "").trim().length === 0) missingFields.push("birthday");
+  const result = missingFields.length === 0;
+  console.log("[ONBOARDING TRACE] isProfileSetupComplete", {
+    profile,
+    missingFields,
+    result,
+  });
+  return result;
 }
 
 function hasStoredPlanSelection() {
@@ -317,65 +371,137 @@ function resolvePlaceholderGuardPath(targetPath, routeState) {
   const path = normalizeAppPath(targetPath);
   const {
     isAuthenticated = false,
+    hasMembership = false,
     planTier = "free",
     isProfileComplete = false,
     hasCheckoutIntent = false,
   } = routeState || {};
   const hasPaidTier = isPaidPlanTier(planTier);
+  let guardReason = "no-redirect";
 
   const resolvePostSigninPath = () => {
-    if (!hasPaidTier) return hasCheckoutIntent ? "/checkout" : "/membership";
-    if (!isProfileComplete) return "/profile-setup";
+    if (!hasPaidTier) {
+      guardReason = hasCheckoutIntent ? "post-signin-no-paid-tier-with-checkout-intent" : "post-signin-no-paid-tier";
+      return hasCheckoutIntent ? "/checkout" : "/membership";
+    }
+    if (!isProfileComplete) {
+      guardReason = "post-signin-profile-incomplete";
+      return "/profile-setup";
+    }
+    guardReason = "post-signin-profile-complete";
     return "/editor";
   };
 
+  let guardedPath = path;
+
   if (path === "/signup" || path === "/signin") {
-    if (!isAuthenticated) return path;
-    return resolvePostSigninPath();
+    guardedPath = !isAuthenticated ? path : resolvePostSigninPath();
+  } else if (path === "/checkout") {
+    if (!isAuthenticated) {
+      guardReason = "checkout-requires-auth";
+      guardedPath = "/signup";
+    } else if (!hasPaidTier) {
+      guardReason = hasCheckoutIntent ? "checkout-allowed-pending-payment" : "checkout-no-intent";
+      guardedPath = hasCheckoutIntent ? "/checkout" : "/membership";
+    } else {
+      guardReason = isProfileComplete ? "checkout-paid-profile-complete" : "checkout-paid-profile-incomplete";
+      guardedPath = isProfileComplete ? "/editor" : "/profile-setup";
+    }
+  } else if (path === "/profile-setup") {
+    if (!isAuthenticated) {
+      guardReason = "profile-setup-requires-auth";
+      guardedPath = "/signup";
+    } else if (!hasPaidTier) {
+      guardReason = hasCheckoutIntent ? "profile-setup-without-paid-tier-but-has-checkout-intent" : "profile-setup-no-paid-tier";
+      guardedPath = hasCheckoutIntent ? "/checkout" : "/membership";
+    } else {
+      guardReason = isProfileComplete ? "profile-setup-already-complete" : "profile-setup-allowed-incomplete";
+      guardedPath = isProfileComplete ? "/editor" : "/profile-setup";
+    }
+  } else if (path === "/") {
+    if (!isAuthenticated) {
+      guardReason = "root-public";
+      guardedPath = "/";
+    } else if (!hasPaidTier) {
+      guardReason = "root-auth-no-paid-tier";
+      guardedPath = "/";
+    } else {
+      guardReason = isProfileComplete ? "root-paid-profile-complete" : "root-paid-profile-incomplete";
+      guardedPath = isProfileComplete ? "/editor" : "/profile-setup";
+    }
+  } else if (path === "/editor") {
+    if (!isAuthenticated) {
+      guardReason = "editor-public";
+      guardedPath = "/editor";
+    } else if (!hasPaidTier) {
+      guardReason = "editor-auth-no-paid-tier";
+      guardedPath = "/editor";
+    } else {
+      guardReason = isProfileComplete ? "editor-paid-profile-complete" : "editor-paid-profile-incomplete";
+      guardedPath = isProfileComplete ? "/editor" : "/profile-setup";
+    }
+  } else if (path === "/projects" || path === "/export") {
+    if (!isAuthenticated) {
+      guardReason = `${path}-requires-auth`;
+      guardedPath = "/editor";
+    } else if (!hasPaidTier) {
+      guardReason = `${path}-no-paid-tier`;
+      guardedPath = hasCheckoutIntent ? "/checkout" : "/membership";
+    } else if (!isProfileComplete) {
+      guardReason = `${path}-profile-incomplete`;
+      guardedPath = "/profile-setup";
+    } else {
+      guardReason = `${path}-allowed`;
+      guardedPath = path;
+    }
+  } else if (path === "/account" || path === "/account/billing") {
+    if (!isAuthenticated) {
+      guardReason = `${path}-requires-auth`;
+      guardedPath = "/editor";
+    } else if (!hasPaidTier) {
+      guardReason = `${path}-no-paid-tier`;
+      guardedPath = hasCheckoutIntent ? "/checkout" : "/membership";
+    } else if (!isProfileComplete) {
+      guardReason = `${path}-profile-incomplete`;
+      guardedPath = "/profile-setup";
+    } else {
+      guardReason = `${path}-allowed`;
+      guardedPath = path;
+    }
+  } else if (path === "/becomeanaffiliate" || path === "/becomeanaffiliate/apply") {
+    guardReason = `${path}-public`;
+    guardedPath = path;
   }
 
-  if (path === "/checkout") {
-    if (!isAuthenticated) return "/signup";
-    if (!hasPaidTier) return hasCheckoutIntent ? "/checkout" : "/membership";
-    return isProfileComplete ? "/editor" : "/profile-setup";
+  console.log("[ONBOARDING TRACE] resolvePlaceholderGuardPath", {
+    currentPath: path,
+    isAuthenticated,
+    hasMembership,
+    planTier,
+    hasCheckoutIntent,
+    isProfileComplete,
+    returnedGuardedPath: guardedPath,
+    reason: guardReason,
+  });
+
+  if (guardedPath === "/profile-setup" && path !== "/profile-setup") {
+    console.log("[ONBOARDING TRACE] redirecting-to-profile-setup", {
+      fromPath: path,
+      reason: guardReason,
+      isAuthenticated,
+      hasMembership,
+      planTier,
+      hasCheckoutIntent,
+      isProfileComplete,
+    });
   }
 
-  if (path === "/profile-setup") {
-    if (!isAuthenticated) return "/signup";
-    if (!hasPaidTier) return hasCheckoutIntent ? "/checkout" : "/membership";
-    return isProfileComplete ? "/editor" : "/profile-setup";
-  }
-
-  if (path === "/") {
-    if (!isAuthenticated) return "/";
-    if (!hasPaidTier) return "/";
-    if (!isProfileComplete) return "/profile-setup";
-    return "/editor";
-  }
-
-  if (path === "/editor") {
-    if (!isAuthenticated) return "/editor";
-    if (!hasPaidTier) return "/editor";
-    if (!isProfileComplete) return "/profile-setup";
-    return "/editor";
-  }
-
-  if (path === "/projects" || path === "/export") {
-    if (!isAuthenticated) return "/editor";
-    if (!hasPaidTier) return hasCheckoutIntent ? "/checkout" : "/membership";
-    if (!isProfileComplete) return "/profile-setup";
-    return path;
-  }
-
-  if (path === "/becomeanaffiliate" || path === "/becomeanaffiliate/apply") {
-    return path;
-  }
-
-  return path;
+  return guardedPath;
 }
 
 function normalizeUserState(rawState) {
   const base = {
+    authUserId: "",
     isLoggedIn: false,
     hasMembership: false,
     everHadMembership: false,
@@ -390,6 +516,7 @@ function normalizeUserState(rawState) {
   const hasMembership = Boolean(rawState.hasMembership || isPaidPlanTier(planTier));
   const everHadMembership = Boolean(rawState.everHadMembership || hasMembership || planType);
   return {
+    authUserId: String(rawState.authUserId || ""),
     isLoggedIn: Boolean(rawState.isLoggedIn),
     hasMembership,
     everHadMembership,
@@ -600,7 +727,12 @@ function siteHeaderPrimaryCtaStyle({ hovered = false, pressed = false } = {}) {
 
 export default function App() {
   const HELP_EDITOR_PANEL_KEY = "tabstudio_help_editor_panel_v1";
+  const enableDevCheckout = String(import.meta.env.VITE_ENABLE_DEV_CHECKOUT || "").trim().toLowerCase() === "true";
+  const [supabaseSession, setSupabaseSession] = useState(null);
+  const [supabaseUser, setSupabaseUser] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
   const [userState, setUserState] = useState(() => loadUserStateFromStorage());
+  const [isLaunchingCheckout, setIsLaunchingCheckout] = useState(false);
   const helpSupportUserEmail = String(userState?.email || "");
   const helpSupportUserId = "harry_bolton";
   const helpSupportPaidSubscriber = Boolean(isPaidPlanTier(userState?.planTier));
@@ -617,6 +749,128 @@ export default function App() {
       return "";
     }
   });
+  const updateUserState = useCallback((next) => {
+    setUserState((prev) => {
+      const normalized = normalizeUserState(typeof next === "function" ? next(prev) : next);
+      persistUserStateToStorage(normalized);
+      return normalized;
+    });
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const syncBillingCycleFromProfileRow = (profileRow) => {
+      if (typeof window === "undefined") return;
+      try {
+        window.localStorage.setItem(LS_SELECTED_BILLING_CYCLE_KEY, normalizeBillingCycle(profileRow?.billing_cycle));
+      } catch {}
+    };
+
+    const buildSessionUserState = async (session, prevState) => {
+      const nextAuthUserId = String(session?.user?.id || "");
+      const isSameAuthenticatedUser = Boolean(nextAuthUserId) && prevState?.authUserId === nextAuthUserId;
+      let profileRow = null;
+
+      if (session?.user?.id) {
+        const existing = await getProfile(session.user.id);
+        if (existing.error) {
+          console.log("[ONBOARDING TRACE] session-profile-read-failed", {
+            authUserId: session.user.id,
+            error: existing.error,
+          });
+        } else {
+          const normalizedSessionEmail = String(session.user.email || "").trim().toLowerCase();
+          profileRow = existing.data || null;
+          if (!profileRow) {
+            const createdProfile = await createProfile(session.user.id, {
+              email: normalizedSessionEmail || null,
+            });
+            if (createdProfile.error) {
+              console.log("[ONBOARDING TRACE] session-profile-create-failed", {
+                authUserId: session.user.id,
+                error: createdProfile.error,
+              });
+            } else {
+              profileRow = createdProfile.data || null;
+            }
+          } else if (normalizedSessionEmail && String(profileRow.email || "").trim().toLowerCase() !== normalizedSessionEmail) {
+            const updatedProfile = await updateProfile(session.user.id, {
+              email: normalizedSessionEmail,
+            });
+            if (updatedProfile.error) {
+              console.log("[ONBOARDING TRACE] session-profile-email-sync-failed", {
+                authUserId: session.user.id,
+                error: updatedProfile.error,
+              });
+            } else {
+              profileRow = updatedProfile.data || profileRow;
+            }
+          }
+          syncBillingCycleFromProfileRow(profileRow);
+        }
+      }
+
+      const membershipState = getMembershipStateFromProfileRow(profileRow);
+      return normalizeUserState({
+        ...prevState,
+        authUserId: nextAuthUserId,
+        isLoggedIn: Boolean(session),
+        hasMembership: session ? membershipState.hasMembership : false,
+        everHadMembership: session ? membershipState.everHadMembership : false,
+        planTier: session ? membershipState.planTier : "free",
+        planType: session ? membershipState.planType : null,
+        email: String(session?.user?.email || ""),
+        profile: session
+          ? profileRow
+            ? buildProfileDataFromRow(profileRow)
+            : isSameAuthenticatedUser
+            ? prevState?.profile
+            : normalizeProfileData(null)
+          : normalizeProfileData(null),
+      });
+    };
+
+    const loadSession = async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (!isMounted) return;
+        const session = data?.session || null;
+        setSupabaseSession(session);
+        setSupabaseUser(session?.user || null);
+        const next = await buildSessionUserState(session, loadUserStateFromStorage());
+        if (!isMounted) return;
+        setUserState(() => {
+          persistUserStateToStorage(next);
+          return next;
+        });
+      } finally {
+        if (isMounted) setAuthReady(true);
+      }
+    };
+
+    loadSession();
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!isMounted) return;
+      setSupabaseSession(session || null);
+      setSupabaseUser(session?.user || null);
+      void (async () => {
+        const next = await buildSessionUserState(session || null, loadUserStateFromStorage());
+        if (!isMounted) return;
+        setUserState(() => {
+          persistUserStateToStorage(next);
+          return next;
+        });
+        setAuthReady(true);
+      })();
+    });
+
+    return () => {
+      isMounted = false;
+      listener.subscription.unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
@@ -675,7 +929,7 @@ export default function App() {
       return "monthly";
     }
   }, [path]);
-  const isAuthenticated = Boolean(userState?.isLoggedIn);
+  const isAuthenticated = authReady ? Boolean(supabaseUser) : Boolean(userState?.isLoggedIn);
   const planTier = normalizePlanTier(userState?.planTier);
   const hasActiveMembership = isPaidPlanTier(planTier);
   const isProfileComplete = useMemo(() => isProfileSetupComplete(userState?.profile), [userState]);
@@ -683,16 +937,16 @@ export default function App() {
     const reusableSignupState = loadConversionSignupState();
     return hasReusableConversionSignupState(reusableSignupState) || hasStoredPlanSelection();
   }, [path, userState]);
-  const guardedPath = useMemo(
-    () =>
-      resolvePlaceholderGuardPath(path, {
-        isAuthenticated,
-        planTier,
-        isProfileComplete,
-        hasCheckoutIntent,
-      }),
-    [path, isAuthenticated, planTier, isProfileComplete, hasCheckoutIntent]
-  );
+  const guardedPath = useMemo(() => {
+    if (!authReady) return path;
+    return resolvePlaceholderGuardPath(path, {
+      isAuthenticated,
+      hasMembership: hasActiveMembership,
+      planTier,
+      isProfileComplete,
+      hasCheckoutIntent,
+    });
+  }, [authReady, path, isAuthenticated, hasActiveMembership, planTier, isProfileComplete, hasCheckoutIntent]);
   const routePath = guardedPath;
 
   useEffect(() => {
@@ -701,11 +955,6 @@ export default function App() {
     window.history.replaceState({}, "", guardedPath);
     setPath(guardedPath);
   }, [guardedPath, path]);
-  const updateUserState = useCallback((next) => {
-    const normalized = normalizeUserState(typeof next === "function" ? next(loadUserStateFromStorage()) : next);
-    setUserState(normalized);
-    persistUserStateToStorage(normalized);
-  }, []);
   const startMembershipSignup = useCallback(
     (planId, billingCycle = "monthly") => {
       const safePlan = normalizePlanId(planId);
@@ -714,12 +963,6 @@ export default function App() {
         window.localStorage.setItem(LS_SELECTED_PLAN_KEY, safePlan);
         window.localStorage.setItem(LS_SELECTED_BILLING_CYCLE_KEY, safeBillingCycle);
       } catch {}
-      updateUserState((prev) => ({
-        ...prev,
-        planTier: safePlan,
-        planType: safePlan,
-        everHadMembership: true,
-      }));
       const flowSignupState = loadConversionSignupState();
       if (hasReusableConversionSignupState(flowSignupState)) {
         persistConversionSignupState({
@@ -733,7 +976,7 @@ export default function App() {
       }
       navigateTo("/signup");
     },
-    [navigateTo, updateUserState]
+    [navigateTo]
   );
   const handleMembershipPlanAction = useCallback(
     (planId, billingCycle = "monthly") => {
@@ -754,16 +997,32 @@ export default function App() {
   const continueToCheckout = useCallback(
     ({ email, password, selectedPlan: planId, selectedBillingCycle: billingCycle }) => {
       const safePlan = normalizePlanId(planId);
-      updateUserState((prev) => ({
-        ...prev,
-        isLoggedIn: true,
-        hasMembership: Boolean(prev?.hasMembership || isPaidPlanTier(prev?.planTier) || safePlan),
-        planTier: safePlan,
-        planType: safePlan,
-        everHadMembership: true,
-        email: String(email || ""),
-      }));
       const safeBillingCycle = normalizeBillingCycle(billingCycle);
+      const nextPrePaymentUserState = normalizeUserState({
+        ...userState,
+        isLoggedIn: true,
+        hasMembership: false,
+        planTier: "free",
+        planType: null,
+        email: String(email || ""),
+      });
+      const postSignupGuardedRoute = resolvePlaceholderGuardPath("/checkout", {
+        isAuthenticated: true,
+        hasMembership: false,
+        planTier: nextPrePaymentUserState.planTier,
+        isProfileComplete: isProfileSetupComplete(nextPrePaymentUserState.profile),
+        hasCheckoutIntent: true,
+      });
+      console.log("[ONBOARDING TRACE] continueToCheckout:start", {
+        email: String(email || "").trim(),
+        selectedPlan: safePlan,
+        selectedBillingCycle: safeBillingCycle,
+      });
+      console.log("[ONBOARDING TRACE] continueToCheckout:post-signup-guard-route", {
+        requestedPath: "/checkout",
+        returnedGuardedRoute: postSignupGuardedRoute,
+      });
+      updateUserState(nextPrePaymentUserState);
       try {
         window.localStorage.setItem(LS_SELECTED_PLAN_KEY, safePlan);
         window.localStorage.setItem(LS_SELECTED_BILLING_CYCLE_KEY, safeBillingCycle);
@@ -776,13 +1035,71 @@ export default function App() {
         selectedBillingCycle: safeBillingCycle,
         updatedAt: Date.now(),
       });
+      console.log("[ONBOARDING TRACE] continueToCheckout:navigate", {
+        finalRoutePushed: "/checkout",
+      });
       navigateTo("/checkout");
     },
-    [navigateTo, updateUserState]
+    [navigateTo, updateUserState, userState]
   );
-  const activateMembershipDevMode = useCallback(() => {
+  const activateMembershipDevMode = useCallback(async () => {
     const plan = normalizePlanId(selectedPlan);
+    const billingCycle = normalizeBillingCycle(selectedBillingCycle);
     const existing = loadUserStateFromStorage();
+    console.log("[ONBOARDING TRACE] activateMembershipDevMode:start", {
+      currentUserStateBeforeUpdate: existing,
+      valuesBeingWritten: {
+        isLoggedIn: true,
+        hasMembership: true,
+        planTier: plan,
+        planType: plan,
+        membershipStatus: "active",
+        billingCycle,
+      },
+    });
+    let profileWriteError = null;
+    if (supabaseUser?.id) {
+      const normalizedAccountEmail = String(supabaseUser?.email || existing?.email || "").trim().toLowerCase();
+      const membershipProfileRow = {
+        email: normalizedAccountEmail || null,
+        plan_tier: plan,
+        membership_status: "active",
+        billing_cycle: billingCycle,
+      };
+      const existingProfile = await getProfile(supabaseUser.id);
+      if (existingProfile.error) {
+        profileWriteError = existingProfile.error;
+        console.log("[ONBOARDING TRACE] activateMembershipDevMode:profile-read-failed", {
+          authUserId: supabaseUser.id,
+          error: existingProfile.error,
+        });
+      } else {
+        const profileWriteResult = existingProfile.data
+          ? await updateProfile(supabaseUser.id, membershipProfileRow)
+          : await createProfile(supabaseUser.id, membershipProfileRow);
+        if (profileWriteResult.error) {
+          profileWriteError = profileWriteResult.error;
+          console.log("[ONBOARDING TRACE] activateMembershipDevMode:profile-save-failed", {
+            authUserId: supabaseUser.id,
+            error: profileWriteResult.error,
+            usedOperation: existingProfile.data ? "updateProfile" : "createProfile",
+          });
+        } else {
+          console.log("[ONBOARDING TRACE] activateMembershipDevMode:profile-save-succeeded", {
+            authUserId: supabaseUser.id,
+            usedOperation: existingProfile.data ? "updateProfile" : "createProfile",
+            persistedPlanTier: plan,
+            persistedMembershipStatus: "active",
+            persistedBillingCycle: billingCycle,
+          });
+        }
+      }
+    }
+    if (!profileWriteError && typeof window !== "undefined") {
+      try {
+        window.localStorage.setItem(LS_SELECTED_BILLING_CYCLE_KEY, billingCycle);
+      } catch {}
+    }
     const next = normalizeUserState({
       ...existing,
       isLoggedIn: true,
@@ -796,20 +1113,124 @@ export default function App() {
     try {
       window.localStorage.setItem(LS_RESTORE_DRAFT_AFTER_MEMBERSHIP_KEY, "true");
     } catch {}
+    console.log("[ONBOARDING TRACE] activateMembershipDevMode:navigate", {
+      finalRoutePushed: "/profile-setup",
+    });
     navigateTo("/profile-setup");
-  }, [navigateTo, selectedPlan]);
+  }, [navigateTo, selectedBillingCycle, selectedPlan, supabaseUser]);
+  const launchHostedStripeCheckout = useCallback(async () => {
+    const plan = normalizePlanId(selectedPlan);
+    const billingCycle = normalizeBillingCycle(selectedBillingCycle);
+    setIsLaunchingCheckout(true);
+    try {
+      const { url } = await createStripeCheckoutSession({
+        planTier: plan,
+        billingCycle,
+        successPath: "/success",
+        cancelPath: "/checkout",
+      });
+      if (typeof window !== "undefined") {
+        window.location.assign(url);
+      }
+    } catch (error) {
+      console.error("[ONBOARDING TRACE] createStripeCheckoutSession:failed", {
+        selectedPlan: plan,
+        selectedBillingCycle: billingCycle,
+        error,
+      });
+      setIsLaunchingCheckout(false);
+      if (typeof window !== "undefined") {
+        window.alert(String(error?.message || "Unable to start secure checkout."));
+      }
+    }
+  }, [selectedBillingCycle, selectedPlan]);
   const saveProfileSetup = useCallback(
-    (profilePayload) => {
+    async (profilePayload) => {
       const normalizedProfile = normalizeProfileData(profilePayload);
+      let refreshedProfile = null;
+      console.log("[ONBOARDING TRACE] saveProfileSetup:start", {
+        incomingProfilePayload: profilePayload,
+        normalizedProfilePayload: normalizedProfile,
+      });
+
+      if (supabaseUser?.id) {
+        const normalizedAccountEmail = String(supabaseUser?.email || userState?.email || "").trim().toLowerCase();
+        const profileRow = {
+          email: normalizedAccountEmail || null,
+          display_name: String(normalizedProfile.displayName || "").trim() || null,
+          gender: String(normalizedProfile.gender || "").trim() || null,
+          birthday: normalizeBirthdayForProfileRow(normalizedProfile.birthday),
+          avatar_url: String(normalizedProfile.avatarDataUrl || "").trim() || null,
+          favourite_instruments: Array.isArray(normalizedProfile.favoriteInstrumentIds)
+            ? normalizedProfile.favoriteInstrumentIds.map((id) => String(id || "").trim()).filter(Boolean)
+            : [],
+          heard_about: String(normalizedProfile.heardAbout || "").trim() || null,
+        };
+
+        const existing = await getProfile(supabaseUser.id);
+        if (existing.error) {
+          console.log("[ONBOARDING TRACE] saveProfileSetup:supabase-read-failed", {
+            error: existing.error,
+          });
+          return { error: existing.error };
+        }
+
+        const result = existing.data
+          ? await updateProfile(supabaseUser.id, profileRow)
+          : await createProfile(supabaseUser.id, profileRow);
+
+        if (result.error) {
+          console.log("[ONBOARDING TRACE] saveProfileSetup:supabase-save-failed", {
+            error: result.error,
+            usedOperation: existing.data ? "updateProfile" : "createProfile",
+          });
+          return { error: result.error };
+        }
+        console.log("[ONBOARDING TRACE] saveProfileSetup:supabase-save-succeeded", {
+          usedOperation: existing.data ? "updateProfile" : "createProfile",
+          result: result.data,
+        });
+
+        const refreshed = await getProfile(supabaseUser.id);
+        if (refreshed.error) {
+          console.log("[ONBOARDING TRACE] saveProfileSetup:supabase-refresh-failed", {
+            error: refreshed.error,
+          });
+          return { error: refreshed.error };
+        }
+        refreshedProfile = refreshed.data;
+        console.log("[ONBOARDING TRACE] saveProfileSetup:supabase-refreshed-profile", {
+          refreshedProfile,
+        });
+      }
+
       try {
         window.localStorage.setItem(LS_INSTRUMENT_FAVS_KEY, JSON.stringify(normalizedProfile.favoriteInstrumentIds || []));
       } catch {}
-      updateUserState((prev) => ({
-        ...prev,
-        profile: normalizedProfile,
-      }));
+
+      const nextProfile = refreshedProfile
+        ? normalizeProfileData({
+            ...normalizedProfile,
+            displayName: refreshedProfile.display_name || normalizedProfile.displayName,
+            gender: refreshedProfile.gender || normalizedProfile.gender,
+            birthday: refreshedProfile.birthday || normalizedProfile.birthday,
+            avatarDataUrl: refreshedProfile.avatar_url || normalizedProfile.avatarDataUrl,
+          })
+        : normalizedProfile;
+
+      flushSync(() => {
+        updateUserState((prev) => ({
+          ...prev,
+          profile: nextProfile,
+        }));
+      });
+      console.log("[ONBOARDING TRACE] saveProfileSetup:local-profile-written", {
+        finalLocalUserStateProfileWritten: nextProfile,
+      });
+
+      return { error: null };
     },
-    [updateUserState]
+    [supabaseUser, updateUserState, userState]
   );
   const completeSignin = useCallback(
     ({ email: nextEmail = "" }) => {
@@ -825,6 +1246,69 @@ export default function App() {
     },
     [navigateTo, updateUserState]
   );
+  useEffect(() => {
+    if (path !== "/success") return undefined;
+    if (!authReady || !supabaseUser?.id) return undefined;
+
+    let cancelled = false;
+    let timerId = null;
+
+    const finalizePostPaymentRoute = (profileRow) => {
+      const membershipState = getMembershipStateFromProfileRow(profileRow);
+      const nextProfile = buildProfileDataFromRow(profileRow);
+      updateUserState((prev) => ({
+        ...prev,
+        ...membershipState,
+        profile: nextProfile,
+      }));
+      clearConversionSignupState();
+      try {
+        window.localStorage.setItem(LS_RESTORE_DRAFT_AFTER_MEMBERSHIP_KEY, "true");
+      } catch {}
+      navigateTo(isProfileSetupComplete(nextProfile) ? "/editor" : "/profile-setup");
+    };
+
+    if (hasActiveMembership) {
+      finalizePostPaymentRoute({
+        plan_tier: userState?.planTier,
+        membership_status: userState?.membershipStatus,
+        billing_cycle: userState?.billingCycle,
+        display_name: userState?.profile?.displayName || null,
+        gender: userState?.profile?.gender || null,
+        birthday: userState?.profile?.birthday || null,
+        avatar_url: userState?.profile?.avatarDataUrl || null,
+        favourite_instruments: Array.isArray(userState?.profile?.favoriteInstrumentIds) ? userState.profile.favoriteInstrumentIds : [],
+        heard_about: userState?.profile?.heardAbout || null,
+      });
+      return undefined;
+    }
+
+    let attempts = 0;
+    const pollForMembership = async () => {
+      const refreshed = await getProfile(supabaseUser.id);
+      if (cancelled) return;
+      if (!refreshed.error && refreshed.data) {
+        const membershipState = getMembershipStateFromProfileRow(refreshed.data);
+        if (membershipState.hasMembership) {
+          finalizePostPaymentRoute(refreshed.data);
+          return;
+        }
+      }
+      attempts += 1;
+      if (attempts < 15 && !cancelled) {
+        timerId = window.setTimeout(() => {
+          void pollForMembership();
+        }, 1000);
+      }
+    };
+
+    void pollForMembership();
+
+    return () => {
+      cancelled = true;
+      if (timerId) window.clearTimeout(timerId);
+    };
+  }, [authReady, hasActiveMembership, navigateTo, path, supabaseUser, updateUserState, userState]);
 
   const helpTargetSection = useMemo(() => {
     if (typeof window === "undefined") return "about";
@@ -966,6 +1450,7 @@ export default function App() {
           normalizeBillingCycle,
           onBack: () => navigateTo("/editor"),
           onContinue: continueToCheckout,
+          onGoSignIn: () => navigateTo("/signin"),
           selectedBillingCycle,
           selectedPlan,
           siteHeaderBarStyle,
@@ -1030,8 +1515,10 @@ export default function App() {
           LS_THEME_MODE_KEY,
           TABBY_ASSIST_MINT,
           TABBY_ASSIST_MINT_STRONG,
+          checkoutButtonLabel: enableDevCheckout ? "Continue to Secure Checkout (Developer Mode)" : "Continue to Secure Checkout",
+          isCheckoutProcessing: isLaunchingCheckout,
           normalizeBillingCycle,
-          onActivateMembership: activateMembershipDevMode,
+          onActivateMembership: enableDevCheckout ? activateMembershipDevMode : launchHostedStripeCheckout,
           onBack: () => navigateTo("/signup"),
           onChangePlan: () => {
             try {
@@ -3930,6 +4417,25 @@ function EditorApp({ navigateTo, pendingOpenPanel = "", onPendingPanelHandled, u
     setAccountProfileOpen(false);
     navigateTo("/membership");
   }, [navigateTo]);
+  const handleAccountSignOut = useCallback(async () => {
+    const { error } = await signOut();
+    if (error) throw error;
+    setSupabaseSession(null);
+    setSupabaseUser(null);
+    updateUserState((prev) => ({
+      ...prev,
+      authUserId: "",
+      isLoggedIn: false,
+      hasMembership: false,
+      everHadMembership: false,
+      planTier: "free",
+      planType: null,
+      email: "",
+      profile: normalizeProfileData(null),
+    }));
+    setAccountProfileOpen(false);
+    navigateTo("/editor");
+  }, [navigateTo, updateUserState]);
 
   // Instruments
   const [instrumentId, setInstrumentId] = useState("gtr6");
@@ -9816,6 +10322,12 @@ function fillSelectedColumnWith(value) {
     onPendingPanelHandled?.();
   }, [pendingOpenPanel, onPendingPanelHandled, canUsePaidEditorFeatures, showMembershipGateToast]);
 
+  useEffect(() => {
+    if (isLoggedIn) return;
+    if (!accountProfileOpen) return;
+    setAccountProfileOpen(false);
+  }, [isLoggedIn, accountProfileOpen]);
+
   function toggleImageExportRow(id) {
     setImageExportRowIds((prev) => {
       const next = new Set(prev);
@@ -13569,6 +14081,7 @@ function clearSelectedCells() {
               withAlpha,
               onSaveAccountProfile: saveAccountProfile,
               onOpenMembershipPlans: openMembershipFromAccount,
+              onSignOut: handleAccountSignOut,
             }}
           />
 
