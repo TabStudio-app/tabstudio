@@ -44,8 +44,6 @@ export default function ProjectsPage({ shared }) {
   const [busyActionKey, setBusyActionKey] = useState("");
   const [dialogState, setDialogState] = useState(null);
 
-  if (!projectsLibraryOpen) return null;
-
   const denseCard = cardDense(THEME);
   const microButton = buttonMicro(THEME);
   const searchControlHeight = field.height ?? 42;
@@ -484,6 +482,8 @@ export default function ProjectsPage({ shared }) {
       </div>
     );
   }
+
+  if (!projectsLibraryOpen) return null;
 
   return (
     <div
