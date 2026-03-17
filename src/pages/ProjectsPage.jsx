@@ -1,11 +1,23 @@
-import React, { useMemo, useState } from "react";
-import { buttonMicro, buttonSecondary, cardDense, menuItem, menuItemSelected } from "../utils/uiTokens";
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  deleteProject,
+  deleteProjectsByAlbum,
+  deleteProjectsByArtist,
+  renameProjectsAlbum,
+  renameProjectsArtist,
+  updateProject,
+} from "../lib/projects";
+import { buttonMicro, cardDense, menuItem, menuItemSelected } from "../utils/uiTokens";
 
 export default function ProjectsPage({ shared }) {
   const PROJECTS_HEADER_CLEARANCE = 66;
   const PROJECTS_SECTION_GAP = 12;
+  const DELETE_WAIT_SECONDS = 10;
   const {
+    actionDeleteBtn,
+    actionEditBtn,
     btnSecondary,
+    EditIcon,
     field,
     projectsLibraryOpen,
     setProjectsLibraryOpen,
@@ -16,15 +28,21 @@ export default function ProjectsPage({ shared }) {
     setArtist,
     selectedLibraryArtistLabel,
     selectedLibraryAlbumName,
+    selectedLibrarySongName,
     currentProjectId,
     userProjects,
     projectsLoading,
     projectsLoadError,
     projectActionBusyId,
+    refreshUserProjects,
     openSupabaseProject,
     THEME,
     withAlpha,
   } = shared;
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [busyActionKey, setBusyActionKey] = useState("");
+  const [dialogState, setDialogState] = useState(null);
 
   if (!projectsLibraryOpen) return null;
 
@@ -39,7 +57,6 @@ export default function ProjectsPage({ shared }) {
     height: 38,
     fontWeight: 850,
   });
-  const [searchQuery, setSearchQuery] = useState("");
 
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
   const searchActive = normalizedSearchQuery.length > 0;
@@ -55,38 +72,45 @@ export default function ProjectsPage({ shared }) {
     [userProjects]
   );
 
-  const filteredProjects = useMemo(() => {
-    return savedProjects.filter((project) => {
-      const matchesSearch = !searchActive
-        ? true
-        : [project.artist, project.album, project.title].join(" ").toLowerCase().includes(normalizedSearchQuery);
-      if (!matchesSearch) return false;
-      if (selectedLibraryArtistLabel && project.artist !== selectedLibraryArtistLabel) return false;
-      if (selectedLibraryAlbumName && project.album !== selectedLibraryAlbumName) return false;
-      return true;
-    });
-  }, [normalizedSearchQuery, savedProjects, searchActive, selectedLibraryAlbumName, selectedLibraryArtistLabel]);
+  const searchableProjects = useMemo(
+    () =>
+      savedProjects.filter((project) =>
+        !searchActive ? true : [project.artist, project.album, project.title].join(" ").toLowerCase().includes(normalizedSearchQuery)
+      ),
+    [normalizedSearchQuery, savedProjects, searchActive]
+  );
 
-  const visibleArtists = useMemo(() => {
-    const source = searchActive ? filteredProjects : savedProjects;
-    return [...new Set(source.map((project) => project.artist).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-  }, [filteredProjects, savedProjects, searchActive]);
+  const visibleArtists = useMemo(
+    () => [...new Set(searchableProjects.map((project) => project.artist).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    [searchableProjects]
+  );
 
   const visibleAlbums = useMemo(() => {
-    const source = (searchActive ? filteredProjects : savedProjects).filter((project) =>
-      selectedLibraryArtistLabel ? project.artist === selectedLibraryArtistLabel : true
-    );
-    return [...new Set(source.map((project) => project.album).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-  }, [filteredProjects, savedProjects, searchActive, selectedLibraryArtistLabel]);
+    if (!selectedLibraryArtistLabel) return [];
+    const projectsForArtist = searchableProjects.filter((project) => project.artist === selectedLibraryArtistLabel);
+    return [...new Set(projectsForArtist.map((project) => project.album).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  }, [searchableProjects, selectedLibraryArtistLabel]);
 
   const visibleSongs = useMemo(() => {
-    const source = searchActive ? filteredProjects : savedProjects;
-    return source.filter((project) => {
+    return searchableProjects.filter((project) => {
       if (selectedLibraryArtistLabel && project.artist !== selectedLibraryArtistLabel) return false;
       if (selectedLibraryAlbumName && project.album !== selectedLibraryAlbumName) return false;
       return true;
     });
-  }, [filteredProjects, savedProjects, searchActive, selectedLibraryAlbumName, selectedLibraryArtistLabel]);
+  }, [searchableProjects, selectedLibraryAlbumName, selectedLibraryArtistLabel]);
+
+  useEffect(() => {
+    if (!dialogState || dialogState.type !== "delete" || dialogState.stage !== "countdown") return undefined;
+    const timerId = window.setTimeout(() => {
+      setDialogState((prev) => {
+        if (!prev || prev.type !== "delete" || prev.stage !== "countdown") return prev;
+        const nextRemaining = Math.max(0, Number(prev.remaining || 0) - 1);
+        if (nextRemaining <= 0) return { ...prev, stage: "armed", remaining: 0 };
+        return { ...prev, remaining: nextRemaining };
+      });
+    }, 1000);
+    return () => window.clearTimeout(timerId);
+  }, [dialogState]);
 
   function clearProjectsSelection() {
     setSelectedLibraryArtistKey("");
@@ -96,83 +120,268 @@ export default function ProjectsPage({ shared }) {
     setAlbumName("");
   }
 
+  function closeDialog() {
+    setDialogState(null);
+  }
+
+  async function withRefresh(actionKey, action) {
+    setBusyActionKey(actionKey);
+    try {
+      await action();
+      await refreshUserProjects();
+    } finally {
+      setBusyActionKey("");
+    }
+  }
+
+  function openRenameDialog(config) {
+    setDialogState({
+      type: "rename",
+      title: config.title,
+      label: config.label,
+      value: config.initialValue,
+      confirmLabel: "Save",
+      onConfirm: config.onConfirm,
+    });
+  }
+
+  function openDeleteDialog(config) {
+    setDialogState({
+      type: "delete",
+      title: config.title,
+      message: config.message,
+      stage: "idle",
+      remaining: DELETE_WAIT_SECONDS,
+      onDelete: config.onDelete,
+    });
+  }
+
+  async function submitDialog() {
+    if (!dialogState) return;
+    if (dialogState.type === "rename") {
+      const nextValue = String(dialogState.value || "").trim();
+      if (!nextValue) return;
+      const run = dialogState.onConfirm;
+      closeDialog();
+      await run(nextValue);
+      return;
+    }
+    if (dialogState.type === "delete") {
+      if (dialogState.stage === "idle") {
+        setDialogState((prev) => (prev ? { ...prev, stage: "countdown", remaining: DELETE_WAIT_SECONDS } : prev));
+        return;
+      }
+      if (dialogState.stage === "countdown") return;
+      const run = dialogState.onDelete;
+      closeDialog();
+      await run();
+    }
+  }
+
   function renderArtistRow(artistName) {
     const active = selectedLibraryArtistLabel === artistName;
+    const actionKey = `artist:${artistName}`;
     return (
-      <button
-        key={artistName}
-        type="button"
-        onClick={() => {
-          if (active) {
-            clearProjectsSelection();
-            return;
-          }
-          setSelectedLibraryArtistKey(artistName);
-          setSelectedLibraryAlbumName("");
-          setSelectedLibrarySongName("");
-          setArtist(artistName);
-          setAlbumName("");
-        }}
-        style={{
-          ...(active ? selectorRowSelectedStyle : selectorRowStyle),
-          width: "100%",
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 1fr)",
-          alignItems: "center",
-          gap: 6,
-          textAlign: "left",
-          background: active ? withAlpha(THEME.accent, 0.04) : withAlpha(THEME.text, 0.012),
-          borderColor: active ? withAlpha(THEME.accent, 0.34) : withAlpha(THEME.text, 0.1),
-          color: active ? THEME.accent : THEME.text,
-          cursor: "pointer",
-          outline: "none",
-        }}
-      >
-        <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{artistName}</span>
-      </button>
+      <div key={artistName}>
+        <div
+          style={{
+            ...(active ? selectorRowSelectedStyle : selectorRowStyle),
+            width: "100%",
+            display: "grid",
+            gridTemplateColumns: "minmax(0, 1fr) auto auto",
+            alignItems: "center",
+            gap: 6,
+            textAlign: "left",
+            background: active ? withAlpha(THEME.accent, 0.04) : withAlpha(THEME.text, 0.012),
+            borderColor: active ? withAlpha(THEME.accent, 0.34) : withAlpha(THEME.text, 0.1),
+            color: active ? THEME.accent : THEME.text,
+            outline: "none",
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              if (active) {
+                clearProjectsSelection();
+                return;
+              }
+              setSelectedLibraryArtistKey(artistName);
+              setSelectedLibraryAlbumName("");
+              setSelectedLibrarySongName("");
+              setArtist(artistName);
+              setAlbumName("");
+            }}
+            style={{
+              border: "none",
+              background: "transparent",
+              color: "inherit",
+              font: "inherit",
+              textAlign: "left",
+              padding: 0,
+              minWidth: 0,
+              cursor: "pointer",
+            }}
+          >
+            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>
+              {artistName}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              openRenameDialog({
+                title: "Rename artist",
+                label: "Artist name",
+                initialValue: artistName,
+                onConfirm: async (nextValue) => {
+                  await withRefresh(actionKey, async () => {
+                    await renameProjectsArtist(artistName, nextValue);
+                    if (selectedLibraryArtistLabel === artistName) {
+                      setSelectedLibraryArtistKey(nextValue);
+                      setArtist(nextValue);
+                    }
+                  });
+                },
+              })
+            }
+            style={{ ...actionEditBtn, height: 28, width: 28, minWidth: 28, borderRadius: 8 }}
+            title={`Edit ${artistName}`}
+            aria-label={`Edit ${artistName}`}
+          >
+            <EditIcon size={12} />
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              openDeleteDialog({
+                title: "Delete artist?",
+                message: `"${artistName}" and all albums/songs will be removed.`,
+                onDelete: async () => {
+                  await withRefresh(actionKey, async () => {
+                    await deleteProjectsByArtist(artistName);
+                    if (selectedLibraryArtistLabel === artistName) clearProjectsSelection();
+                  });
+                },
+              })
+            }
+            style={{ ...actionDeleteBtn, height: 28, width: 28, minWidth: 28, borderRadius: 8 }}
+            aria-label={`Delete ${artistName}`}
+          >
+            ×
+          </button>
+        </div>
+      </div>
     );
   }
 
   function renderAlbumRow(albumName) {
     const active = selectedLibraryAlbumName === albumName;
+    const actionKey = `album:${selectedLibraryArtistLabel}:${albumName}`;
     return (
-      <button
-        key={albumName}
-        type="button"
-        onClick={() => {
-          if (active) {
-            setSelectedLibraryAlbumName("");
-            setSelectedLibrarySongName("");
-            setAlbumName("");
-            return;
-          }
-          setSelectedLibraryAlbumName(albumName);
-          setSelectedLibrarySongName("");
-          setAlbumName(albumName);
-        }}
-        style={{
-          ...(active ? selectorRowSelectedStyle : selectorRowStyle),
-          width: "100%",
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 1fr)",
-          alignItems: "center",
-          gap: 6,
-          textAlign: "left",
-          background: active ? withAlpha(THEME.accent, 0.04) : withAlpha(THEME.text, 0.012),
-          borderColor: active ? withAlpha(THEME.accent, 0.34) : withAlpha(THEME.text, 0.1),
-          color: active ? THEME.accent : THEME.text,
-          cursor: "pointer",
-          outline: "none",
-        }}
-      >
-        <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{albumName}</span>
-      </button>
+      <div key={`${selectedLibraryArtistLabel}__${albumName}`}>
+        <div
+          style={{
+            ...(active ? selectorRowSelectedStyle : selectorRowStyle),
+            width: "100%",
+            display: "grid",
+            gridTemplateColumns: "minmax(0, 1fr) auto auto",
+            alignItems: "center",
+            gap: 6,
+            textAlign: "left",
+            background: active ? withAlpha(THEME.accent, 0.04) : withAlpha(THEME.text, 0.012),
+            borderColor: active ? withAlpha(THEME.accent, 0.34) : withAlpha(THEME.text, 0.1),
+            color: active ? THEME.accent : THEME.text,
+            outline: "none",
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              if (active) {
+                setSelectedLibraryAlbumName("");
+                setSelectedLibrarySongName("");
+                setAlbumName("");
+                return;
+              }
+              setSelectedLibraryAlbumName(albumName);
+              setSelectedLibrarySongName("");
+              setAlbumName(albumName);
+            }}
+            style={{
+              border: "none",
+              background: "transparent",
+              color: "inherit",
+              font: "inherit",
+              textAlign: "left",
+              padding: 0,
+              minWidth: 0,
+              cursor: "pointer",
+            }}
+          >
+            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>
+              {albumName}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              openRenameDialog({
+                title: "Rename album",
+                label: "Album name",
+                initialValue: albumName,
+                onConfirm: async (nextValue) => {
+                  await withRefresh(actionKey, async () => {
+                    await renameProjectsAlbum({
+                      artist: selectedLibraryArtistLabel,
+                      currentAlbum: albumName,
+                      nextAlbum: nextValue,
+                    });
+                    if (selectedLibraryAlbumName === albumName) {
+                      setSelectedLibraryAlbumName(nextValue);
+                      setAlbumName(nextValue);
+                    }
+                  });
+                },
+              })
+            }
+            style={{ ...actionEditBtn, height: 28, width: 28, minWidth: 28, borderRadius: 8 }}
+            title={`Edit ${albumName}`}
+            aria-label={`Edit ${albumName}`}
+          >
+            <EditIcon size={12} />
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              openDeleteDialog({
+                title: "Delete album?",
+                message: `"${albumName}" and all songs in it will be removed.`,
+                onDelete: async () => {
+                  await withRefresh(actionKey, async () => {
+                    await deleteProjectsByAlbum({ artist: selectedLibraryArtistLabel, album: albumName });
+                    if (selectedLibraryAlbumName === albumName) {
+                      setSelectedLibraryAlbumName("");
+                      setSelectedLibrarySongName("");
+                      setAlbumName("");
+                    }
+                  });
+                },
+              })
+            }
+            style={{ ...actionDeleteBtn, height: 28, width: 28, minWidth: 28, borderRadius: 8 }}
+            aria-label={`Delete ${albumName}`}
+          >
+            ×
+          </button>
+        </div>
+      </div>
     );
   }
 
   function renderSongRow(project) {
     const active = String(currentProjectId || "") === String(project.id || "");
-    const busy = String(projectActionBusyId || "") === String(project.id || "");
+    const openBusy = String(projectActionBusyId || "") === String(project.id || "");
+    const editBusy = busyActionKey === `song:${project.id}`;
     return (
       <div key={project.id || `${project.artist}__${project.album}__${project.title}`}>
         <div
@@ -180,7 +389,7 @@ export default function ProjectsPage({ shared }) {
             ...(active ? selectorRowSelectedStyle : selectorRowStyle),
             width: "100%",
             display: "grid",
-            gridTemplateColumns: "minmax(0, 1fr) auto",
+            gridTemplateColumns: "minmax(0, 1fr) auto auto auto",
             alignItems: "center",
             gap: 6,
             textAlign: "left",
@@ -199,10 +408,57 @@ export default function ProjectsPage({ shared }) {
               setSelectedLibrarySongName(project.title || "");
               void openSupabaseProject(project.id);
             }}
-            disabled={busy}
+            disabled={openBusy}
             style={{ ...btnSecondary, height: 28, padding: "0 9px", fontSize: 11, borderRadius: 8 }}
           >
-            {busy ? "Opening..." : "Open"}
+            {openBusy ? "Opening..." : "Open"}
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              openRenameDialog({
+                title: "Rename song",
+                label: "Song name",
+                initialValue: project.title || "",
+                onConfirm: async (nextValue) => {
+                  await withRefresh(`song:${project.id}`, async () => {
+                    await updateProject(project.id, {
+                      title: nextValue,
+                      artist: project.artist,
+                      album: project.album,
+                      projectData: project.project_data || {},
+                    });
+                    if (selectedLibrarySongName === project.title) setSelectedLibrarySongName(nextValue);
+                  });
+                },
+              })
+            }
+            disabled={editBusy}
+            style={{ ...actionEditBtn, height: 28, width: 28, minWidth: 28, borderRadius: 8 }}
+            title={`Edit ${project.title || "song"}`}
+            aria-label={`Edit ${project.title || "song"}`}
+          >
+            <EditIcon size={12} />
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              openDeleteDialog({
+                title: "Delete song?",
+                message: `"${project.title || "This song"}" will be removed. This action cannot be undone.`,
+                onDelete: async () => {
+                  await withRefresh(`song:${project.id}`, async () => {
+                    await deleteProject(project.id);
+                    if (selectedLibrarySongName === project.title) setSelectedLibrarySongName("");
+                  });
+                },
+              })
+            }
+            disabled={editBusy}
+            style={{ ...actionDeleteBtn, height: 28, width: 28, minWidth: 28, borderRadius: 8 }}
+            aria-label={`Delete ${project.title || "song"}`}
+          >
+            ×
           </button>
         </div>
       </div>
@@ -307,13 +563,11 @@ export default function ProjectsPage({ shared }) {
             <div style={{ display: "grid", gap: 6 }}>
               {projectsLoading ? (
                 <div style={{ fontSize: 13, color: THEME.textFaint, padding: "8px 4px" }}>Loading albums...</div>
+              ) : !selectedLibraryArtistLabel ? (
+                <div style={{ fontSize: 13, color: THEME.textFaint, padding: "8px 4px" }}>Select an artist to browse albums.</div>
               ) : visibleAlbums.length === 0 ? (
                 <div style={{ fontSize: 13, color: THEME.textFaint, padding: "8px 4px" }}>
-                  {selectedLibraryArtistLabel
-                    ? "No albums found for this artist."
-                    : searchActive
-                    ? "No matching albums."
-                    : "No saved albums yet."}
+                  {searchActive ? "No matching albums." : "No albums found for this artist yet."}
                 </div>
               ) : (
                 visibleAlbums.map((albumName) => renderAlbumRow(albumName))
@@ -330,7 +584,7 @@ export default function ProjectsPage({ shared }) {
                 <div style={{ fontSize: 13, color: THEME.textFaint, padding: "8px 4px" }}>Loading songs...</div>
               ) : visibleSongs.length === 0 ? (
                 <div style={{ fontSize: 13, color: THEME.textFaint, padding: "8px 4px" }}>
-                  {searchActive ? "No matching songs." : "No saved songs yet."}
+                  {searchActive ? "No matching songs." : "Select an artist or album to browse songs."}
                 </div>
               ) : (
                 visibleSongs.map((project) => renderSongRow(project))
@@ -339,6 +593,97 @@ export default function ProjectsPage({ shared }) {
           </div>
         </div>
       </div>
+
+      {dialogState && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.35)",
+            zIndex: 5100,
+            display: "grid",
+            placeItems: "center",
+            padding: 16,
+          }}
+          onPointerDown={(e) => {
+            if (e.target === e.currentTarget) closeDialog();
+          }}
+        >
+          <div
+            style={{
+              width: "min(460px, calc(100vw - 32px))",
+              borderRadius: 22,
+              border: `1px solid ${THEME.border}`,
+              background: THEME.surface,
+              color: THEME.text,
+              boxShadow: "0 24px 64px rgba(0,0,0,0.28)",
+              padding: 18,
+              boxSizing: "border-box",
+              display: "grid",
+              gap: 12,
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <div style={{ fontSize: 20, fontWeight: 950, color: THEME.text }}>{dialogState.title}</div>
+              <button type="button" onClick={closeDialog} style={{ ...microButton }}>
+                Close
+              </button>
+            </div>
+
+            {dialogState.type === "rename" ? (
+              <>
+                <label style={{ fontSize: 12, fontWeight: 800, color: THEME.textFaint }}>{dialogState.label}</label>
+                <input
+                  autoFocus
+                  value={dialogState.value}
+                  onChange={(e) => setDialogState((prev) => (prev ? { ...prev, value: e.target.value } : prev))}
+                  style={{ ...field, fontWeight: 800 }}
+                />
+              </>
+            ) : (
+              <div style={{ fontSize: 14, color: THEME.textFaint, lineHeight: 1.5 }}>
+                {dialogState.message}
+                {dialogState.stage === "countdown" ? ` Delete unlocks in ${dialogState.remaining}s. You can still cancel.` : ""}
+              </div>
+            )}
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button type="button" onClick={closeDialog} style={{ ...btnSecondary, height: 36, padding: "0 12px" }}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void submitDialog();
+                }}
+                disabled={dialogState.type === "delete" && dialogState.stage === "countdown"}
+                style={{
+                  ...btnSecondary,
+                  height: 36,
+                  padding: "0 12px",
+                  borderColor:
+                    dialogState.type === "delete" ? withAlpha(THEME.danger, 0.28) : withAlpha(THEME.accent, 0.28),
+                  color: dialogState.type === "delete" ? THEME.danger : THEME.text,
+                  background:
+                    dialogState.type === "delete"
+                      ? withAlpha(THEME.danger, 0.08)
+                      : withAlpha(THEME.accent, 0.08),
+                  cursor: dialogState.type === "delete" && dialogState.stage === "countdown" ? "default" : "pointer",
+                }}
+              >
+                {dialogState.type === "rename"
+                  ? dialogState.confirmLabel
+                  : dialogState.stage === "idle"
+                  ? "Delete"
+                  : dialogState.stage === "countdown"
+                  ? `Delete (${dialogState.remaining})`
+                  : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
