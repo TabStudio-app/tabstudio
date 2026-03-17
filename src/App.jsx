@@ -31,6 +31,7 @@ import AccountPage from "./pages/AccountPage";
 import ProjectsPage from "./pages/ProjectsPage";
 import AffiliateApplicationPage from "./pages/AffiliateApplicationPage";
 import { signOut } from "./lib/auth";
+import { createProject, getProjectById, getUserProjects, updateProject } from "./lib/projects";
 import { createProfile, getProfile, updateProfile } from "./lib/profile";
 import { supabase } from "./lib/supabaseClient";
 import { createStripeCheckoutSession } from "./utils/stripeCheckout";
@@ -1275,14 +1276,8 @@ export default function App() {
     },
     [navigateTo, updateUserState]
   );
-  useEffect(() => {
-    if (path !== "/success") return undefined;
-    if (!authReady || !supabaseUser?.id) return undefined;
-
-    let cancelled = false;
-    let timerId = null;
-
-      const finalizePostPaymentRoute = (profileRow) => {
+  const finalizePostPaymentRoute = useCallback(
+    (profileRow) => {
       const membershipState = getMembershipStateFromProfileRow(profileRow);
       const nextProfile = buildProfileDataFromRow(profileRow);
       updateUserState((prev) => ({
@@ -1296,49 +1291,9 @@ export default function App() {
         window.localStorage.setItem(LS_RESTORE_DRAFT_AFTER_MEMBERSHIP_KEY, "true");
       } catch {}
       navigateTo("/profile-setup");
-    };
-
-    if (hasActiveMembership) {
-      finalizePostPaymentRoute({
-        plan_tier: userState?.planTier,
-        membership_status: userState?.membershipStatus,
-        billing_cycle: userState?.billingCycle,
-        display_name: userState?.profile?.displayName || null,
-        gender: userState?.profile?.gender || null,
-        birthday: userState?.profile?.birthday || null,
-        avatar_url: userState?.profile?.avatarDataUrl || null,
-        favourite_instruments: Array.isArray(userState?.profile?.favoriteInstrumentIds) ? userState.profile.favoriteInstrumentIds : [],
-        heard_about: userState?.profile?.heardAbout || null,
-      });
-      return undefined;
-    }
-
-    let attempts = 0;
-    const pollForMembership = async () => {
-      const refreshed = await getProfile(supabaseUser.id);
-      if (cancelled) return;
-      if (!refreshed.error && refreshed.data) {
-        const membershipState = getMembershipStateFromProfileRow(refreshed.data);
-        if (membershipState.hasMembership) {
-          finalizePostPaymentRoute(refreshed.data);
-          return;
-        }
-      }
-      attempts += 1;
-      if (attempts < 15 && !cancelled) {
-        timerId = window.setTimeout(() => {
-          void pollForMembership();
-        }, 1000);
-      }
-    };
-
-    void pollForMembership();
-
-    return () => {
-      cancelled = true;
-      if (timerId) window.clearTimeout(timerId);
-    };
-  }, [authReady, hasActiveMembership, navigateTo, path, supabaseUser, updateUserState, userState]);
+    },
+    [navigateTo, updateUserState]
+  );
 
   const helpTargetSection = useMemo(() => {
     if (typeof window === "undefined") return "about";
@@ -1618,8 +1573,7 @@ export default function App() {
           LIGHT_THEME,
           LS_ACCENT_COLOR_KEY,
           LS_THEME_MODE_KEY,
-          onBackToEditor: () => navigateTo("/editor"),
-          onGoBilling: () => navigateTo("/billing"),
+          onMembershipActivated: finalizePostPaymentRoute,
           selectedPlan,
           withAlpha,
         }}
@@ -5326,6 +5280,11 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
   const [selectedLibrarySongName, setSelectedLibrarySongName] = useState("");
   const [currentLoadedSongId, setCurrentLoadedSongId] = useState("");
   const [currentLoadedSongPath, setCurrentLoadedSongPath] = useState(null);
+  const [currentProjectId, setCurrentProjectId] = useState("");
+  const [userProjects, setUserProjects] = useState([]);
+  const [projectsLoading, setProjectsLoading] = useState(false);
+  const [projectsLoadError, setProjectsLoadError] = useState("");
+  const [projectActionBusyId, setProjectActionBusyId] = useState("");
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [shortcutsShowBoth, setShortcutsShowBoth] = useState(false);
   const [shortcutsCategoryFilter, setShortcutsCategoryFilter] = useState("all");
@@ -5510,10 +5469,81 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
     return nextLibrary.artists[targetArtistName].albums;
   }
 
+  const refreshUserProjects = useCallback(async () => {
+    if (!isLoggedIn) {
+      setUserProjects([]);
+      setProjectsLoadError("");
+      return [];
+    }
+
+    setProjectsLoading(true);
+    setProjectsLoadError("");
+    try {
+      const projects = await getUserProjects();
+      setUserProjects(Array.isArray(projects) ? projects : []);
+      return Array.isArray(projects) ? projects : [];
+    } catch (error) {
+      const message = String(error?.message || "Unable to load your projects.");
+      setProjectsLoadError(message);
+      return [];
+    } finally {
+      setProjectsLoading(false);
+    }
+  }, [isLoggedIn]);
+
+  useEffect(() => {
+    if (!isLoggedIn) {
+      setCurrentProjectId("");
+      setUserProjects([]);
+      setProjectsLoadError("");
+      setProjectsLoading(false);
+      return;
+    }
+    void refreshUserProjects();
+  }, [isLoggedIn, refreshUserProjects]);
+
+  async function openSupabaseProject(projectId) {
+    const id = String(projectId || "").trim();
+    if (!id) return;
+    if (!confirmDiscardUnflushedEditorChanges()) return;
+
+    setProjectActionBusyId(id);
+    setProjectsLoadError("");
+    try {
+      const project = await getProjectById(id);
+      const snapshot =
+        project?.project_data && typeof project.project_data === "object"
+          ? { ...project.project_data, songName: project.title || project.project_data.songName || "" }
+          : {
+              songName: project?.title || "",
+              artistName: project?.artist || "",
+              albumName: project?.album || "",
+            };
+
+      applyProjectSnapshot(snapshot);
+      setSongTitle(String(project?.title || snapshot.songName || ""));
+      setArtist(String(project?.artist || snapshot.artistName || ""));
+      setAlbumName(String(project?.album || snapshot.albumName || ""));
+      setCurrentProjectId(String(project?.id || ""));
+      setProjectsLibraryOpen(false);
+      setCurrentLoadedSongId("");
+      setCurrentLoadedSongPath(null);
+      await refreshUserProjects();
+    } catch (error) {
+      setProjectsLoadError(String(error?.message || "Unable to open this project."));
+    } finally {
+      setProjectActionBusyId("");
+    }
+  }
+
   const flushProjectSave = useCallback(
-    ({ manual = false } = {}) => {
+    async ({ manual = false } = {}) => {
       if (!canSaveTabs) {
         if (manual) showMembershipGateToast("save");
+        return false;
+      }
+      if (!isLoggedIn) {
+        if (manual) navigateTo("/signin");
         return false;
       }
       if (autosaveTimerRef.current) {
@@ -5529,140 +5559,79 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
 
       const targetArtistName = String(artist || "").trim() || "Unsorted";
       const targetAlbumName = String(albumName || "").trim() || NO_ALBUM_NAME;
-      const loadedSongLocation = findSongLocationById(libraryData, currentLoadedSongId);
-      const loadedSongSnapshot =
-        loadedSongLocation?.snapshot ||
-        (currentLoadedSongPath?.artistName && currentLoadedSongPath?.albumName && currentLoadedSongPath?.songName
-          ? currentLoadedSongPath.artistName === "Unsorted"
-            ? libraryData?.unsorted?.albums?.[currentLoadedSongPath.albumName]?.songs?.[currentLoadedSongPath.songName]
-            : libraryData?.artists?.[currentLoadedSongPath.artistName]?.albums?.[currentLoadedSongPath.albumName]?.songs?.[
-                currentLoadedSongPath.songName
-              ]
-          : null);
-      const existingSongSnapshot =
-        targetArtistName === "Unsorted"
-          ? libraryData?.unsorted?.albums?.[targetAlbumName]?.songs?.[cleanSongName]
-          : libraryData?.artists?.[targetArtistName]?.albums?.[targetAlbumName]?.songs?.[cleanSongName];
-      const isUpdatingLoadedSong = Boolean(loadedSongSnapshot);
-      const isCreatingNewSong = !isUpdatingLoadedSong && !existingSongSnapshot;
-      const currentSavedTabsCount = countTabsInLibraryData(libraryData);
-      if (isCreatingNewSong && currentSavedTabsCount >= maxSavedTabs) {
-        if (manual) {
-          setSaveSoonNotice(
-            Number.isFinite(maxSavedTabs)
-              ? `You have reached your ${maxSavedTabs} saved tab limit for this plan.`
-              : "Unable to save this tab right now."
-          );
-          showMembershipGateToast("save-limit");
-        }
-        setEditorSaveStatus("Unsaved changes");
-        return false;
-      }
 
       clearEditorSaveStatusTimers();
       setEditorSaveStatus("Saving...");
-      const nowIso = new Date().toISOString();
       const snapshot = buildCurrentProjectSnapshot();
-      const resolvedSongId =
-        String(currentLoadedSongId || "").trim() ||
-        String(loadedSongSnapshot?.songId || existingSongSnapshot?.songId || createSongId());
-      snapshot.songId = resolvedSongId;
       snapshot.songName = cleanSongName;
       snapshot.artistName = targetArtistName;
       snapshot.albumName = targetAlbumName;
-      snapshot.updatedAt = nowIso;
 
-      let isNewSong = false;
-      let tabsCreatedTotal = 0;
+      try {
+        const projectRecord = currentProjectId
+          ? await updateProject(currentProjectId, {
+              title: cleanSongName,
+              artist: targetArtistName === "Unsorted" ? "" : targetArtistName,
+              album: targetAlbumName === NO_ALBUM_NAME ? "" : targetAlbumName,
+              projectData: snapshot,
+            })
+          : await createProject({
+              title: cleanSongName,
+              artist: targetArtistName === "Unsorted" ? "" : targetArtistName,
+              album: targetAlbumName === NO_ALBUM_NAME ? "" : targetAlbumName,
+              projectData: snapshot,
+            });
 
-      setLibraryData((prev) => {
-        const next = normalizeLibraryData(cloneJson(prev, makeEmptyLibrary()));
-        const sourceLocation = findSongLocationById(next, resolvedSongId);
-        const sourceArtistName = String(sourceLocation?.artistName || currentLoadedSongPath?.artistName || "").trim();
-        const sourceAlbumName = String(sourceLocation?.albumName || currentLoadedSongPath?.albumName || "").trim();
-        const sourceSongName = String(sourceLocation?.songName || currentLoadedSongPath?.songName || "").trim();
-        const sourceAlbums =
-          sourceArtistName === "Unsorted" ? next?.unsorted?.albums || {} : next?.artists?.[sourceArtistName]?.albums || {};
-        const sourceSongs = sourceAlbums?.[sourceAlbumName]?.songs || {};
-        const sourceExisting =
-          sourceLocation?.snapshot || (sourceArtistName && sourceAlbumName && sourceSongName ? sourceSongs?.[sourceSongName] || null : null);
-        const albums = ensureArtistBucket(next, targetArtistName);
-        if (!albums[targetAlbumName] || typeof albums[targetAlbumName] !== "object") {
-          albums[targetAlbumName] = { songs: {} };
-        }
-        if (!albums[targetAlbumName].songs || typeof albums[targetAlbumName].songs !== "object") {
-          albums[targetAlbumName].songs = {};
-        }
-        const existing = albums[targetAlbumName].songs[cleanSongName];
-        snapshot.createdAt = String(existing?.createdAt || sourceExisting?.createdAt || nowIso);
-        if (!existing && !sourceExisting) isNewSong = true;
-        albums[targetAlbumName].songs[cleanSongName] = snapshot;
-        if (
-          sourceExisting &&
-          (sourceArtistName !== targetArtistName || sourceAlbumName !== targetAlbumName || sourceSongName !== cleanSongName)
-        ) {
-          delete sourceSongs[sourceSongName];
-        }
-        tabsCreatedTotal = countTabsInLibraryData(next);
-        return next;
-      });
-
-      setCurrentLoadedSongPath({
-        artistName: targetArtistName,
-        albumName: targetAlbumName,
-        songName: cleanSongName,
-      });
-      setCurrentLoadedSongId(resolvedSongId);
-      setSelectedLibraryArtistKey(targetArtistName === "Unsorted" ? "" : targetArtistName);
-      setSelectedLibraryAlbumName(targetAlbumName);
-      setSelectedLibrarySongName(cleanSongName);
-      lastFlushedProjectSignatureRef.current = projectSnapshotSignature(snapshot);
-      if (manual) {
-        setEditorSaveStatus("Saved");
-        editorSaveStatusTimerRef.current = window.setTimeout(() => {
-          showTransientEditorSaveStatus("Saved", 1800);
-          editorSaveStatusTimerRef.current = null;
-        }, 1200);
-      } else {
-        showTransientEditorSaveStatus("Saved", 1800);
-      }
-
-      if (isNewSong && TABS_CREATED_MILESTONES.includes(tabsCreatedTotal) && !tabsMilestonesTriggered.includes(tabsCreatedTotal)) {
-        setTabsMilestonesTriggered((prev) => {
-          const next = [...new Set([...(prev || []), tabsCreatedTotal])].sort((a, b) => a - b);
-          return next;
+        setCurrentProjectId(String(projectRecord?.id || ""));
+        setUserProjects((prev) => {
+          const next = Array.isArray(prev) ? prev.filter((item) => item?.id !== projectRecord?.id) : [];
+          return [projectRecord, ...next].sort(
+            (a, b) => new Date(b?.updated_at || 0).getTime() - new Date(a?.updated_at || 0).getTime()
+          );
         });
-        triggerTabsCreatedMilestone(tabsCreatedTotal);
+        lastFlushedProjectSignatureRef.current = projectSnapshotSignature(snapshot);
+        if (manual) {
+          setEditorSaveStatus("Saved");
+          editorSaveStatusTimerRef.current = window.setTimeout(() => {
+            showTransientEditorSaveStatus("Saved", 1800);
+            editorSaveStatusTimerRef.current = null;
+          }, 1200);
+        } else {
+          showTransientEditorSaveStatus("Saved", 1800);
+        }
+        if (manual) setSaveSoonNotice(`Saved: ${cleanSongName}`);
+        return true;
+      } catch (error) {
+        const message = String(error?.message || "Unable to save this project.");
+        clearEditorSaveStatusTimers();
+        setEditorSaveStatus("Unsaved changes");
+        if (manual) setSaveSoonNotice(message);
+        return false;
       }
-
-      if (manual) setSaveSoonNotice(`Saved: ${targetArtistName} / ${targetAlbumName} / ${cleanSongName}`);
-      return true;
     },
     [
+      canSaveTabs,
+      currentProjectId,
+      isLoggedIn,
+      navigateTo,
       albumName,
       artist,
-      canSaveTabs,
-      currentLoadedSongId,
-      currentLoadedSongPath,
-      libraryData,
-      maxSavedTabs,
-      capoEnabled,
-      capoFret,
-      chordName,
-      cols,
-      completedRows,
-      grid,
-      instrumentId,
-      lastAppliedChordId,
       showMembershipGateToast,
-      showCapoControl,
-      showTempoControl,
-      selectedChordId,
       songTitle,
-      tabsMilestonesTriggered,
-      tempoBpm,
+      instrumentId,
       tuning,
       tuningLabel,
+      cols,
+      grid,
+      capoEnabled,
+      capoFret,
+      showCapoControl,
+      showTempoControl,
+      tempoBpm,
+      completedRows,
+      chordName,
+      selectedChordId,
+      lastAppliedChordId,
     ]
   );
 
@@ -5692,7 +5661,7 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
         window.clearTimeout(autosaveTimerRef.current);
         autosaveTimerRef.current = null;
       }
-      if (editorSaveStatus === "Saving..." || editorSaveStatus === "Unsaved changes") {
+      if (editorSaveStatus === "Unsaved changes") {
         setEditorSaveStatus("");
       }
       return;
@@ -5703,18 +5672,8 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
       return;
     }
     clearEditorSaveStatusTimers();
-    setEditorSaveStatus("Saving...");
-    if (autosaveTimerRef.current) window.clearTimeout(autosaveTimerRef.current);
-    autosaveTimerRef.current = window.setTimeout(() => {
-      flushProjectSave({ manual: false });
-    }, 800);
-    return () => {
-      if (autosaveTimerRef.current) {
-        window.clearTimeout(autosaveTimerRef.current);
-        autosaveTimerRef.current = null;
-      }
-    };
-  }, [canSaveTabs, currentProjectSignature, editorSaveStatus, flushProjectSave, hasUnflushedEditorChanges, songTitle]);
+    setEditorSaveStatus("Unsaved changes");
+  }, [canSaveTabs, currentProjectSignature, editorSaveStatus, hasUnflushedEditorChanges, songTitle]);
 
   useEffect(() => {
     return () => {
@@ -5762,6 +5721,7 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
     setSelectedLibraryArtistKey("");
     setSelectedLibraryAlbumName("");
     setSelectedLibrarySongName("");
+    void refreshUserProjects();
     setProjectsLibraryOpen(true);
   }
 
@@ -5779,6 +5739,7 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
     setSelectedLibrarySongName(song);
     setCurrentLoadedSongId(String(snapshot.songId || ""));
     setCurrentLoadedSongPath({ artistName, albumName: album, songName: song });
+    setCurrentProjectId("");
     applyProjectSnapshot(snapshot);
     setProjectsLibraryOpen(false);
   }
@@ -6391,6 +6352,7 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
       albumName: targetAlbumName,
       songName: name,
     });
+    setCurrentProjectId("");
     setSongTitle(name);
     setArtist(targetArtistName === "Unsorted" ? "" : targetArtistName);
     setAlbumName(targetAlbumName === NO_ALBUM_NAME ? "" : targetAlbumName);
@@ -14152,6 +14114,13 @@ function clearSelectedCells() {
               renameLibraryArtist,
               renameLibrarySong,
               requestDeleteLibrarySong,
+              userProjects,
+              projectsLoading,
+              projectsLoadError,
+              projectActionBusyId,
+              refreshUserProjects,
+              openSupabaseProject,
+              currentProjectId,
               selectedLibraryAlbumName,
               selectedLibraryAlbums,
               selectedLibraryArtistLabel,

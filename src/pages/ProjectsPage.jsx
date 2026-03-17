@@ -39,6 +39,13 @@ export default function ProjectsPage({ shared }) {
     renameLibraryArtist,
     renameLibrarySong,
     requestDeleteLibrarySong,
+    userProjects,
+    projectsLoading,
+    projectsLoadError,
+    projectActionBusyId,
+    refreshUserProjects,
+    openSupabaseProject,
+    currentProjectId,
     selectedLibraryAlbumName,
     selectedLibraryAlbums,
     selectedLibraryArtistLabel,
@@ -192,10 +199,36 @@ export default function ProjectsPage({ shared }) {
   const filteredUnassignedSongs = searchActive
     ? unassignedSongs.filter((songEntry) => relatedSongKeys.has(songEntry.key))
     : unassignedSongs;
+  const filteredSavedProjects = Array.isArray(userProjects)
+    ? userProjects.filter((project) => {
+        if (!searchActive) return true;
+        const haystack = [
+          String(project?.title || ""),
+          String(project?.artist || ""),
+          String(project?.album || ""),
+        ]
+          .join(" ")
+          .toLowerCase();
+        return haystack.includes(normalizedSearchQuery);
+      })
+    : [];
   const showUnassignedAlbumsContent = searchActive || unassignedAlbumsOpen;
   const showUnassignedSongsContent = searchActive || unassignedSongsOpen;
   const hasUnassignedAlbums = unassignedAlbums.length > 0;
   const hasUnassignedSongs = unassignedSongs.length > 0;
+
+  function formatProjectUpdatedAt(value) {
+    if (!value) return "Just now";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "Just now";
+    return new Intl.DateTimeFormat(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(date);
+  }
 
   function beginLibraryDrag(item, e) {
     setDragItem(item);
@@ -573,7 +606,7 @@ export default function ProjectsPage({ shared }) {
           padding: `${PROJECTS_HEADER_CLEARANCE + PROJECTS_SECTION_GAP}px 18px 18px`,
           boxSizing: "border-box",
           display: "grid",
-          gridTemplateRows: `${searchControlHeight}px minmax(0, 1fr)`,
+          gridTemplateRows: `${searchControlHeight}px auto minmax(0, 1fr)`,
           gap: PROJECTS_SECTION_GAP,
         }}
         onPointerDown={(e) => e.stopPropagation()}
@@ -608,8 +641,8 @@ export default function ProjectsPage({ shared }) {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search artists, albums, or songs..."
-              aria-label="Search artists, albums, or songs"
+              placeholder="Search projects, artists, albums, or songs..."
+              aria-label="Search projects, artists, albums, or songs"
               style={{ ...field, fontWeight: 800, paddingLeft: 36 }}
             />
           </div>
@@ -620,6 +653,99 @@ export default function ProjectsPage({ shared }) {
           >
             Close
           </button>
+        </div>
+
+        <div style={{ ...denseCard, display: "grid", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontSize: 13, color: THEME.textFaint, fontWeight: 900 }}>Saved Projects</div>
+              <div style={{ fontSize: 12, color: withAlpha(THEME.text, 0.66) }}>
+                Supabase-backed projects for your account.
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                void refreshUserProjects();
+              }}
+              style={{ ...btnSecondary, height: 34, padding: "0 12px", fontSize: 12, fontWeight: 800 }}
+            >
+              Refresh
+            </button>
+          </div>
+          {projectsLoadError ? (
+            <div
+              style={{
+                border: `1px solid ${withAlpha(THEME.danger, 0.24)}`,
+                background: withAlpha(THEME.danger, 0.08),
+                color: THEME.danger,
+                borderRadius: 12,
+                padding: "10px 12px",
+                fontSize: 13,
+                fontWeight: 700,
+              }}
+            >
+              {projectsLoadError}
+            </div>
+          ) : null}
+          <div style={{ display: "grid", gap: 8 }}>
+            {projectsLoading ? (
+              <div style={{ fontSize: 13, color: THEME.textFaint, padding: "4px 2px" }}>Loading projects...</div>
+            ) : filteredSavedProjects.length > 0 ? (
+              filteredSavedProjects.map((project) => {
+                const active = String(currentProjectId || "") === String(project?.id || "");
+                const busy = String(projectActionBusyId || "") === String(project?.id || "");
+                return (
+                  <div
+                    key={project.id}
+                    style={{
+                      border: `1px solid ${active ? withAlpha(THEME.accent, 0.48) : THEME.border}`,
+                      background: active ? withAlpha(THEME.accent, 0.06) : withAlpha(THEME.text, 0.012),
+                      borderRadius: 14,
+                      padding: "10px 12px",
+                      display: "grid",
+                      gridTemplateColumns: "minmax(0, 1fr) auto",
+                      gap: 10,
+                      alignItems: "center",
+                    }}
+                  >
+                    <div style={{ minWidth: 0, display: "grid", gap: 4 }}>
+                      <div
+                        style={{
+                          fontSize: 15,
+                          fontWeight: 900,
+                          color: THEME.text,
+                          minWidth: 0,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {project.title || "Untitled Project"}
+                      </div>
+                      <div style={{ fontSize: 12, color: THEME.textFaint, minWidth: 0 }}>
+                        {[project.artist || "No artist", project.album || "No album", formatProjectUpdatedAt(project.updated_at)].join(" • ")}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void openSupabaseProject(project.id);
+                      }}
+                      disabled={busy}
+                      style={{ ...btnSecondary, height: 34, padding: "0 12px", fontSize: 12, fontWeight: 800 }}
+                    >
+                      {busy ? "Opening..." : "Open"}
+                    </button>
+                  </div>
+                );
+              })
+            ) : (
+              <div style={{ fontSize: 13, color: THEME.textFaint, padding: "4px 2px" }}>
+                {searchActive ? "No matching saved projects." : "Save from the editor to create your first Supabase project."}
+              </div>
+            )}
+          </div>
         </div>
 
         <div
