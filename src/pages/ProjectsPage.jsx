@@ -68,6 +68,10 @@ export default function ProjectsPage({ shared }) {
         title: String(project?.title || "").trim(),
         artist: String(project?.artist || "").trim(),
         album: String(project?.album || "").trim(),
+        project_data:
+          project?.project_data && typeof project.project_data === "object"
+            ? project.project_data
+            : {},
       })),
     [userProjects]
   );
@@ -178,6 +182,18 @@ export default function ProjectsPage({ shared }) {
     }
   }
 
+  function handleDialogKeyDown(e) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeDialog();
+      return;
+    }
+    if (e.key === "Enter" && !(dialogState?.type === "delete" && dialogState?.stage === "countdown")) {
+      e.preventDefault();
+      void submitDialog();
+    }
+  }
+
   function renderArtistRow(artistName) {
     const active = selectedLibraryArtistLabel === artistName;
     const actionKey = `artist:${artistName}`;
@@ -196,6 +212,7 @@ export default function ProjectsPage({ shared }) {
             borderColor: active ? withAlpha(THEME.accent, 0.34) : withAlpha(THEME.text, 0.1),
             color: active ? THEME.accent : THEME.text,
             outline: "none",
+            transition: "border-color 140ms ease, background 140ms ease, color 140ms ease",
           }}
         >
           <button
@@ -292,6 +309,7 @@ export default function ProjectsPage({ shared }) {
             borderColor: active ? withAlpha(THEME.accent, 0.34) : withAlpha(THEME.text, 0.1),
             color: active ? THEME.accent : THEME.text,
             outline: "none",
+            transition: "border-color 140ms ease, background 140ms ease, color 140ms ease",
           }}
         >
           <button
@@ -382,21 +400,23 @@ export default function ProjectsPage({ shared }) {
     const active = String(currentProjectId || "") === String(project.id || "");
     const openBusy = String(projectActionBusyId || "") === String(project.id || "");
     const editBusy = busyActionKey === `song:${project.id}`;
+    const selected = selectedLibrarySongName === project.title;
     return (
       <div key={project.id || `${project.artist}__${project.album}__${project.title}`}>
         <div
           style={{
-            ...(active ? selectorRowSelectedStyle : selectorRowStyle),
+            ...(active || selected ? selectorRowSelectedStyle : selectorRowStyle),
             width: "100%",
             display: "grid",
             gridTemplateColumns: "minmax(0, 1fr) auto auto auto",
             alignItems: "center",
             gap: 6,
             textAlign: "left",
-            borderColor: active ? withAlpha(THEME.accent, 0.34) : withAlpha(THEME.text, 0.1),
-            background: active ? withAlpha(THEME.accent, 0.04) : withAlpha(THEME.text, 0.012),
-            color: active ? THEME.accent : THEME.text,
+            borderColor: active || selected ? withAlpha(THEME.accent, 0.34) : withAlpha(THEME.text, 0.1),
+            background: active || selected ? withAlpha(THEME.accent, 0.04) : withAlpha(THEME.text, 0.012),
+            color: active || selected ? THEME.accent : THEME.text,
             outline: "none",
+            transition: "border-color 140ms ease, background 140ms ease, color 140ms ease",
           }}
         >
           <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -623,6 +643,7 @@ export default function ProjectsPage({ shared }) {
               gap: 12,
             }}
             onPointerDown={(e) => e.stopPropagation()}
+            onKeyDown={handleDialogKeyDown}
           >
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
               <div style={{ fontSize: 20, fontWeight: 950, color: THEME.text }}>{dialogState.title}</div>
