@@ -217,17 +217,16 @@ export default function ProjectsPage({ shared }) {
   const hasUnassignedAlbums = unassignedAlbums.length > 0;
   const hasUnassignedSongs = unassignedSongs.length > 0;
 
-  function formatProjectUpdatedAt(value) {
-    if (!value) return "Just now";
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return "Just now";
-    return new Intl.DateTimeFormat(undefined, {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    }).format(date);
+  function formatSavedProjectLabel(project) {
+    const artist = String(project?.artist || "").trim();
+    const album = String(project?.album || "").trim();
+    const title = String(project?.title || "").trim();
+
+    if (artist && album && title) return `${artist} > ${album} > ${title}`;
+    if (artist && title) return `${artist} > ${title}`;
+    if (album && title) return `${album} > ${title}`;
+    if (title) return title;
+    return "Untitled Project";
   }
 
   function beginLibraryDrag(item, e) {
@@ -721,10 +720,7 @@ export default function ProjectsPage({ shared }) {
                           whiteSpace: "nowrap",
                         }}
                       >
-                        {project.title || "Untitled Project"}
-                      </div>
-                      <div style={{ fontSize: 12, color: THEME.textFaint, minWidth: 0 }}>
-                        {[project.artist || "No artist", project.album || "No album", formatProjectUpdatedAt(project.updated_at)].join(" • ")}
+                        {formatSavedProjectLabel(project)}
                       </div>
                     </div>
                     <button
