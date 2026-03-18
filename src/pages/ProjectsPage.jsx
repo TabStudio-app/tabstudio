@@ -68,12 +68,18 @@ export default function ProjectsPage({ shared }) {
   const microButton = buttonMicro(THEME);
   const searchControlHeight = field.height ?? 42;
   const libraryColumnHeight = "min(640px, calc(100vh - 180px))";
-  const selectorRowStyle = menuItem(THEME, { padding: "0 10px", borderRadius: 12, height: 38, fontWeight: 850 });
+  const selectorRowStyle = {
+    ...menuItem(THEME, { padding: "0 10px", borderRadius: 12, height: 38, fontWeight: 850 }),
+    border: "1px solid transparent",
+    boxShadow: "none",
+  };
   const selectorRowSelectedStyle = menuItemSelected(THEME, {
     padding: "0 10px",
     borderRadius: 12,
     height: 38,
     fontWeight: 850,
+    borderColor: "transparent",
+    boxShadow: "none",
   });
 
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
@@ -513,7 +519,7 @@ export default function ProjectsPage({ shared }) {
             display: "flex",
             alignItems: "center",
             background: withAlpha(THEME.text, 0.01),
-            borderColor: withAlpha(THEME.text, 0.12),
+            borderColor: "transparent",
             color: THEME.text,
           }}
         >
@@ -756,13 +762,10 @@ export default function ProjectsPage({ shared }) {
               : active
               ? withAlpha(THEME.accent, 0.04)
               : withAlpha(THEME.text, 0.012),
-            borderColor: isDropTarget
-              ? withAlpha(THEME.accent, 0.44)
-              : active
-              ? withAlpha(THEME.accent, 0.34)
-              : withAlpha(THEME.text, 0.1),
+            borderColor: "transparent",
             color: active ? THEME.accent : THEME.text,
             outline: "none",
+            boxShadow: "none",
             transition: "border-color 140ms ease, background 140ms ease, color 140ms ease",
           }}
         >
@@ -898,13 +901,10 @@ export default function ProjectsPage({ shared }) {
               : active
               ? withAlpha(THEME.accent, 0.04)
               : withAlpha(THEME.text, 0.012),
-            borderColor: isSongDropTarget
-              ? withAlpha(THEME.accent, 0.44)
-              : active
-              ? withAlpha(THEME.accent, 0.34)
-              : withAlpha(THEME.text, 0.1),
+            borderColor: "transparent",
             color: active ? THEME.accent : THEME.text,
             outline: "none",
+            boxShadow: "none",
             transition: "border-color 140ms ease, background 140ms ease, color 140ms ease",
           }}
         >
@@ -1026,10 +1026,11 @@ export default function ProjectsPage({ shared }) {
             alignItems: "center",
             gap: 6,
             textAlign: "left",
-            borderColor: active || selected ? withAlpha(THEME.accent, 0.34) : withAlpha(THEME.text, 0.1),
+            borderColor: "transparent",
             background: active || selected ? withAlpha(THEME.accent, 0.04) : withAlpha(THEME.text, 0.012),
             color: active || selected ? THEME.accent : THEME.text,
             outline: "none",
+            boxShadow: "none",
             transition: "border-color 140ms ease, background 140ms ease, color 140ms ease",
           }}
         >
