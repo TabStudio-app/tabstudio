@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   deleteProject,
   deleteProjectsByAlbum,
@@ -7,7 +7,12 @@ import {
   renameProjectsArtist,
   updateProject,
 } from "../lib/projects";
+import { supabase } from "../lib/supabaseClient";
 import { buttonMicro, cardDense, menuItem, menuItemSelected } from "../utils/uiTokens";
+
+function makeLegacyProjectKey(artist, album, title) {
+  return [artist, album, title].map((value) => String(value || "").trim().toLowerCase()).join("::");
+}
 
 export default function ProjectsPage({ shared }) {
   const PROJECTS_HEADER_CLEARANCE = 66;
@@ -31,8 +36,6 @@ export default function ProjectsPage({ shared }) {
     selectedLibrarySongName,
     currentProjectId,
     userProjects,
-    projectsLoading,
-    projectsLoadError,
     projectActionBusyId,
     refreshUserProjects,
     openSupabaseProject,
@@ -43,6 +46,13 @@ export default function ProjectsPage({ shared }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [busyActionKey, setBusyActionKey] = useState("");
   const [dialogState, setDialogState] = useState(null);
+  const [libraryLoading, setLibraryLoading] = useState(false);
+  const [libraryLoadError, setLibraryLoadError] = useState("");
+  const [libraryRecords, setLibraryRecords] = useState({
+    artists: [],
+    albums: [],
+    songs: [],
+  });
 
   const denseCard = cardDense(THEME);
   const microButton = buttonMicro(THEME);
@@ -59,19 +69,85 @@ export default function ProjectsPage({ shared }) {
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
   const searchActive = normalizedSearchQuery.length > 0;
 
+  const legacyProjectIdByKey = useMemo(() => {
+    const map = new Map();
+    (Array.isArray(userProjects) ? userProjects : []).forEach((project) => {
+      const title = String(project?.title || "").trim();
+      const artist = String(project?.artist || "").trim();
+      const album = String(project?.album || "").trim();
+      if (!title || !artist || !album) return;
+      map.set(makeLegacyProjectKey(artist, album, title), String(project?.id || ""));
+    });
+    return map;
+  }, [userProjects]);
+
+  const phaseBArtists = useMemo(
+    () =>
+      (Array.isArray(libraryRecords.artists) ? libraryRecords.artists : [])
+        .map((artist) => ({
+          id: String(artist?.id || ""),
+          name: String(artist?.name || "").trim(),
+        }))
+        .filter((artist) => artist.id && artist.name),
+    [libraryRecords.artists]
+  );
+
+  const phaseBAlbums = useMemo(
+    () =>
+      (Array.isArray(libraryRecords.albums) ? libraryRecords.albums : [])
+        .map((album) => ({
+          id: String(album?.id || ""),
+          artistId: String(album?.artist_id || ""),
+          title: String(album?.title || "").trim(),
+        }))
+        .filter((album) => album.id && album.title),
+    [libraryRecords.albums]
+  );
+
+  const artistNameById = useMemo(() => {
+    const map = new Map();
+    phaseBArtists.forEach((artist) => {
+      map.set(artist.id, artist.name);
+    });
+    return map;
+  }, [phaseBArtists]);
+
+  const albumById = useMemo(() => {
+    const map = new Map();
+    phaseBAlbums.forEach((album) => {
+      map.set(album.id, album);
+    });
+    return map;
+  }, [phaseBAlbums]);
+
   const savedProjects = useMemo(
     () =>
-      (Array.isArray(userProjects) ? userProjects : []).map((project) => ({
-        id: String(project?.id || ""),
-        title: String(project?.title || "").trim(),
-        artist: String(project?.artist || "").trim(),
-        album: String(project?.album || "").trim(),
-        project_data:
-          project?.project_data && typeof project.project_data === "object"
-            ? project.project_data
-            : {},
-      })),
-    [userProjects]
+      (Array.isArray(libraryRecords.songs) ? libraryRecords.songs : [])
+        .map((song) => {
+          const songId = String(song?.id || "");
+          const albumId = String(song?.album_id || "");
+          const albumRecord = albumById.get(albumId) || null;
+          const artistId = String(albumRecord?.artistId || "");
+          const artistName = artistNameById.get(artistId) || "";
+          const albumName = String(albumRecord?.title || "").trim();
+          const title = String(song?.title || "").trim();
+          return {
+            id: songId,
+            legacyProjectId: legacyProjectIdByKey.get(makeLegacyProjectKey(artistName, albumName, title)) || "",
+            title,
+            artist: artistName,
+            artistId,
+            album: albumName,
+            albumId,
+            updated_at: String(song?.updated_at || ""),
+            project_data:
+              song?.project_data && typeof song.project_data === "object"
+                ? song.project_data
+                : {},
+          };
+        })
+        .filter((project) => project.id),
+    [albumById, artistNameById, legacyProjectIdByKey, libraryRecords.songs]
   );
 
   const searchableProjects = useMemo(
@@ -83,15 +159,33 @@ export default function ProjectsPage({ shared }) {
   );
 
   const visibleArtists = useMemo(
-    () => [...new Set(searchableProjects.map((project) => project.artist).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
-    [searchableProjects]
+    () =>
+      phaseBArtists.filter((artist) => {
+        if (!searchActive) return true;
+        if (artist.name.toLowerCase().includes(normalizedSearchQuery)) return true;
+        if (
+          phaseBAlbums.some(
+            (album) => album.artistId === artist.id && album.title.toLowerCase().includes(normalizedSearchQuery)
+          )
+        ) {
+          return true;
+        }
+        return searchableProjects.some((project) => project.artistId === artist.id);
+      }),
+    [normalizedSearchQuery, phaseBAlbums, phaseBArtists, searchActive, searchableProjects]
   );
 
   const visibleAlbums = useMemo(() => {
     if (!selectedLibraryArtistLabel) return [];
-    const projectsForArtist = searchableProjects.filter((project) => project.artist === selectedLibraryArtistLabel);
-    return [...new Set(projectsForArtist.map((project) => project.album).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-  }, [searchableProjects, selectedLibraryArtistLabel]);
+    const selectedArtist = phaseBArtists.find((artist) => artist.name === selectedLibraryArtistLabel);
+    if (!selectedArtist) return [];
+    return phaseBAlbums.filter((album) => {
+      if (album.artistId !== selectedArtist.id) return false;
+      if (!searchActive) return true;
+      if (album.title.toLowerCase().includes(normalizedSearchQuery)) return true;
+      return searchableProjects.some((project) => project.albumId === album.id);
+    });
+  }, [normalizedSearchQuery, phaseBAlbums, phaseBArtists, searchActive, searchableProjects, selectedLibraryArtistLabel]);
 
   const visibleSongs = useMemo(() => {
     return searchableProjects.filter((project) => {
@@ -100,6 +194,53 @@ export default function ProjectsPage({ shared }) {
       return true;
     });
   }, [searchableProjects, selectedLibraryAlbumName, selectedLibraryArtistLabel]);
+
+  const loadPhaseBLibrary = useCallback(async () => {
+    setLibraryLoading(true);
+    setLibraryLoadError("");
+    try {
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
+
+      if (authError) throw authError;
+
+      if (!user?.id) {
+        setLibraryRecords({ artists: [], albums: [], songs: [] });
+        return;
+      }
+
+      const [artistsResult, albumsResult, songsResult] = await Promise.all([
+        supabase.from("artists").select("id, name").eq("user_id", user.id).order("name", { ascending: true }),
+        supabase.from("albums").select("id, artist_id, title").eq("user_id", user.id).order("title", { ascending: true }),
+        supabase
+          .from("songs")
+          .select("id, album_id, title, project_data, updated_at")
+          .eq("user_id", user.id)
+          .order("updated_at", { ascending: false }),
+      ]);
+
+      if (artistsResult.error) throw artistsResult.error;
+      if (albumsResult.error) throw albumsResult.error;
+      if (songsResult.error) throw songsResult.error;
+
+      setLibraryRecords({
+        artists: artistsResult.data || [],
+        albums: albumsResult.data || [],
+        songs: songsResult.data || [],
+      });
+    } catch (error) {
+      setLibraryLoadError(String(error?.message || "Unable to load your projects."));
+    } finally {
+      setLibraryLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!projectsLibraryOpen) return;
+    void loadPhaseBLibrary();
+  }, [loadPhaseBLibrary, projectsLibraryOpen]);
 
   useEffect(() => {
     if (!dialogState || dialogState.type !== "delete" || dialogState.stage !== "countdown") return undefined;
@@ -130,7 +271,7 @@ export default function ProjectsPage({ shared }) {
     setBusyActionKey(actionKey);
     try {
       await action();
-      await refreshUserProjects();
+      await Promise.all([loadPhaseBLibrary(), refreshUserProjects()]);
     } finally {
       setBusyActionKey("");
     }
@@ -192,11 +333,13 @@ export default function ProjectsPage({ shared }) {
     }
   }
 
-  function renderArtistRow(artistName) {
+  function renderArtistRow(artistRecord) {
+    const artistName = artistRecord.name;
     const active = selectedLibraryArtistLabel === artistName;
-    const actionKey = `artist:${artistName}`;
+    const actionKey = `artist:${artistRecord.id}`;
+    const albumIds = phaseBAlbums.filter((album) => album.artistId === artistRecord.id).map((album) => album.id);
     return (
-      <div key={artistName}>
+      <div key={artistRecord.id}>
         <div
           style={{
             ...(active ? selectorRowSelectedStyle : selectorRowStyle),
@@ -250,6 +393,8 @@ export default function ProjectsPage({ shared }) {
                 initialValue: artistName,
                 onConfirm: async (nextValue) => {
                   await withRefresh(actionKey, async () => {
+                    const { error } = await supabase.from("artists").update({ name: nextValue }).eq("id", artistRecord.id);
+                    if (error) throw error;
                     await renameProjectsArtist(artistName, nextValue);
                     if (selectedLibraryArtistLabel === artistName) {
                       setSelectedLibraryArtistKey(nextValue);
@@ -273,6 +418,14 @@ export default function ProjectsPage({ shared }) {
                 message: `"${artistName}" and all albums/songs will be removed.`,
                 onDelete: async () => {
                   await withRefresh(actionKey, async () => {
+                    if (albumIds.length > 0) {
+                      const { error: songsError } = await supabase.from("songs").delete().in("album_id", albumIds);
+                      if (songsError) throw songsError;
+                      const { error: albumsError } = await supabase.from("albums").delete().in("id", albumIds);
+                      if (albumsError) throw albumsError;
+                    }
+                    const { error } = await supabase.from("artists").delete().eq("id", artistRecord.id);
+                    if (error) throw error;
                     await deleteProjectsByArtist(artistName);
                     if (selectedLibraryArtistLabel === artistName) clearProjectsSelection();
                   });
@@ -289,11 +442,12 @@ export default function ProjectsPage({ shared }) {
     );
   }
 
-  function renderAlbumRow(albumName) {
+  function renderAlbumRow(albumRecord) {
+    const albumName = albumRecord.title;
     const active = selectedLibraryAlbumName === albumName;
-    const actionKey = `album:${selectedLibraryArtistLabel}:${albumName}`;
+    const actionKey = `album:${albumRecord.id}`;
     return (
-      <div key={`${selectedLibraryArtistLabel}__${albumName}`}>
+      <div key={albumRecord.id}>
         <div
           style={{
             ...(active ? selectorRowSelectedStyle : selectorRowStyle),
@@ -347,6 +501,8 @@ export default function ProjectsPage({ shared }) {
                 initialValue: albumName,
                 onConfirm: async (nextValue) => {
                   await withRefresh(actionKey, async () => {
+                    const { error } = await supabase.from("albums").update({ title: nextValue }).eq("id", albumRecord.id);
+                    if (error) throw error;
                     await renameProjectsAlbum({
                       artist: selectedLibraryArtistLabel,
                       currentAlbum: albumName,
@@ -374,6 +530,10 @@ export default function ProjectsPage({ shared }) {
                 message: `"${albumName}" and all songs in it will be removed.`,
                 onDelete: async () => {
                   await withRefresh(actionKey, async () => {
+                    const { error: songsError } = await supabase.from("songs").delete().eq("album_id", albumRecord.id);
+                    if (songsError) throw songsError;
+                    const { error } = await supabase.from("albums").delete().eq("id", albumRecord.id);
+                    if (error) throw error;
                     await deleteProjectsByAlbum({ artist: selectedLibraryArtistLabel, album: albumName });
                     if (selectedLibraryAlbumName === albumName) {
                       setSelectedLibraryAlbumName("");
@@ -395,7 +555,8 @@ export default function ProjectsPage({ shared }) {
   }
 
   function renderSongRow(project) {
-    const active = String(currentProjectId || "") === String(project.id || "");
+    const activeProjectId = project.legacyProjectId || project.id;
+    const active = String(currentProjectId || "") === String(activeProjectId || "");
     const openBusy = String(projectActionBusyId || "") === String(project.id || "");
     const editBusy = busyActionKey === `song:${project.id}`;
     const selected = selectedLibrarySongName === project.title;
@@ -424,7 +585,7 @@ export default function ProjectsPage({ shared }) {
             type="button"
             onClick={() => {
               setSelectedLibrarySongName(project.title || "");
-              void openSupabaseProject(project.id);
+              void openSupabaseProject(project);
             }}
             disabled={openBusy}
             style={{ ...btnSecondary, height: 28, padding: "0 9px", fontSize: 11, borderRadius: 8 }}
@@ -440,12 +601,16 @@ export default function ProjectsPage({ shared }) {
                 initialValue: project.title || "",
                 onConfirm: async (nextValue) => {
                   await withRefresh(`song:${project.id}`, async () => {
-                    await updateProject(project.id, {
-                      title: nextValue,
-                      artist: project.artist,
-                      album: project.album,
-                      projectData: project.project_data || {},
-                    });
+                    const { error } = await supabase.from("songs").update({ title: nextValue }).eq("id", project.id);
+                    if (error) throw error;
+                    if (project.legacyProjectId) {
+                      await updateProject(project.legacyProjectId, {
+                        title: nextValue,
+                        artist: project.artist,
+                        album: project.album,
+                        projectData: project.project_data || {},
+                      });
+                    }
                     if (selectedLibrarySongName === project.title) setSelectedLibrarySongName(nextValue);
                   });
                 },
@@ -466,7 +631,11 @@ export default function ProjectsPage({ shared }) {
                 message: `"${project.title || "This song"}" will be removed. This action cannot be undone.`,
                 onDelete: async () => {
                   await withRefresh(`song:${project.id}`, async () => {
-                    await deleteProject(project.id);
+                    const { error } = await supabase.from("songs").delete().eq("id", project.id);
+                    if (error) throw error;
+                    if (project.legacyProjectId) {
+                      await deleteProject(project.legacyProjectId);
+                    }
                     if (selectedLibrarySongName === project.title) setSelectedLibrarySongName("");
                   });
                 },
@@ -564,14 +733,14 @@ export default function ProjectsPage({ shared }) {
               <div style={{ fontSize: 13, color: THEME.textFaint, fontWeight: 900 }}>Artists</div>
             </div>
             <div style={{ display: "grid", gap: 6 }}>
-              {projectsLoading ? (
+              {libraryLoading ? (
                 <div style={{ fontSize: 13, color: THEME.textFaint, padding: "8px 4px" }}>Loading artists...</div>
               ) : visibleArtists.length === 0 ? (
                 <div style={{ fontSize: 13, color: THEME.textFaint, padding: "8px 4px" }}>
-                  {projectsLoadError ? projectsLoadError : searchActive ? "No matching artists." : "No saved artists yet."}
+                  {libraryLoadError ? libraryLoadError : searchActive ? "No matching artists." : "No saved artists yet."}
                 </div>
               ) : (
-                visibleArtists.map((artistName) => renderArtistRow(artistName))
+                visibleArtists.map((artistRecord) => renderArtistRow(artistRecord))
               )}
             </div>
           </div>
@@ -581,7 +750,7 @@ export default function ProjectsPage({ shared }) {
               <div style={{ fontSize: 13, color: THEME.textFaint, fontWeight: 900 }}>Albums</div>
             </div>
             <div style={{ display: "grid", gap: 6 }}>
-              {projectsLoading ? (
+              {libraryLoading ? (
                 <div style={{ fontSize: 13, color: THEME.textFaint, padding: "8px 4px" }}>Loading albums...</div>
               ) : !selectedLibraryArtistLabel ? (
                 <div style={{ fontSize: 13, color: THEME.textFaint, padding: "8px 4px" }}>Select an artist to browse albums.</div>
@@ -590,7 +759,7 @@ export default function ProjectsPage({ shared }) {
                   {searchActive ? "No matching albums." : "No albums found for this artist yet."}
                 </div>
               ) : (
-                visibleAlbums.map((albumName) => renderAlbumRow(albumName))
+                visibleAlbums.map((albumRecord) => renderAlbumRow(albumRecord))
               )}
             </div>
           </div>
@@ -600,7 +769,7 @@ export default function ProjectsPage({ shared }) {
               <div style={{ fontSize: 13, color: THEME.textFaint, fontWeight: 900 }}>Songs</div>
             </div>
             <div style={{ display: "grid", gap: 6 }}>
-              {projectsLoading ? (
+              {libraryLoading ? (
                 <div style={{ fontSize: 13, color: THEME.textFaint, padding: "8px 4px" }}>Loading songs...</div>
               ) : visibleSongs.length === 0 ? (
                 <div style={{ fontSize: 13, color: THEME.textFaint, padding: "8px 4px" }}>

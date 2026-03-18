@@ -5502,15 +5502,16 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
     void refreshUserProjects();
   }, [isLoggedIn, refreshUserProjects]);
 
-  async function openSupabaseProject(projectId) {
-    const id = String(projectId || "").trim();
+  async function openSupabaseProject(projectInput) {
+    const inlineProject = projectInput && typeof projectInput === "object" ? projectInput : null;
+    const id = String(inlineProject?.id || projectInput || "").trim();
     if (!id) return;
     if (!confirmDiscardUnflushedEditorChanges()) return;
 
     setProjectActionBusyId(id);
     setProjectsLoadError("");
     try {
-      const project = await getProjectById(id);
+      const project = inlineProject || (await getProjectById(id));
       const snapshot =
         project?.project_data && typeof project.project_data === "object"
           ? { ...project.project_data, songName: project.title || project.project_data.songName || "" }
@@ -5524,7 +5525,7 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
       setSongTitle(String(project?.title || snapshot.songName || ""));
       setArtist(String(project?.artist || snapshot.artistName || ""));
       setAlbumName(String(project?.album || snapshot.albumName || ""));
-      setCurrentProjectId(String(project?.id || ""));
+      setCurrentProjectId(inlineProject ? String(project?.legacyProjectId || "") : String(project?.id || ""));
       setProjectsLibraryOpen(false);
       setCurrentLoadedSongId("");
       setCurrentLoadedSongPath(null);
