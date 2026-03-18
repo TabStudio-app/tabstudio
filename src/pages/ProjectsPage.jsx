@@ -68,19 +68,30 @@ export default function ProjectsPage({ shared }) {
   const microButton = buttonMicro(THEME);
   const searchControlHeight = field.height ?? 42;
   const libraryColumnHeight = "min(640px, calc(100vh - 180px))";
-  const selectorRowStyle = {
-    ...menuItem(THEME, { padding: "0 10px", borderRadius: 12, height: 38, fontWeight: 850 }),
-    border: "1px solid transparent",
-    boxShadow: "none",
-  };
+  const selectorRowStyle = menuItem(THEME, { padding: "0 10px", borderRadius: 12, height: 38, fontWeight: 850 });
   const selectorRowSelectedStyle = menuItemSelected(THEME, {
     padding: "0 10px",
     borderRadius: 12,
     height: 38,
     fontWeight: 850,
-    borderColor: "transparent",
-    boxShadow: "none",
   });
+  const rowLabelButtonStyle = {
+    border: "none",
+    background: "transparent",
+    color: "inherit",
+    font: "inherit",
+    textAlign: "left",
+    padding: 0,
+    minWidth: 0,
+    width: "100%",
+    display: "block",
+    cursor: "pointer",
+    outline: "none",
+    boxShadow: "none",
+    appearance: "none",
+    WebkitAppearance: "none",
+    borderRadius: 0,
+  };
 
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
   const searchActive = normalizedSearchQuery.length > 0;
@@ -186,6 +197,10 @@ export default function ProjectsPage({ shared }) {
     [normalizedSearchQuery, phaseBArtists]
   );
 
+  const hasArtists = phaseBArtists.length > 0;
+  const hasAlbums = phaseBAlbums.length > 0;
+  const hasSongs = savedProjects.length > 0;
+
   const unassignedAlbums = useMemo(
     () =>
       phaseBAlbums.filter((album) => !album.artistId && matchesSearchValue(album.title, normalizedSearchQuery)),
@@ -195,12 +210,14 @@ export default function ProjectsPage({ shared }) {
   const visibleAlbums = useMemo(() => {
     const selectedArtist = phaseBArtists.find((artist) => artist.name === selectedLibraryArtistLabel) || null;
     return phaseBAlbums.filter((album) => {
-      if (!album.artistId) return false;
-      if (selectedArtist && album.artistId !== selectedArtist.id) return false;
-      if (!selectedArtist && !searchActive) return false;
+      if (selectedArtist) {
+        if (album.artistId !== selectedArtist.id) return false;
+      } else if (hasArtists && !searchActive) {
+        return false;
+      }
       return matchesSearchValue(album.title, normalizedSearchQuery);
     });
-  }, [normalizedSearchQuery, phaseBAlbums, phaseBArtists, searchActive, selectedLibraryArtistLabel]);
+  }, [hasArtists, normalizedSearchQuery, phaseBAlbums, phaseBArtists, searchActive, selectedLibraryArtistLabel]);
 
   const unassignedSongs = useMemo(
     () =>
@@ -210,14 +227,18 @@ export default function ProjectsPage({ shared }) {
 
   const visibleSongs = useMemo(() => {
     return savedProjects.filter((project) => {
+      const matchesSearch = matchesSearchValue(project.title, normalizedSearchQuery);
+      if (!matchesSearch) return false;
+
+      if (!hasArtists && !selectedLibraryAlbumName) return true;
+
       if (!project.albumId) return false;
-      if (!matchesSearchValue(project.title, normalizedSearchQuery)) return false;
       if (selectedLibraryArtistLabel && project.artist !== selectedLibraryArtistLabel) return false;
       if (selectedLibraryAlbumName && project.album !== selectedLibraryAlbumName) return false;
       if (!selectedLibraryArtistLabel && !selectedLibraryAlbumName && !searchActive) return false;
       return true;
     });
-  }, [normalizedSearchQuery, savedProjects, searchActive, selectedLibraryAlbumName, selectedLibraryArtistLabel]);
+  }, [hasArtists, normalizedSearchQuery, savedProjects, searchActive, selectedLibraryAlbumName, selectedLibraryArtistLabel]);
 
   const loadPhaseBLibrary = useCallback(async () => {
     setLibraryLoading(true);
@@ -443,6 +464,14 @@ export default function ProjectsPage({ shared }) {
     setAlbumName("");
   }
 
+  function clearSelectionOnly() {
+    setSelectedLibraryArtistKey("");
+    setSelectedLibraryAlbumName("");
+    setSelectedLibrarySongName("");
+    setArtist("");
+    setAlbumName("");
+  }
+
   function closeDialog() {
     setDialogState(null);
   }
@@ -518,15 +547,19 @@ export default function ProjectsPage({ shared }) {
             justifyContent: "space-between",
             display: "flex",
             alignItems: "center",
-            background: withAlpha(THEME.text, 0.01),
-            borderColor: "transparent",
-            color: THEME.text,
+            background: open ? withAlpha(THEME.text, 0.02) : withAlpha(THEME.text, 0.006),
+            borderColor: open ? withAlpha(THEME.text, 0.14) : withAlpha(THEME.text, 0.08),
+            color: open ? THEME.text : withAlpha(THEME.text, 0.78),
+            minHeight: 34,
+            height: 34,
+            fontWeight: 800,
+            transition: "background 140ms ease, border-color 140ms ease, color 140ms ease",
           }}
         >
           <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {open ? "▼" : "▶"} {label}
           </span>
-          <span style={{ fontSize: 11, color: THEME.textFaint }}>{itemCount}</span>
+          <span style={{ fontSize: 10, fontWeight: 700, color: withAlpha(THEME.text, open ? 0.58 : 0.46) }}>{itemCount}</span>
         </button>
         {open && <div style={{ display: "grid", gap: 6, paddingTop: 6, paddingLeft: 10 }}>{children}</div>}
       </div>
@@ -719,6 +752,12 @@ export default function ProjectsPage({ shared }) {
     }
   }
 
+  function handleBackgroundPointerDown(e) {
+    const interactiveTarget = e.target.closest("button, input, select, textarea, label");
+    if (interactiveTarget) return;
+    clearSelectionOnly();
+  }
+
   function renderArtistRow(artistRecord) {
     const artistName = artistRecord.name;
     const active = selectedLibraryArtistLabel === artistName;
@@ -762,10 +801,13 @@ export default function ProjectsPage({ shared }) {
               : active
               ? withAlpha(THEME.accent, 0.04)
               : withAlpha(THEME.text, 0.012),
-            borderColor: "transparent",
+            borderColor: isDropTarget
+              ? withAlpha(THEME.accent, 0.44)
+              : active
+              ? withAlpha(THEME.accent, 0.34)
+              : withAlpha(THEME.text, 0.1),
             color: active ? THEME.accent : THEME.text,
             outline: "none",
-            boxShadow: "none",
             transition: "border-color 140ms ease, background 140ms ease, color 140ms ease",
           }}
         >
@@ -782,16 +824,7 @@ export default function ProjectsPage({ shared }) {
               setArtist(artistName);
               setAlbumName("");
             }}
-            style={{
-              border: "none",
-              background: "transparent",
-              color: "inherit",
-              font: "inherit",
-              textAlign: "left",
-              padding: 0,
-              minWidth: 0,
-              cursor: "pointer",
-            }}
+            style={rowLabelButtonStyle}
           >
             <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>
               {artistName}
@@ -901,10 +934,13 @@ export default function ProjectsPage({ shared }) {
               : active
               ? withAlpha(THEME.accent, 0.04)
               : withAlpha(THEME.text, 0.012),
-            borderColor: "transparent",
+            borderColor: isSongDropTarget
+              ? withAlpha(THEME.accent, 0.44)
+              : active
+              ? withAlpha(THEME.accent, 0.34)
+              : withAlpha(THEME.text, 0.1),
             color: active ? THEME.accent : THEME.text,
             outline: "none",
-            boxShadow: "none",
             transition: "border-color 140ms ease, background 140ms ease, color 140ms ease",
           }}
         >
@@ -923,16 +959,7 @@ export default function ProjectsPage({ shared }) {
               setSelectedLibrarySongName("");
               setAlbumName(albumName);
             }}
-            style={{
-              border: "none",
-              background: "transparent",
-              color: "inherit",
-              font: "inherit",
-              textAlign: "left",
-              padding: 0,
-              minWidth: 0,
-              cursor: "pointer",
-            }}
+            style={rowLabelButtonStyle}
           >
             <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>
               {albumName}
@@ -1026,11 +1053,10 @@ export default function ProjectsPage({ shared }) {
             alignItems: "center",
             gap: 6,
             textAlign: "left",
-            borderColor: "transparent",
+            borderColor: active || selected ? withAlpha(THEME.accent, 0.34) : withAlpha(THEME.text, 0.1),
             background: active || selected ? withAlpha(THEME.accent, 0.04) : withAlpha(THEME.text, 0.012),
             color: active || selected ? THEME.accent : THEME.text,
             outline: "none",
-            boxShadow: "none",
             transition: "border-color 140ms ease, background 140ms ease, color 140ms ease",
           }}
         >
@@ -1126,7 +1152,10 @@ export default function ProjectsPage({ shared }) {
           gridTemplateRows: `${searchControlHeight}px minmax(0, 1fr)`,
           gap: PROJECTS_SECTION_GAP,
         }}
-        onPointerDown={(e) => e.stopPropagation()}
+        onPointerDown={(e) => {
+          handleBackgroundPointerDown(e);
+          e.stopPropagation();
+        }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
           <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
@@ -1222,7 +1251,9 @@ export default function ProjectsPage({ shared }) {
                 <div style={{ fontSize: 13, color: THEME.textFaint, padding: "8px 4px" }}>Loading albums...</div>
               ) : visibleAlbums.length === 0 && unassignedAlbums.length === 0 ? (
                 <div style={{ fontSize: 13, color: THEME.textFaint, padding: "8px 4px" }}>
-                  {!selectedLibraryArtistLabel && !searchActive
+                  {!hasAlbums && !searchActive
+                    ? "No saved albums yet."
+                    : hasArtists && !selectedLibraryArtistLabel && !searchActive
                     ? "Select an artist to browse albums."
                     : searchActive
                     ? "No matching albums."
@@ -1262,7 +1293,13 @@ export default function ProjectsPage({ shared }) {
                 <div style={{ fontSize: 13, color: THEME.textFaint, padding: "8px 4px" }}>Loading songs...</div>
               ) : visibleSongs.length === 0 && unassignedSongs.length === 0 ? (
                 <div style={{ fontSize: 13, color: THEME.textFaint, padding: "8px 4px" }}>
-                  {searchActive ? "No matching songs." : "Select an artist or album to browse songs."}
+                  {!hasSongs && !searchActive
+                    ? "No saved songs yet."
+                    : hasArtists && !searchActive
+                    ? "Select an artist or album to browse songs."
+                    : searchActive
+                    ? "No matching songs."
+                    : "No songs found."}
                 </div>
               ) : (
                 <>
