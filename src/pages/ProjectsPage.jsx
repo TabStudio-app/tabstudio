@@ -10,6 +10,14 @@ import {
 import { supabase } from "../lib/supabaseClient";
 import { buttonMicro, cardDense, menuItem, menuItemSelected } from "../utils/uiTokens";
 
+const EMPTY_LIBRARY_RECORDS = {
+  artists: [],
+  albums: [],
+  songs: [],
+};
+
+let phaseBLibraryRecordsCache = EMPTY_LIBRARY_RECORDS;
+
 function makeLegacyProjectKey(artist, album, title) {
   return [artist, album, title].map((value) => String(value || "").trim().toLowerCase()).join("::");
 }
@@ -58,11 +66,7 @@ export default function ProjectsPage({ shared }) {
   const [hoveredRowKey, setHoveredRowKey] = useState("");
   const [dragState, setDragState] = useState(null);
   const [dropTargetKey, setDropTargetKey] = useState("");
-  const [libraryRecords, setLibraryRecords] = useState({
-    artists: [],
-    albums: [],
-    songs: [],
-  });
+  const [libraryRecords, setLibraryRecords] = useState(() => phaseBLibraryRecordsCache);
 
   const denseCard = cardDense(THEME);
   const microButton = buttonMicro(THEME);
@@ -200,6 +204,8 @@ export default function ProjectsPage({ shared }) {
   const hasArtists = phaseBArtists.length > 0;
   const hasAlbums = phaseBAlbums.length > 0;
   const hasSongs = savedProjects.length > 0;
+  const hasAnyLibraryContent = hasArtists || hasAlbums || hasSongs;
+  const showBlockingLibraryLoading = libraryLoading && !hasAnyLibraryContent;
 
   const unassignedAlbums = useMemo(
     () =>
@@ -240,8 +246,8 @@ export default function ProjectsPage({ shared }) {
     });
   }, [hasArtists, normalizedSearchQuery, savedProjects, searchActive, selectedLibraryAlbumName, selectedLibraryArtistLabel]);
 
-  const loadPhaseBLibrary = useCallback(async () => {
-    setLibraryLoading(true);
+  const loadPhaseBLibrary = useCallback(async ({ preserveVisible = false } = {}) => {
+    if (!preserveVisible) setLibraryLoading(true);
     setLibraryLoadError("");
     try {
       const {
@@ -252,7 +258,8 @@ export default function ProjectsPage({ shared }) {
       if (authError) throw authError;
 
       if (!user?.id) {
-        setLibraryRecords({ artists: [], albums: [], songs: [] });
+        phaseBLibraryRecordsCache = EMPTY_LIBRARY_RECORDS;
+        setLibraryRecords(EMPTY_LIBRARY_RECORDS);
         return;
       }
 
@@ -269,16 +276,17 @@ export default function ProjectsPage({ shared }) {
       if (artistsResult.error) throw artistsResult.error;
       if (albumsResult.error) throw albumsResult.error;
       if (songsResult.error) throw songsResult.error;
-
-      setLibraryRecords({
+      const nextRecords = {
         artists: artistsResult.data || [],
         albums: albumsResult.data || [],
         songs: songsResult.data || [],
-      });
+      };
+      phaseBLibraryRecordsCache = nextRecords;
+      setLibraryRecords(nextRecords);
     } catch (error) {
       setLibraryLoadError(String(error?.message || "Unable to load your projects."));
     } finally {
-      setLibraryLoading(false);
+      if (!preserveVisible) setLibraryLoading(false);
     }
   }, []);
 
@@ -440,7 +448,11 @@ export default function ProjectsPage({ shared }) {
 
   useEffect(() => {
     if (!projectsLibraryOpen) return;
-    void loadPhaseBLibrary();
+    const cacheHasContent =
+      Array.isArray(phaseBLibraryRecordsCache.artists) && phaseBLibraryRecordsCache.artists.length > 0 ||
+      Array.isArray(phaseBLibraryRecordsCache.albums) && phaseBLibraryRecordsCache.albums.length > 0 ||
+      Array.isArray(phaseBLibraryRecordsCache.songs) && phaseBLibraryRecordsCache.songs.length > 0;
+    void loadPhaseBLibrary({ preserveVisible: cacheHasContent });
   }, [loadPhaseBLibrary, projectsLibraryOpen]);
 
   useEffect(() => {
@@ -480,7 +492,7 @@ export default function ProjectsPage({ shared }) {
     setBusyActionKey(actionKey);
     try {
       await action();
-      await Promise.all([loadPhaseBLibrary(), refreshUserProjects()]);
+      await Promise.all([loadPhaseBLibrary({ preserveVisible: true }), refreshUserProjects()]);
     } finally {
       setBusyActionKey("");
     }
@@ -1221,7 +1233,7 @@ export default function ProjectsPage({ shared }) {
               </button>
             </div>
             <div style={{ display: "grid", gap: 6 }}>
-              {libraryLoading ? (
+              {showBlockingLibraryLoading ? (
                 <div style={{ fontSize: 13, color: THEME.textFaint, padding: "8px 4px" }}>Loading artists...</div>
               ) : visibleArtists.length === 0 ? (
                 <div style={{ fontSize: 13, color: THEME.textFaint, padding: "8px 4px" }}>
@@ -1247,7 +1259,7 @@ export default function ProjectsPage({ shared }) {
               </button>
             </div>
             <div style={{ display: "grid", gap: 6 }}>
-              {libraryLoading ? (
+              {showBlockingLibraryLoading ? (
                 <div style={{ fontSize: 13, color: THEME.textFaint, padding: "8px 4px" }}>Loading albums...</div>
               ) : visibleAlbums.length === 0 && unassignedAlbums.length === 0 ? (
                 <div style={{ fontSize: 13, color: THEME.textFaint, padding: "8px 4px" }}>
@@ -1289,7 +1301,7 @@ export default function ProjectsPage({ shared }) {
               </button>
             </div>
             <div style={{ display: "grid", gap: 6 }}>
-              {libraryLoading ? (
+              {showBlockingLibraryLoading ? (
                 <div style={{ fontSize: 13, color: THEME.textFaint, padding: "8px 4px" }}>Loading songs...</div>
               ) : visibleSongs.length === 0 && unassignedSongs.length === 0 ? (
                 <div style={{ fontSize: 13, color: THEME.textFaint, padding: "8px 4px" }}>

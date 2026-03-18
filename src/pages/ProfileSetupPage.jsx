@@ -3,6 +3,12 @@ import AppHeader from "../components/AppHeader";
 import { inputErrorText, inputHintText, inputImmersive, inputLabel } from "../utils/uiTokens";
 
 const DEFAULT_GENDER_VALUE = "prefer-not-to-say";
+const ONBOARDING_TRACE_ENABLED = false;
+
+function onboardingTrace(...args) {
+  if (!ONBOARDING_TRACE_ENABLED) return;
+  console.log(...args);
+}
 
 function parseStoredBirthday(value) {
   const raw = String(value || "").trim();
@@ -252,7 +258,7 @@ export default function ProfileSetupPage({ shared }) {
   }, []);
 
   const saveAndComplete = useCallback(async () => {
-    console.log("[ONBOARDING TRACE] ProfileSetupPage.saveAndComplete:start", {
+    onboardingTrace("[ONBOARDING TRACE] ProfileSetupPage.saveAndComplete:start", {
       onboardingStep: 3,
       payload: {
         displayName: String(displayName || "").trim(),
@@ -272,13 +278,13 @@ export default function ProfileSetupPage({ shared }) {
       avatarDataUrl: String(avatarDataUrl || ""),
     });
     if (result?.error) {
-      console.log("[ONBOARDING TRACE] ProfileSetupPage.saveAndComplete:save-error", {
+      onboardingTrace("[ONBOARDING TRACE] ProfileSetupPage.saveAndComplete:save-error", {
         error: result.error,
       });
       return;
     }
-    console.log("[ONBOARDING TRACE] ProfileSetupPage.saveAndComplete:save-success");
-    console.log("[ONBOARDING TRACE] ProfileSetupPage.saveAndComplete:post-save-action", {
+    onboardingTrace("[ONBOARDING TRACE] ProfileSetupPage.saveAndComplete:save-success");
+    onboardingTrace("[ONBOARDING TRACE] ProfileSetupPage.saveAndComplete:post-save-action", {
       actionTriggeredAfterSave: "onBackToEditor",
     });
     onBackToEditor?.();
@@ -292,7 +298,7 @@ export default function ProfileSetupPage({ shared }) {
   const canCompleteStep3 = String(heardAbout || "").trim().length > 0;
   const canAdvance = onboardingStep === 1 ? canContinueStep1 : onboardingStep === 2 ? canContinueStep2 : canCompleteStep3;
   const handleOnboardingPrimary = useCallback(async () => {
-    console.log("[ONBOARDING TRACE] ProfileSetupPage.handleOnboardingPrimary", {
+    onboardingTrace("[ONBOARDING TRACE] ProfileSetupPage.handleOnboardingPrimary", {
       onboardingStep,
       canAdvance,
       isSavingProfile,
@@ -301,7 +307,7 @@ export default function ProfileSetupPage({ shared }) {
     if (onboardingStep === 3) {
       setIsSavingProfile(true);
       try {
-        console.log("[ONBOARDING TRACE] ProfileSetupPage.handleOnboardingPrimary:save-start", {
+        onboardingTrace("[ONBOARDING TRACE] ProfileSetupPage.handleOnboardingPrimary:save-start", {
           onboardingStep,
         });
         await saveAndComplete();

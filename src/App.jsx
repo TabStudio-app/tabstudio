@@ -153,6 +153,12 @@ const NO_ALBUM_NAME = "No Album";
 const DEFAULT_SLOGAN_OFFSET_X = -4;
 const SLOGAN_INTRO_OFFSET_DELTA = 16;
 const EXPORT_BRANDING_TEXT = "www.tabstudio.app | Tabs, simplfied.";
+const ONBOARDING_TRACE_ENABLED = false;
+
+function onboardingTrace(...args) {
+  if (!ONBOARDING_TRACE_ENABLED) return;
+  console.log(...args);
+}
 
 function normalizeAffiliateLinkText(rawValue) {
   return String(rawValue || "")
@@ -372,7 +378,7 @@ function isProfileSetupComplete(rawProfile) {
   if (String(profile.gender || "").trim().length === 0) missingFields.push("gender");
   if (String(profile.birthday || "").trim().length === 0) missingFields.push("birthday");
   const result = missingFields.length === 0;
-  console.log("[ONBOARDING TRACE] isProfileSetupComplete", {
+  onboardingTrace("[ONBOARDING TRACE] isProfileSetupComplete", {
     profile,
     missingFields,
     result,
@@ -499,7 +505,7 @@ function resolvePlaceholderGuardPath(targetPath, routeState) {
     guardedPath = path;
   }
 
-  console.log("[ONBOARDING TRACE] resolvePlaceholderGuardPath", {
+  onboardingTrace("[ONBOARDING TRACE] resolvePlaceholderGuardPath", {
     currentPath: path,
     isAuthenticated,
     hasMembership,
@@ -512,7 +518,7 @@ function resolvePlaceholderGuardPath(targetPath, routeState) {
   });
 
   if (guardedPath === "/profile-setup" && path !== "/profile-setup") {
-    console.log("[ONBOARDING TRACE] redirecting-to-profile-setup", {
+    onboardingTrace("[ONBOARDING TRACE] redirecting-to-profile-setup", {
       fromPath: path,
       reason: guardReason,
       isAuthenticated,
@@ -802,7 +808,7 @@ export default function App() {
       if (session?.user?.id) {
         const existing = await getProfile(session.user.id);
         if (existing.error) {
-          console.log("[ONBOARDING TRACE] session-profile-read-failed", {
+          onboardingTrace("[ONBOARDING TRACE] session-profile-read-failed", {
             authUserId: session.user.id,
             error: existing.error,
           });
@@ -814,7 +820,7 @@ export default function App() {
               email: normalizedSessionEmail || null,
             });
             if (createdProfile.error) {
-              console.log("[ONBOARDING TRACE] session-profile-create-failed", {
+              onboardingTrace("[ONBOARDING TRACE] session-profile-create-failed", {
                 authUserId: session.user.id,
                 error: createdProfile.error,
               });
@@ -826,7 +832,7 @@ export default function App() {
               email: normalizedSessionEmail,
             });
             if (updatedProfile.error) {
-              console.log("[ONBOARDING TRACE] session-profile-email-sync-failed", {
+              onboardingTrace("[ONBOARDING TRACE] session-profile-email-sync-failed", {
                 authUserId: session.user.id,
                 error: updatedProfile.error,
               });
@@ -1042,12 +1048,12 @@ export default function App() {
         isProfileComplete: isProfileSetupComplete(nextPrePaymentUserState.profile),
         hasCheckoutIntent: true,
       });
-      console.log("[ONBOARDING TRACE] continueToCheckout:start", {
+      onboardingTrace("[ONBOARDING TRACE] continueToCheckout:start", {
         email: String(email || "").trim(),
         selectedPlan: safePlan,
         selectedBillingCycle: safeBillingCycle,
       });
-      console.log("[ONBOARDING TRACE] continueToCheckout:post-signup-guard-route", {
+      onboardingTrace("[ONBOARDING TRACE] continueToCheckout:post-signup-guard-route", {
         requestedPath: "/checkout",
         returnedGuardedRoute: postSignupGuardedRoute,
       });
@@ -1064,7 +1070,7 @@ export default function App() {
         selectedBillingCycle: safeBillingCycle,
         updatedAt: Date.now(),
       });
-      console.log("[ONBOARDING TRACE] continueToCheckout:navigate", {
+      onboardingTrace("[ONBOARDING TRACE] continueToCheckout:navigate", {
         finalRoutePushed: "/checkout",
       });
       navigateTo("/checkout");
@@ -1075,7 +1081,7 @@ export default function App() {
     const plan = normalizePlanId(selectedPlan);
     const billingCycle = normalizeBillingCycle(selectedBillingCycle);
     const existing = loadUserStateFromStorage();
-    console.log("[ONBOARDING TRACE] activateMembershipDevMode:start", {
+    onboardingTrace("[ONBOARDING TRACE] activateMembershipDevMode:start", {
       currentUserStateBeforeUpdate: existing,
       valuesBeingWritten: {
         isLoggedIn: true,
@@ -1098,7 +1104,7 @@ export default function App() {
       const existingProfile = await getProfile(supabaseUser.id);
       if (existingProfile.error) {
         profileWriteError = existingProfile.error;
-        console.log("[ONBOARDING TRACE] activateMembershipDevMode:profile-read-failed", {
+        onboardingTrace("[ONBOARDING TRACE] activateMembershipDevMode:profile-read-failed", {
           authUserId: supabaseUser.id,
           error: existingProfile.error,
         });
@@ -1108,13 +1114,13 @@ export default function App() {
           : await createProfile(supabaseUser.id, membershipProfileRow);
         if (profileWriteResult.error) {
           profileWriteError = profileWriteResult.error;
-          console.log("[ONBOARDING TRACE] activateMembershipDevMode:profile-save-failed", {
+          onboardingTrace("[ONBOARDING TRACE] activateMembershipDevMode:profile-save-failed", {
             authUserId: supabaseUser.id,
             error: profileWriteResult.error,
             usedOperation: existingProfile.data ? "updateProfile" : "createProfile",
           });
         } else {
-          console.log("[ONBOARDING TRACE] activateMembershipDevMode:profile-save-succeeded", {
+          onboardingTrace("[ONBOARDING TRACE] activateMembershipDevMode:profile-save-succeeded", {
             authUserId: supabaseUser.id,
             usedOperation: existingProfile.data ? "updateProfile" : "createProfile",
             persistedPlanTier: plan,
@@ -1142,7 +1148,7 @@ export default function App() {
     try {
       window.localStorage.setItem(LS_RESTORE_DRAFT_AFTER_MEMBERSHIP_KEY, "true");
     } catch {}
-    console.log("[ONBOARDING TRACE] activateMembershipDevMode:navigate", {
+    onboardingTrace("[ONBOARDING TRACE] activateMembershipDevMode:navigate", {
       finalRoutePushed: "/profile-setup",
     });
     navigateTo("/profile-setup");
@@ -1177,7 +1183,7 @@ export default function App() {
     async (profilePayload) => {
       const normalizedProfile = normalizeProfileData(profilePayload);
       let refreshedProfile = null;
-      console.log("[ONBOARDING TRACE] saveProfileSetup:start", {
+      onboardingTrace("[ONBOARDING TRACE] saveProfileSetup:start", {
         incomingProfilePayload: profilePayload,
         normalizedProfilePayload: normalizedProfile,
       });
@@ -1198,7 +1204,7 @@ export default function App() {
 
         const existing = await getProfile(supabaseUser.id);
         if (existing.error) {
-          console.log("[ONBOARDING TRACE] saveProfileSetup:supabase-read-failed", {
+          onboardingTrace("[ONBOARDING TRACE] saveProfileSetup:supabase-read-failed", {
             error: existing.error,
           });
           return { error: existing.error };
@@ -1209,26 +1215,26 @@ export default function App() {
           : await createProfile(supabaseUser.id, profileRow);
 
         if (result.error) {
-          console.log("[ONBOARDING TRACE] saveProfileSetup:supabase-save-failed", {
+          onboardingTrace("[ONBOARDING TRACE] saveProfileSetup:supabase-save-failed", {
             error: result.error,
             usedOperation: existing.data ? "updateProfile" : "createProfile",
           });
           return { error: result.error };
         }
-        console.log("[ONBOARDING TRACE] saveProfileSetup:supabase-save-succeeded", {
+        onboardingTrace("[ONBOARDING TRACE] saveProfileSetup:supabase-save-succeeded", {
           usedOperation: existing.data ? "updateProfile" : "createProfile",
           result: result.data,
         });
 
         const refreshed = await getProfile(supabaseUser.id);
         if (refreshed.error) {
-          console.log("[ONBOARDING TRACE] saveProfileSetup:supabase-refresh-failed", {
+          onboardingTrace("[ONBOARDING TRACE] saveProfileSetup:supabase-refresh-failed", {
             error: refreshed.error,
           });
           return { error: refreshed.error };
         }
         refreshedProfile = refreshed.data;
-        console.log("[ONBOARDING TRACE] saveProfileSetup:supabase-refreshed-profile", {
+        onboardingTrace("[ONBOARDING TRACE] saveProfileSetup:supabase-refreshed-profile", {
           refreshedProfile,
         });
       }
@@ -1254,7 +1260,7 @@ export default function App() {
         }));
       });
       setForcedProfileSetupAfterPayment(false);
-      console.log("[ONBOARDING TRACE] saveProfileSetup:local-profile-written", {
+      onboardingTrace("[ONBOARDING TRACE] saveProfileSetup:local-profile-written", {
         finalLocalUserStateProfileWritten: nextProfile,
       });
 
@@ -5293,6 +5299,7 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
   const [faqsOpen, setFaqsOpen] = useState(false);
   const [accountProfileOpen, setAccountProfileOpen] = useState(false);
   const [projectsLibraryOpen, setProjectsLibraryOpen] = useState(false);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
   const [uiDialog, setUiDialog] = useState(null);
   const [saveSoonNotice, setSaveSoonNotice] = useState("");
   const [editorSaveStatus, setEditorSaveStatus] = useState("");
@@ -7931,7 +7938,6 @@ function fillSelectedColumnWith(value) {
   const lockedFeatureTooltipVisible = !!lockedFeatureTooltip;
   const isTabbyHoverTooltipActive =
     isHoveringTabby && tabbyHoverTooltipVisible && !blockTabbyHoverTooltip && !lockedFeatureTooltipVisible;
-  const activeGridTabbyTooltipMode = isTabbyTourActive ? "tour" : lockedFeatureTooltipVisible ? "locked" : isTabbyHoverTooltipActive ? "hover" : "none";
   const gridTabbyBubblePlacement = "left-center";
   const gridTabbyBubbleLayout = useMemo(() => {
     if (gridTabbyBubblePlacement === "above-left") {
@@ -7953,16 +7959,7 @@ function fillSelectedColumnWith(value) {
       translateY: "-50%",
     };
   }, [gridTabbyBubblePlacement]);
-  const gridTabbyBubbleWidth = isTabbyTourActive ? "min(336px, calc(100vw - 56px))" : "min(272px, calc(100vw - 56px))";
-  const isGridTabbyTooltipVisible = activeGridTabbyTooltipMode !== "none";
   const isFinalTabbyTourStep = tourStep >= tabbyTourSteps.length;
-  const tabbyTourHighlightClassFor = useCallback(
-    (target) =>
-      isTabbyTourActive && Array.isArray(activeTabbyTourStep?.highlightTargets) && activeTabbyTourStep.highlightTargets.includes(target)
-        ? "tabby-highlight"
-        : "",
-    [isTabbyTourActive, activeTabbyTourStep]
-  );
   const getTabbyTourTargetElement = useCallback(() => {
     const targetRef =
       tabbyTourActiveTarget === "song-details"
@@ -8200,6 +8197,28 @@ function fillSelectedColumnWith(value) {
     readLocalStorageBool(LS_SETTINGS_FULLSCREEN_KEY, false)
   );
   const [helpMenuOpen, setHelpMenuOpen] = useState(false);
+  const isEditorGridActiveSurface = !projectsLibraryOpen && !exportModalOpen && !settingsOpen && !accountProfileOpen;
+  const isVisibleTabbyTourActive = isTabbyTourActive && isEditorGridActiveSurface;
+  const activeGridTabbyTooltipMode = !isEditorGridActiveSurface
+    ? "none"
+    : isVisibleTabbyTourActive
+    ? "tour"
+    : lockedFeatureTooltipVisible
+    ? "locked"
+    : isTabbyHoverTooltipActive
+    ? "hover"
+    : "none";
+  const gridTabbyBubbleWidth = isVisibleTabbyTourActive ? "min(336px, calc(100vw - 56px))" : "min(272px, calc(100vw - 56px))";
+  const isGridTabbyTooltipVisible = activeGridTabbyTooltipMode !== "none";
+  const tabbyTourHighlightClassFor = useCallback(
+    (target) =>
+      isVisibleTabbyTourActive &&
+      Array.isArray(activeTabbyTourStep?.highlightTargets) &&
+      activeTabbyTourStep.highlightTargets.includes(target)
+        ? "tabby-highlight"
+        : "",
+    [isVisibleTabbyTourActive, activeTabbyTourStep]
+  );
   const [helpMenuHoverPath, setHelpMenuHoverPath] = useState("");
   const settingsBtnRef = useRef(null);
   const helpBtnRef = useRef(null);
@@ -8755,7 +8774,6 @@ function fillSelectedColumnWith(value) {
   const [pdfShowTempo, setPdfShowTempo] = useState(true);
   const [pdfShowHeaderBranding, setPdfShowHeaderBranding] = useState(false);
   const [pdfRowGrouping, setPdfRowGrouping] = useState("fill");
-  const [exportModalOpen, setExportModalOpen] = useState(false);
   const [exportFormat, setExportFormat] = useState("pdf");
   const [imageExportRowIds, setImageExportRowIds] = useState([]);
   const [imageMultiExportMode, setImageMultiExportMode] = useState("individual");
@@ -9208,7 +9226,7 @@ function fillSelectedColumnWith(value) {
         closeUiDialog();
         return;
       }
-      if (isTabbyTourActive) {
+      if (isVisibleTabbyTourActive) {
         closeTabbyTourToIdle();
         return;
       }
@@ -9313,7 +9331,7 @@ function fillSelectedColumnWith(value) {
     artistMenuOpen,
     albumMenuOpen,
     settingsOpen,
-    isTabbyTourActive,
+    isVisibleTabbyTourActive,
     closeTabbyTourToIdle,
   ]);
 
@@ -12191,7 +12209,7 @@ function clearSelectedCells() {
         </div>
       </div>
 
-      {isTabbyTourActive ? (
+      {isVisibleTabbyTourActive ? (
         tabbyTourSpotlightRect && tabbyTourSpotlightRect.width > 0 && tabbyTourSpotlightRect.height > 0 ? (
           <>
             <div
@@ -12758,51 +12776,53 @@ function clearSelectedCells() {
             }}
           />
 
-            <TabbyAssistant
-              shared={{
-                activeGridTabbyTooltipMode,
-                activeTabbyTourStep,
-                blockTabbyHoverTooltip,
-                btnSecondary,
-                btnSmallPillClose,
-                closeTabbyTourToIdle,
-                finishTabbyTour,
-                goToMembershipFromFinalTourStep,
-                goToNextTabbyTourStep,
-                goToPrevTabbyTourStep,
-                gridTabbyBubbleLayout,
-                gridTabbyBubbleWidth,
-                gridTabbyHidden,
-                gridTabbyHiding,
-                isDarkMode,
-                isFinalTabbyTourStep,
-                isGridTabbyTooltipVisible,
-                isTabbyTourActive,
-                lockedFeatureTooltip,
-                lockedFeatureTooltipVisible,
-                onBecomeMemberFromLockedTooltip: handleLockedTooltipMembershipClick,
-                onHideAssistant: hideGridTabbyAssistant,
-                onOpenWalkthrough: openGridTabbyWalkthrough,
-                setBlockTabbyHoverTooltip,
-                setIsHoveringTabby,
-                setTabbyHoverTooltipVisible,
-                showGridTabbyOnboarding,
-                TABBY_ASSIST_MINT,
-                tabbyDark,
-                tabbyLight,
-                tabbyTourActionPrimaryClass,
-                tabbyTourStepsLength: tabbyTourSteps.length,
-                THEME,
-                tourStep,
-                VIEWPORT_TABBY_ASSET_MAX_WIDTH_PX,
-                VIEWPORT_TABBY_BOTTOM_PX,
-                VIEWPORT_TABBY_CONTAINER_SIZE_PX,
-                VIEWPORT_TABBY_GLOW_SIZE_PX,
-                VIEWPORT_TABBY_RIGHT_PX,
-                VIEWPORT_TABBY_Z_INDEX,
-                withAlpha,
-              }}
-            />
+            {isEditorGridActiveSurface ? (
+              <TabbyAssistant
+                shared={{
+                  activeGridTabbyTooltipMode,
+                  activeTabbyTourStep,
+                  blockTabbyHoverTooltip,
+                  btnSecondary,
+                  btnSmallPillClose,
+                  closeTabbyTourToIdle,
+                  finishTabbyTour,
+                  goToMembershipFromFinalTourStep,
+                  goToNextTabbyTourStep,
+                  goToPrevTabbyTourStep,
+                  gridTabbyBubbleLayout,
+                  gridTabbyBubbleWidth,
+                  gridTabbyHidden,
+                  gridTabbyHiding,
+                  isDarkMode,
+                  isFinalTabbyTourStep,
+                  isGridTabbyTooltipVisible,
+                  isTabbyTourActive: isVisibleTabbyTourActive,
+                  lockedFeatureTooltip,
+                  lockedFeatureTooltipVisible,
+                  onBecomeMemberFromLockedTooltip: handleLockedTooltipMembershipClick,
+                  onHideAssistant: hideGridTabbyAssistant,
+                  onOpenWalkthrough: openGridTabbyWalkthrough,
+                  setBlockTabbyHoverTooltip,
+                  setIsHoveringTabby,
+                  setTabbyHoverTooltipVisible,
+                  showGridTabbyOnboarding,
+                  TABBY_ASSIST_MINT,
+                  tabbyDark,
+                  tabbyLight,
+                  tabbyTourActionPrimaryClass,
+                  tabbyTourStepsLength: tabbyTourSteps.length,
+                  THEME,
+                  tourStep,
+                  VIEWPORT_TABBY_ASSET_MAX_WIDTH_PX,
+                  VIEWPORT_TABBY_BOTTOM_PX,
+                  VIEWPORT_TABBY_CONTAINER_SIZE_PX,
+                  VIEWPORT_TABBY_GLOW_SIZE_PX,
+                  VIEWPORT_TABBY_RIGHT_PX,
+                  VIEWPORT_TABBY_Z_INDEX,
+                  withAlpha,
+                }}
+              />
+            ) : null}
           </div>
 
           {/* Completed rows */}
