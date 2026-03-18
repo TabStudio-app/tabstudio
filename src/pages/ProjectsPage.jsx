@@ -55,6 +55,7 @@ export default function ProjectsPage({ shared }) {
   const [libraryLoadError, setLibraryLoadError] = useState("");
   const [unassignedAlbumsOpen, setUnassignedAlbumsOpen] = useState(false);
   const [unassignedSongsOpen, setUnassignedSongsOpen] = useState(false);
+  const [hoveredRowKey, setHoveredRowKey] = useState("");
   const [dragState, setDragState] = useState(null);
   const [dropTargetKey, setDropTargetKey] = useState("");
   const [libraryRecords, setLibraryRecords] = useState({
@@ -290,6 +291,39 @@ export default function ProjectsPage({ shared }) {
     );
   }
 
+  async function unassignLegacyProjectsByArtist(artistName) {
+    const matchingProjects = legacyProjects.filter((project) => project.artist === String(artistName || "").trim());
+    await Promise.all(
+      matchingProjects.map((project) =>
+        updateProject(
+          project.id,
+          buildLegacyPayload(project, {
+            artist: "",
+          })
+        )
+      )
+    );
+  }
+
+  async function unassignLegacyProjectsByAlbum({ artist = "", album = "" }) {
+    const matchingProjects = legacyProjects.filter(
+      (project) =>
+        project.artist === String(artist || "").trim() &&
+        project.album === String(album || "").trim()
+    );
+    await Promise.all(
+      matchingProjects.map((project) =>
+        updateProject(
+          project.id,
+          buildLegacyPayload(project, {
+            artist: "",
+            album: "",
+          })
+        )
+      )
+    );
+  }
+
   async function syncLegacySongProject(project, { title, albumId }) {
     if (!project?.legacyProjectId) return;
     const legacyProject = legacyProjects.find((entry) => entry.id === project.legacyProjectId);
@@ -419,11 +453,12 @@ export default function ProjectsPage({ shared }) {
 
   function openRenameDialog(config) {
     setDialogState({
+      ...config,
       type: "rename",
       title: config.title,
       label: config.label,
       value: config.initialValue,
-      confirmLabel: "Save",
+      confirmLabel: config.confirmLabel || "Save",
       onConfirm: config.onConfirm,
     });
   }
@@ -492,6 +527,16 @@ export default function ProjectsPage({ shared }) {
     );
   }
 
+  function getActionButtonStyle(baseStyle, visible) {
+    return {
+      ...baseStyle,
+      opacity: visible ? 1 : 0,
+      pointerEvents: visible ? "auto" : "none",
+      transform: visible ? "translateX(0)" : "translateX(4px)",
+      transition: "opacity 140ms ease, transform 140ms ease",
+    };
+  }
+
   function startDrag(payload) {
     return (e) => {
       setDragState(payload);
@@ -520,39 +565,138 @@ export default function ProjectsPage({ shared }) {
     };
   }
 
-  async function moveAlbumToArtist(albumId, targetArtist) {
+  async function applyAlbumArtistReassignment(albumId, targetArtist) {
     const sourceAlbum = phaseBAlbums.find((album) => album.id === String(albumId || ""));
     if (!sourceAlbum || !targetArtist?.id || sourceAlbum.artistId === targetArtist.id) return;
     const currentArtistName = sourceAlbum.artistId ? artistNameById.get(sourceAlbum.artistId) || "" : "";
+    const { error } = await supabase.from("albums").update({ artist_id: targetArtist.id }).eq("id", sourceAlbum.id);
+    if (error) throw error;
+    await syncLegacyAlbumProjects({
+      currentArtist: currentArtistName,
+      currentAlbum: sourceAlbum.title,
+      nextArtist: targetArtist.name,
+      nextAlbum: sourceAlbum.title,
+    });
+    if (selectedLibraryAlbumName === sourceAlbum.title) {
+      setSelectedLibraryArtistKey(targetArtist.name);
+      setArtist(targetArtist.name);
+    }
+  }
+
+  async function moveAlbumToArtist(albumId, targetArtist) {
+    const sourceAlbum = phaseBAlbums.find((album) => album.id === String(albumId || ""));
+    if (!sourceAlbum || !targetArtist?.id || sourceAlbum.artistId === targetArtist.id) return;
     await withRefresh(`move:album:${sourceAlbum.id}`, async () => {
-      const { error } = await supabase.from("albums").update({ artist_id: targetArtist.id }).eq("id", sourceAlbum.id);
-      if (error) throw error;
-      await syncLegacyAlbumProjects({
-        currentArtist: currentArtistName,
-        currentAlbum: sourceAlbum.title,
-        nextArtist: targetArtist.name,
-        nextAlbum: sourceAlbum.title,
-      });
-      if (selectedLibraryAlbumName === sourceAlbum.title) {
-        setSelectedLibraryArtistKey(targetArtist.name);
-        setArtist(targetArtist.name);
+      await applyAlbumArtistReassignment(albumId, targetArtist);
+    });
+  }
+
+  async function saveAlbumEdits(albumRecord, { title, artistId }) {
+    const nextTitle = String(title || "").trim();
+    const nextArtistId = String(artistId || "").trim();
+    const currentArtistName = albumRecord.artistId ? artistNameById.get(albumRecord.artistId) || "" : "";
+    const nextArtistName = nextArtistId ? artistNameById.get(nextArtistId) || "" : "";
+    if (!nextTitle) return;
+
+    await withRefresh(`album:${albumRecord.id}`, async () => {
+      if ((albumRecord.artistId || "") !== nextArtistId && nextArtistId) {
+        await applyAlbumArtistReassignment(albumRecord.id, { id: nextArtistId, name: nextArtistName });
+      } else if ((albumRecord.artistId || "") !== nextArtistId) {
+        const { error } = await supabase.from("albums").update({ artist_id: null }).eq("id", albumRecord.id);
+        if (error) throw error;
+        await syncLegacyAlbumProjects({
+          currentArtist: currentArtistName,
+          currentAlbum: albumRecord.title,
+          nextArtist: "",
+          nextAlbum: albumRecord.title,
+        });
+      }
+
+      if (albumRecord.title !== nextTitle) {
+        const { error } = await supabase.from("albums").update({ title: nextTitle }).eq("id", albumRecord.id);
+        if (error) throw error;
+        if ((albumRecord.artistId || "") === nextArtistId) {
+          await renameProjectsAlbum({
+            artist: currentArtistName,
+            currentAlbum: albumRecord.title,
+            nextAlbum: nextTitle,
+          });
+        } else {
+          await syncLegacyAlbumProjects({
+            currentArtist: nextArtistName,
+            currentAlbum: albumRecord.title,
+            nextArtist: nextArtistName,
+            nextAlbum: nextTitle,
+          });
+        }
+      }
+
+      if (selectedLibraryAlbumName === albumRecord.title) {
+        setSelectedLibraryArtistKey(nextArtistName);
+        setArtist(nextArtistName);
+        setSelectedLibraryAlbumName(nextTitle);
+        setAlbumName(nextTitle);
       }
     });
+  }
+
+  async function applySongAlbumReassignment(songId, targetAlbum) {
+    const sourceSong = savedProjects.find((project) => project.id === String(songId || ""));
+    if (!sourceSong || !targetAlbum?.id || sourceSong.albumId === targetAlbum.id) return;
+    const targetArtistName = targetAlbum.artistId ? artistNameById.get(targetAlbum.artistId) || "" : "";
+    const { error } = await supabase.from("songs").update({ album_id: targetAlbum.id }).eq("id", sourceSong.id);
+    if (error) throw error;
+    await syncLegacySongProject(sourceSong, { title: sourceSong.title, albumId: targetAlbum.id });
+    if (selectedLibrarySongName === sourceSong.title) {
+      setSelectedLibraryArtistKey(targetArtistName);
+      setArtist(targetArtistName);
+      setSelectedLibraryAlbumName(targetAlbum.title);
+      setAlbumName(targetAlbum.title);
+    }
   }
 
   async function moveSongToAlbum(songId, targetAlbum) {
     const sourceSong = savedProjects.find((project) => project.id === String(songId || ""));
     if (!sourceSong || !targetAlbum?.id || sourceSong.albumId === targetAlbum.id) return;
-    const targetArtistName = targetAlbum.artistId ? artistNameById.get(targetAlbum.artistId) || "" : "";
     await withRefresh(`move:song:${sourceSong.id}`, async () => {
-      const { error } = await supabase.from("songs").update({ album_id: targetAlbum.id }).eq("id", sourceSong.id);
-      if (error) throw error;
-      await syncLegacySongProject(sourceSong, { title: sourceSong.title, albumId: targetAlbum.id });
-      if (selectedLibrarySongName === sourceSong.title) {
+      await applySongAlbumReassignment(songId, targetAlbum);
+    });
+  }
+
+  async function saveSongEdits(project, { title, albumId }) {
+    const nextTitle = String(title || "").trim();
+    const nextAlbumId = String(albumId || "").trim();
+    const targetAlbum = phaseBAlbums.find((album) => album.id === nextAlbumId) || null;
+    const targetArtistName = targetAlbum?.artistId ? artistNameById.get(targetAlbum.artistId) || "" : "";
+    if (!nextTitle) return;
+
+    await withRefresh(`song:${project.id}`, async () => {
+      if ((project.albumId || "") !== nextAlbumId && targetAlbum) {
+        await applySongAlbumReassignment(project.id, targetAlbum);
+      } else if ((project.albumId || "") !== nextAlbumId) {
+        const { error } = await supabase.from("songs").update({ album_id: null }).eq("id", project.id);
+        if (error) throw error;
+        await syncLegacySongProject(project, { title: project.title, albumId: "" });
+        if (selectedLibrarySongName === project.title) {
+          setSelectedLibraryArtistKey("");
+          setArtist("");
+          setSelectedLibraryAlbumName("");
+          setAlbumName("");
+        }
+      }
+
+      if (project.title !== nextTitle) {
+        const { error } = await supabase.from("songs").update({ title: nextTitle }).eq("id", project.id);
+        if (error) throw error;
+        await syncLegacySongProject(project, { title: nextTitle, albumId: nextAlbumId });
+      }
+
+      if (selectedLibrarySongName === project.title) {
+        setSelectedLibrarySongName(nextTitle);
         setSelectedLibraryArtistKey(targetArtistName);
         setArtist(targetArtistName);
-        setSelectedLibraryAlbumName(targetAlbum.title);
-        setAlbumName(targetAlbum.title);
+        setSelectedLibraryAlbumName(String(targetAlbum?.title || ""));
+        setAlbumName(String(targetAlbum?.title || ""));
       }
     });
   }
@@ -573,11 +717,21 @@ export default function ProjectsPage({ shared }) {
     const artistName = artistRecord.name;
     const active = selectedLibraryArtistLabel === artistName;
     const actionKey = `artist:${artistRecord.id}`;
+    const rowKey = `artist-row:${artistRecord.id}`;
+    const actionsVisible = hoveredRowKey === rowKey || active;
     const albumIds = phaseBAlbums.filter((album) => album.artistId === artistRecord.id).map((album) => album.id);
     const isDropTarget = dropTargetKey === `artist:${artistRecord.id}`;
     return (
       <div
         key={artistRecord.id}
+        onPointerEnter={() => setHoveredRowKey(rowKey)}
+        onPointerLeave={() => setHoveredRowKey((prev) => (prev === rowKey ? "" : prev))}
+        onFocusCapture={() => setHoveredRowKey(rowKey)}
+        onBlurCapture={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget)) {
+            setHoveredRowKey((prev) => (prev === rowKey ? "" : prev));
+          }
+        }}
         onDragOver={allowDrop("album", `artist:${artistRecord.id}`)}
         onDragLeave={leaveDropTarget(`artist:${artistRecord.id}`)}
         onDrop={(e) => {
@@ -662,7 +816,7 @@ export default function ProjectsPage({ shared }) {
                 },
               })
             }
-            style={{ ...actionEditBtn, height: 28, width: 28, minWidth: 28, borderRadius: 8 }}
+            style={getActionButtonStyle({ ...actionEditBtn, height: 28, width: 28, minWidth: 28, borderRadius: 8 }, actionsVisible)}
             title={`Edit ${artistName}`}
             aria-label={`Edit ${artistName}`}
           >
@@ -673,24 +827,22 @@ export default function ProjectsPage({ shared }) {
             onClick={() =>
               openDeleteDialog({
                 title: "Delete artist?",
-                message: `"${artistName}" and all albums/songs will be removed.`,
+                message: `"${artistName}" will be removed. Albums will become unassigned.`,
                 onDelete: async () => {
                   await withRefresh(actionKey, async () => {
                     if (albumIds.length > 0) {
-                      const { error: songsError } = await supabase.from("songs").delete().in("album_id", albumIds);
-                      if (songsError) throw songsError;
-                      const { error: albumsError } = await supabase.from("albums").delete().in("id", albumIds);
+                      const { error: albumsError } = await supabase.from("albums").update({ artist_id: null }).in("id", albumIds);
                       if (albumsError) throw albumsError;
                     }
                     const { error } = await supabase.from("artists").delete().eq("id", artistRecord.id);
                     if (error) throw error;
-                    await deleteProjectsByArtist(artistName);
+                    await unassignLegacyProjectsByArtist(artistName);
                     if (selectedLibraryArtistLabel === artistName) clearProjectsSelection();
                   });
                 },
               })
             }
-            style={{ ...actionDeleteBtn, height: 28, width: 28, minWidth: 28, borderRadius: 8 }}
+            style={getActionButtonStyle({ ...actionDeleteBtn, height: 28, width: 28, minWidth: 28, borderRadius: 8 }, actionsVisible)}
             aria-label={`Delete ${artistName}`}
           >
             ×
@@ -705,11 +857,21 @@ export default function ProjectsPage({ shared }) {
     const albumArtistName = artistNameById.get(albumRecord.artistId) || "";
     const active = selectedLibraryAlbumName === albumName;
     const actionKey = `album:${albumRecord.id}`;
+    const rowKey = `album-row:${albumRecord.id}`;
+    const actionsVisible = hoveredRowKey === rowKey || active;
     const isSongDropTarget = dropTargetKey === `album-song:${albumRecord.id}`;
     return (
       <div
         key={albumRecord.id}
         draggable
+        onPointerEnter={() => setHoveredRowKey(rowKey)}
+        onPointerLeave={() => setHoveredRowKey((prev) => (prev === rowKey ? "" : prev))}
+        onFocusCapture={() => setHoveredRowKey(rowKey)}
+        onBlurCapture={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget)) {
+            setHoveredRowKey((prev) => (prev === rowKey ? "" : prev));
+          }
+        }}
         onDragStart={startDrag({ type: "album", id: albumRecord.id })}
         onDragEnd={clearDragState}
         onDragOver={allowDrop("song", `album-song:${albumRecord.id}`)}
@@ -786,40 +948,15 @@ export default function ProjectsPage({ shared }) {
                 assignmentArtistId: albumRecord.artistId || "",
                 onConfirm: async (form) => {
                   const nextValue = String(form?.value || "").trim();
-                  const nextArtistId = String(form?.assignmentArtistId || "").trim();
-                  const nextArtistName = nextArtistId ? artistNameById.get(nextArtistId) || "" : "";
                   if (!nextValue) return;
-                  await withRefresh(actionKey, async () => {
-                    const { error } = await supabase
-                      .from("albums")
-                      .update({ title: nextValue, artist_id: nextArtistId || null })
-                      .eq("id", albumRecord.id);
-                    if (error) throw error;
-                    if ((albumRecord.artistId || "") === nextArtistId) {
-                      await renameProjectsAlbum({
-                        artist: selectedLibraryArtistLabel,
-                        currentAlbum: albumName,
-                        nextAlbum: nextValue,
-                      });
-                    } else {
-                      await syncLegacyAlbumProjects({
-                        currentArtist: selectedLibraryArtistLabel,
-                        currentAlbum: albumName,
-                        nextArtist: nextArtistName,
-                        nextAlbum: nextValue,
-                      });
-                    }
-                    if (selectedLibraryAlbumName === albumName) {
-                      setSelectedLibraryArtistKey(nextArtistName);
-                      setArtist(nextArtistName);
-                      setSelectedLibraryAlbumName(nextValue);
-                      setAlbumName(nextValue);
-                    }
+                  await saveAlbumEdits(albumRecord, {
+                    title: nextValue,
+                    artistId: String(form?.assignmentArtistId || ""),
                   });
                 },
               })
             }
-            style={{ ...actionEditBtn, height: 28, width: 28, minWidth: 28, borderRadius: 8 }}
+            style={getActionButtonStyle({ ...actionEditBtn, height: 28, width: 28, minWidth: 28, borderRadius: 8 }, actionsVisible)}
             title={`Edit ${albumName}`}
             aria-label={`Edit ${albumName}`}
           >
@@ -830,14 +967,14 @@ export default function ProjectsPage({ shared }) {
             onClick={() =>
               openDeleteDialog({
                 title: "Delete album?",
-                message: `"${albumName}" and all songs in it will be removed.`,
+                message: `"${albumName}" will be removed. Songs will become unassigned.`,
                 onDelete: async () => {
                   await withRefresh(actionKey, async () => {
-                    const { error: songsError } = await supabase.from("songs").delete().eq("album_id", albumRecord.id);
+                    const { error: songsError } = await supabase.from("songs").update({ album_id: null }).eq("album_id", albumRecord.id);
                     if (songsError) throw songsError;
                     const { error } = await supabase.from("albums").delete().eq("id", albumRecord.id);
                     if (error) throw error;
-                    await deleteProjectsByAlbum({ artist: selectedLibraryArtistLabel, album: albumName });
+                    await unassignLegacyProjectsByAlbum({ artist: selectedLibraryArtistLabel, album: albumName });
                     if (selectedLibraryAlbumName === albumName) {
                       setSelectedLibraryAlbumName("");
                       setSelectedLibrarySongName("");
@@ -847,7 +984,7 @@ export default function ProjectsPage({ shared }) {
                 },
               })
             }
-            style={{ ...actionDeleteBtn, height: 28, width: 28, minWidth: 28, borderRadius: 8 }}
+            style={getActionButtonStyle({ ...actionDeleteBtn, height: 28, width: 28, minWidth: 28, borderRadius: 8 }, actionsVisible)}
             aria-label={`Delete ${albumName}`}
           >
             ×
@@ -863,10 +1000,20 @@ export default function ProjectsPage({ shared }) {
     const openBusy = String(projectActionBusyId || "") === String(project.id || "");
     const editBusy = busyActionKey === `song:${project.id}`;
     const selected = selectedLibrarySongName === project.title;
+    const rowKey = `song-row:${project.id}`;
+    const actionsVisible = hoveredRowKey === rowKey || active || selected;
     return (
       <div
         key={project.id || `${project.artist}__${project.album}__${project.title}`}
         draggable
+        onPointerEnter={() => setHoveredRowKey(rowKey)}
+        onPointerLeave={() => setHoveredRowKey((prev) => (prev === rowKey ? "" : prev))}
+        onFocusCapture={() => setHoveredRowKey(rowKey)}
+        onBlurCapture={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget)) {
+            setHoveredRowKey((prev) => (prev === rowKey ? "" : prev));
+          }
+        }}
         onDragStart={startDrag({ type: "song", id: project.id })}
         onDragEnd={clearDragState}
       >
@@ -896,7 +1043,7 @@ export default function ProjectsPage({ shared }) {
               void openSupabaseProject(project);
             }}
             disabled={openBusy}
-            style={{ ...btnSecondary, height: 28, padding: "0 9px", fontSize: 11, borderRadius: 8 }}
+            style={getActionButtonStyle({ ...btnSecondary, height: 28, padding: "0 9px", fontSize: 11, borderRadius: 8 }, actionsVisible)}
           >
             {openBusy ? "Opening..." : "Open"}
           </button>
@@ -910,30 +1057,16 @@ export default function ProjectsPage({ shared }) {
                 assignmentAlbumId: project.albumId || "",
                 onConfirm: async (form) => {
                   const nextValue = String(form?.value || "").trim();
-                  const nextAlbumId = String(form?.assignmentAlbumId || "").trim();
-                  const targetAlbum = phaseBAlbums.find((album) => album.id === nextAlbumId) || null;
-                  const targetArtistName = targetAlbum?.artistId ? artistNameById.get(targetAlbum.artistId) || "" : "";
                   if (!nextValue) return;
-                  await withRefresh(`song:${project.id}`, async () => {
-                    const { error } = await supabase
-                      .from("songs")
-                      .update({ title: nextValue, album_id: nextAlbumId || null })
-                      .eq("id", project.id);
-                    if (error) throw error;
-                    await syncLegacySongProject(project, { title: nextValue, albumId: nextAlbumId });
-                    if (selectedLibrarySongName === project.title) setSelectedLibrarySongName(nextValue);
-                    if (selectedLibraryAlbumName === project.album) {
-                      setSelectedLibraryArtistKey(targetArtistName);
-                      setArtist(targetArtistName);
-                      setSelectedLibraryAlbumName(String(targetAlbum?.title || ""));
-                      setAlbumName(String(targetAlbum?.title || ""));
-                    }
+                  await saveSongEdits(project, {
+                    title: nextValue,
+                    albumId: String(form?.assignmentAlbumId || ""),
                   });
                 },
               })
             }
             disabled={editBusy}
-            style={{ ...actionEditBtn, height: 28, width: 28, minWidth: 28, borderRadius: 8 }}
+            style={getActionButtonStyle({ ...actionEditBtn, height: 28, width: 28, minWidth: 28, borderRadius: 8 }, actionsVisible)}
             title={`Edit ${project.title || "song"}`}
             aria-label={`Edit ${project.title || "song"}`}
           >
@@ -958,7 +1091,7 @@ export default function ProjectsPage({ shared }) {
               })
             }
             disabled={editBusy}
-            style={{ ...actionDeleteBtn, height: 28, width: 28, minWidth: 28, borderRadius: 8 }}
+            style={getActionButtonStyle({ ...actionDeleteBtn, height: 28, width: 28, minWidth: 28, borderRadius: 8 }, actionsVisible)}
             aria-label={`Delete ${project.title || "song"}`}
           >
             ×
