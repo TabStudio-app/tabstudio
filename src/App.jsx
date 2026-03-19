@@ -5509,6 +5509,156 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
     void refreshUserProjects();
   }, [isLoggedIn, refreshUserProjects]);
 
+  async function requireAuthenticatedSupabaseUserId() {
+    const {
+      data: { user },
+      error,
+    } = await supabase.auth.getUser();
+    if (error) throw error;
+    if (!user?.id) throw new Error("You must be signed in before saving.");
+    return String(user.id);
+  }
+
+  async function findOrCreatePhaseBArtist(userId, artistName) {
+    const cleanArtistName = String(artistName || "").trim();
+    if (!cleanArtistName || cleanArtistName === "Unsorted") return null;
+
+    const existingArtist = await supabase
+      .from("artists")
+      .select("id, name")
+      .eq("user_id", userId)
+      .eq("name", cleanArtistName)
+      .limit(1)
+      .maybeSingle();
+    if (existingArtist.error) throw existingArtist.error;
+    if (existingArtist.data?.id) {
+      return { id: String(existingArtist.data.id), name: String(existingArtist.data.name || cleanArtistName) };
+    }
+
+    const createdArtist = await supabase
+      .from("artists")
+      .insert({ user_id: userId, name: cleanArtistName })
+      .select("id, name")
+      .single();
+    if (createdArtist.error) throw createdArtist.error;
+    return { id: String(createdArtist.data.id), name: String(createdArtist.data.name || cleanArtistName) };
+  }
+
+  async function findOrCreatePhaseBAlbum(userId, albumName, artistId) {
+    const cleanAlbumName = String(albumName || "").trim();
+    if (!cleanAlbumName || cleanAlbumName === NO_ALBUM_NAME) return null;
+
+    let albumLookup = supabase.from("albums").select("id, title, artist_id").eq("user_id", userId).eq("title", cleanAlbumName).limit(1);
+    albumLookup = artistId ? albumLookup.eq("artist_id", artistId) : albumLookup.is("artist_id", null);
+    const existingAlbum = await albumLookup.maybeSingle();
+    if (existingAlbum.error) throw existingAlbum.error;
+    if (existingAlbum.data?.id) {
+      return {
+        id: String(existingAlbum.data.id),
+        title: String(existingAlbum.data.title || cleanAlbumName),
+        artistId: String(existingAlbum.data.artist_id || ""),
+      };
+    }
+
+    const createdAlbum = await supabase
+      .from("albums")
+      .insert({
+        user_id: userId,
+        title: cleanAlbumName,
+        artist_id: artistId || null,
+      })
+      .select("id, title, artist_id")
+      .single();
+    if (createdAlbum.error) throw createdAlbum.error;
+    return {
+      id: String(createdAlbum.data.id),
+      title: String(createdAlbum.data.title || cleanAlbumName),
+      artistId: String(createdAlbum.data.artist_id || ""),
+    };
+  }
+
+  async function syncPhaseBSongSnapshot({ title, artistName, albumName, snapshot }) {
+    const userId = await requireAuthenticatedSupabaseUserId();
+    const artistRecord = await findOrCreatePhaseBArtist(userId, artistName);
+    const albumRecord = await findOrCreatePhaseBAlbum(userId, albumName, artistRecord?.id || "");
+    const targetAlbumId = String(albumRecord?.id || "");
+    const cleanTitle = String(title || "").trim();
+    const snapshotPayload = {
+      ...cloneJson(snapshot, {}),
+      songId: String(currentLoadedSongId || snapshot?.songId || ""),
+      songName: cleanTitle,
+      artistName: String(artistName || "").trim() || "Unsorted",
+      albumName: String(albumName || "").trim() || NO_ALBUM_NAME,
+    };
+
+    const currentSongId = String(currentLoadedSongId || "").trim();
+    if (currentSongId) {
+      const updatedSong = await supabase
+        .from("songs")
+        .update({
+          title: cleanTitle,
+          album_id: targetAlbumId || null,
+          project_data: snapshotPayload,
+        })
+        .eq("id", currentSongId)
+        .eq("user_id", userId)
+        .select("id, title, album_id")
+        .maybeSingle();
+      if (updatedSong.error) throw updatedSong.error;
+      if (updatedSong.data?.id) {
+        return {
+          id: String(updatedSong.data.id),
+          title: String(updatedSong.data.title || cleanTitle),
+          albumId: String(updatedSong.data.album_id || ""),
+        };
+      }
+    }
+
+    let songLookup = supabase.from("songs").select("id, title, album_id").eq("user_id", userId).eq("title", cleanTitle).limit(1);
+    songLookup = targetAlbumId ? songLookup.eq("album_id", targetAlbumId) : songLookup.is("album_id", null);
+    const existingSong = await songLookup.maybeSingle();
+    if (existingSong.error) throw existingSong.error;
+
+    if (existingSong.data?.id) {
+      const updatedExistingSong = await supabase
+        .from("songs")
+        .update({
+          album_id: targetAlbumId || null,
+          project_data: {
+            ...snapshotPayload,
+            songId: String(existingSong.data.id),
+          },
+        })
+        .eq("id", existingSong.data.id)
+        .eq("user_id", userId)
+        .select("id, title, album_id")
+        .single();
+      if (updatedExistingSong.error) throw updatedExistingSong.error;
+      return {
+        id: String(updatedExistingSong.data.id),
+        title: String(updatedExistingSong.data.title || cleanTitle),
+        albumId: String(updatedExistingSong.data.album_id || ""),
+      };
+    }
+
+    const createdSong = await supabase
+      .from("songs")
+      .insert({
+        user_id: userId,
+        title: cleanTitle,
+        album_id: targetAlbumId || null,
+        project_data: snapshotPayload,
+      })
+      .select("id, title, album_id")
+      .single();
+    if (createdSong.error) throw createdSong.error;
+    return {
+      id: String(createdSong.data.id),
+      title: String(createdSong.data.title || cleanTitle),
+      albumId: String(createdSong.data.album_id || ""),
+    };
+  }
+
   async function openSupabaseProject(projectInput) {
     const inlineProject = projectInput && typeof projectInput === "object" ? projectInput : null;
     const id = String(inlineProject?.id || projectInput || "").trim();
@@ -5519,10 +5669,16 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
     setProjectsLoadError("");
     try {
       const project = inlineProject || (await getProjectById(id));
+      const inlineSongId = inlineProject ? String(project?.id || "") : "";
       const snapshot =
         project?.project_data && typeof project.project_data === "object"
-          ? { ...project.project_data, songName: project.title || project.project_data.songName || "" }
+          ? {
+              ...project.project_data,
+              songId: inlineSongId || String(project?.project_data?.songId || ""),
+              songName: project.title || project.project_data.songName || "",
+            }
           : {
+              songId: inlineSongId,
               songName: project?.title || "",
               artistName: project?.artist || "",
               albumName: project?.album || "",
@@ -5533,9 +5689,17 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
       setArtist(String(project?.artist || snapshot.artistName || ""));
       setAlbumName(String(project?.album || snapshot.albumName || ""));
       setCurrentProjectId(inlineProject ? String(project?.legacyProjectId || "") : String(project?.id || ""));
+      setCurrentLoadedSongId(String(snapshot.songId || ""));
+      setCurrentLoadedSongPath(
+        inlineProject
+          ? {
+              artistName: String(project?.artist || snapshot.artistName || ""),
+              albumName: String(project?.album || snapshot.albumName || ""),
+              songName: String(project?.title || snapshot.songName || ""),
+            }
+          : null
+      );
       setProjectsLibraryOpen(false);
-      setCurrentLoadedSongId("");
-      setCurrentLoadedSongPath(null);
       await refreshUserProjects();
     } catch (error) {
       setProjectsLoadError(String(error?.message || "Unable to open this project."));
@@ -5576,6 +5740,14 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
       snapshot.albumName = targetAlbumName;
 
       try {
+        const syncedSong = await syncPhaseBSongSnapshot({
+          title: cleanSongName,
+          artistName: targetArtistName,
+          albumName: targetAlbumName,
+          snapshot,
+        });
+        snapshot.songId = String(syncedSong?.id || "");
+
         const projectRecord = currentProjectId
           ? await updateProject(currentProjectId, {
               title: cleanSongName,
@@ -5590,6 +5762,12 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
               projectData: snapshot,
             });
 
+        setCurrentLoadedSongId(String(syncedSong?.id || ""));
+        setCurrentLoadedSongPath({
+          artistName: targetArtistName,
+          albumName: targetAlbumName,
+          songName: cleanSongName,
+        });
         setCurrentProjectId(String(projectRecord?.id || ""));
         setUserProjects((prev) => {
           const next = Array.isArray(prev) ? prev.filter((item) => item?.id !== projectRecord?.id) : [];
@@ -5620,6 +5798,7 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
     [
       canSaveTabs,
       currentProjectId,
+      currentLoadedSongId,
       isLoggedIn,
       navigateTo,
       albumName,
