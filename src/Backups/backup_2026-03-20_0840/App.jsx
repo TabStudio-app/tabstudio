@@ -86,7 +86,6 @@ const MAX_COLS = 64;
 const DEFAULT_COLS_AUTO_DELAY_MS = 1000;
 const EDITOR_AUTOSAVE_DELAY_MS = 1400;
 const EDITOR_AUTOSAVE_RETRY_MS = 4000;
-const EDITOR_SETTLED_SAVE_MAX_PASSES = 4;
 
 const LS_USER_TUNINGS_KEY = "tab_editor_user_tunings_v1";
 const LS_USER_CHORDS_KEY = "tab_editor_user_chords_v1";
@@ -1709,19 +1708,6 @@ function projectSnapshotSignature(snapshot) {
   } catch {
     return "";
   }
-}
-
-function shouldRunImmediateFollowUpSave(reason) {
-  const value = String(reason || "").trim().toLowerCase();
-  if (!value) return false;
-  return (
-    value.includes("switch-document") ||
-    value.includes("final-flush") ||
-    value.includes("beforeunload") ||
-    value.includes("pagehide") ||
-    value.includes("unmount") ||
-    value.includes("manual")
-  );
 }
 
 function normalizeTuningNote(value) {
@@ -5371,6 +5357,7 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
   const queuedSaveRef = useRef(false);
   const pendingManualSaveRef = useRef(false);
   const savePromiseRef = useRef(null);
+  const flushProjectSaveRef = useRef(null);
   const lastFlushedProjectSignatureRef = useRef("");
   const lastFailedSaveSignatureRef = useRef("");
   const currentProjectSignatureRef = useRef("");
@@ -5749,7 +5736,7 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
     const id = String(inlineProject?.id || projectInput || "").trim();
     if (!id) return;
     if (hasUnflushedEditorChanges && canSaveTabs && isLoggedIn && String(songTitle || "").trim()) {
-      await flushProjectSaveUntilSettled({ reason: "switch-document" });
+      await flushProjectSave({ manual: false, reason: "switch-document" });
     }
 
     setProjectActionBusyId(id);
@@ -5975,8 +5962,7 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
           pendingManualSaveRef.current = false;
 
           if (saveSucceeded && shouldRunAnotherPass && canSaveTabs && isLoggedIn && String(songTitle || "").trim()) {
-            const followUpDelayMs = shouldRunManualPass || shouldRunImmediateFollowUpSave(reason) ? 0 : 250;
-            scheduleProjectSave(followUpDelayMs, {
+            scheduleProjectSave(shouldRunManualPass ? 0 : 250, {
               manual: shouldRunManualPass,
               reason: shouldRunManualPass ? "manual-queued" : `${reason}-queued`,
             });
@@ -5999,34 +5985,6 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
     ]
   );
 
-  const flushProjectSaveUntilSettled = useCallback(
-    async ({ reason = "switch-document", maxPasses = EDITOR_SETTLED_SAVE_MAX_PASSES } = {}) => {
-      if (!canSaveTabs || !isLoggedIn) return false;
-      if (!String(songTitle || "").trim()) return false;
-
-      const targetDocumentSession = documentSessionKeyRef.current;
-
-      for (let pass = 0; pass < Math.max(1, Number(maxPasses) || 1); pass += 1) {
-        await flushProjectSave({
-          manual: false,
-          reason: pass === 0 ? reason : `${reason}-settled-${pass + 1}`,
-        });
-
-        if (savePromiseRef.current) {
-          await savePromiseRef.current;
-        }
-
-        if (documentSessionKeyRef.current !== targetDocumentSession) return true;
-        if (currentProjectSignatureRef.current === lastFlushedProjectSignatureRef.current && !saveInFlightRef.current) {
-          return true;
-        }
-      }
-
-      return currentProjectSignatureRef.current === lastFlushedProjectSignatureRef.current;
-    },
-    [canSaveTabs, flushProjectSave, isLoggedIn, songTitle]
-  );
-
   function handleSaveTabClick() {
     flushProjectSave({ manual: true });
   }
@@ -6044,6 +6002,10 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
   useEffect(() => {
     currentProjectIdRef.current = String(currentProjectId || "");
   }, [currentProjectId]);
+
+  useEffect(() => {
+    flushProjectSaveRef.current = flushProjectSave;
+  }, [flushProjectSave]);
 
   useEffect(() => {
     if (!lastFlushedProjectSignatureRef.current) {
@@ -6088,10 +6050,10 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
       clearProjectSaveTimers();
       clearEditorSaveStatusTimers();
       if (currentProjectSignatureRef.current !== lastFlushedProjectSignatureRef.current) {
-        void flushProjectSaveUntilSettled({ reason: "unmount", maxPasses: 2 });
+        void flushProjectSaveRef.current?.({ manual: false, reason: "unmount" });
       }
     };
-  }, [flushProjectSaveUntilSettled]);
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
@@ -6099,31 +6061,23 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
       if (currentProjectSignatureRef.current === lastFlushedProjectSignatureRef.current) return;
       if (!canSaveTabs || !isLoggedIn) return;
       if (!String(songTitle || "").trim()) return;
-      void flushProjectSaveUntilSettled({ reason: "final-flush", maxPasses: 2 });
+      void flushProjectSaveRef.current?.({ manual: false, reason: "final-flush" });
     };
     const handleVisibilityChange = () => {
       if (document.visibilityState === "hidden") {
         triggerFinalSave();
       }
     };
-    const handlePageHide = () => {
+    const handleBeforeUnload = () => {
       triggerFinalSave();
     };
-    const handleBeforeUnload = () => {
-      if (currentProjectSignatureRef.current === lastFlushedProjectSignatureRef.current) return;
-      if (!canSaveTabs || !isLoggedIn) return;
-      if (!String(songTitle || "").trim()) return;
-      void flushProjectSaveUntilSettled({ reason: "beforeunload", maxPasses: 2 });
-    };
     document.addEventListener("visibilitychange", handleVisibilityChange);
-    window.addEventListener("pagehide", handlePageHide);
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.removeEventListener("pagehide", handlePageHide);
       window.removeEventListener("beforeunload", handleBeforeUnload);
     };
-  }, [canSaveTabs, flushProjectSaveUntilSettled, isLoggedIn, songTitle]);
+  }, [canSaveTabs, isLoggedIn, songTitle]);
 
   useEffect(() => {
     if (typeof document === "undefined") return undefined;
@@ -6156,7 +6110,7 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
   async function loadLibrarySongByPath(artistName, album, song) {
     if (!artistName || !album || !song) return;
     if (hasUnflushedEditorChanges && canSaveTabs && isLoggedIn && String(songTitle || "").trim()) {
-      await flushProjectSaveUntilSettled({ reason: "switch-document" });
+      await flushProjectSave({ manual: false, reason: "switch-document" });
     }
     const songs =
       artistName === "Unsorted"
