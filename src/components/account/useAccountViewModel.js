@@ -167,8 +167,8 @@ export function useAccountViewModel(shared) {
   const data = useMemo(
     () => ({
       identity: {
-        fullName: accountFullName || ACCOUNT_MOCK_DATA.identity.fullName,
-        email: accountEmail || ACCOUNT_MOCK_DATA.identity.email,
+        fullName: accountFullName || "Account",
+        email: accountEmail || "",
         avatarDataUrl: accountAvatarDataUrl,
         tierLabel: accountTier || planDisplayName(accountPlanId),
         planId: accountPlanId,

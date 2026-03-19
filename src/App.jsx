@@ -792,17 +792,15 @@ export default function App() {
     });
   }, []);
 
-  useEffect(() => {
-    let isMounted = true;
+  const syncBillingCycleFromProfileRow = useCallback((profileRow) => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(LS_SELECTED_BILLING_CYCLE_KEY, normalizeBillingCycle(profileRow?.billing_cycle));
+    } catch {}
+  }, []);
 
-    const syncBillingCycleFromProfileRow = (profileRow) => {
-      if (typeof window === "undefined") return;
-      try {
-        window.localStorage.setItem(LS_SELECTED_BILLING_CYCLE_KEY, normalizeBillingCycle(profileRow?.billing_cycle));
-      } catch {}
-    };
-
-    const buildSessionUserState = async (session, prevState) => {
+  const buildSessionUserState = useCallback(
+    async (session, prevState) => {
       const nextAuthUserId = String(session?.user?.id || "");
       const isSameAuthenticatedUser = Boolean(nextAuthUserId) && prevState?.authUserId === nextAuthUserId;
       let profileRow = null;
@@ -864,21 +862,38 @@ export default function App() {
             : normalizeProfileData(null)
           : normalizeProfileData(null),
       });
-    };
+    },
+    [syncBillingCycleFromProfileRow]
+  );
+
+  const hydrateSessionState = useCallback(
+    async (session, { persistDraftRestore = false } = {}) => {
+      const next = await buildSessionUserState(session || null, loadUserStateFromStorage());
+      setSupabaseSession(session || null);
+      setSupabaseUser(session?.user || null);
+      setUserState(() => {
+        persistUserStateToStorage(next);
+        return next;
+      });
+      if (persistDraftRestore) {
+        try {
+          window.localStorage.setItem(LS_RESTORE_DRAFT_AFTER_SIGNIN_KEY, "true");
+        } catch {}
+      }
+      return next;
+    },
+    [buildSessionUserState]
+  );
+
+  useEffect(() => {
+    let isMounted = true;
 
     const loadSession = async () => {
       try {
         const { data } = await supabase.auth.getSession();
         if (!isMounted) return;
         const session = data?.session || null;
-        setSupabaseSession(session);
-        setSupabaseUser(session?.user || null);
-        const next = await buildSessionUserState(session, loadUserStateFromStorage());
-        if (!isMounted) return;
-        setUserState(() => {
-          persistUserStateToStorage(next);
-          return next;
-        });
+        await hydrateSessionState(session);
       } finally {
         if (isMounted) setAuthReady(true);
       }
@@ -888,15 +903,9 @@ export default function App() {
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!isMounted) return;
-      setSupabaseSession(session || null);
-      setSupabaseUser(session?.user || null);
       void (async () => {
-        const next = await buildSessionUserState(session || null, loadUserStateFromStorage());
+        await hydrateSessionState(session || null);
         if (!isMounted) return;
-        setUserState(() => {
-          persistUserStateToStorage(next);
-          return next;
-        });
         setAuthReady(true);
       })();
     });
@@ -905,7 +914,7 @@ export default function App() {
       isMounted = false;
       listener.subscription.unsubscribe();
     };
-  }, []);
+  }, [buildSessionUserState, hydrateSessionState]);
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
@@ -1271,18 +1280,28 @@ export default function App() {
     [supabaseUser, updateUserState, userState]
   );
   const completeSignin = useCallback(
-    ({ email: nextEmail = "" }) => {
-      updateUserState((prev) => ({
-        ...prev,
-        isLoggedIn: true,
-        email: String(nextEmail || "").trim(),
-      }));
-      try {
-        window.localStorage.setItem(LS_RESTORE_DRAFT_AFTER_SIGNIN_KEY, "true");
-      } catch {}
-      navigateTo("/editor");
+    async ({ session = null } = {}) => {
+      setAuthReady(false);
+      let resolvedSession = session || null;
+
+      if (!resolvedSession) {
+        const {
+          data: { session: activeSession },
+          error,
+        } = await supabase.auth.getSession();
+        if (error) throw error;
+        resolvedSession = activeSession || null;
+      }
+
+      if (!resolvedSession) {
+        throw new Error("Unable to finish signing in.");
+      }
+
+      await hydrateSessionState(resolvedSession, { persistDraftRestore: true });
+      setAuthReady(true);
+      return { error: null };
     },
-    [navigateTo, updateUserState]
+    [hydrateSessionState]
   );
   const finalizePostPaymentRoute = useCallback(
     (profileRow) => {
@@ -4346,30 +4365,39 @@ function EditorApp({ navigateTo, pendingOpenPanel = "", onPendingPanelHandled, u
   const [songTitle, setSongTitle] = useState("");
   const [artist, setArtist] = useState("");
   const [albumName, setAlbumName] = useState("");
-  const accountFullName = String(userState?.profile?.displayName || ACCOUNT_MOCK_DATA.identity.fullName);
+  const profileDisplayNameFromState = String(userState?.profile?.displayName || "").trim();
+  const resolvedSignedInAccountName = profileDisplayNameFromState || String(userState?.email || "").trim() || "Account";
+  const accountFullName = isLoggedIn ? resolvedSignedInAccountName : "Account";
   const accountPlanId = editorHasMembership ? normalizePlanId(userState?.planType) : null;
   const accountTier =
     accountPlanId === "creator" ? "Creator Plan" : accountPlanId === "band" ? "Band Plan" : accountPlanId === "solo" ? "Solo Plan" : "Free Plan";
-  const accountEmail = String(userState?.email || ACCOUNT_MOCK_DATA.identity.email);
+  const accountEmail = isLoggedIn ? String(userState?.email || "").trim() : "";
   const accountMemberSince = "";
   const accountRenewalDate = "";
   const accountBillingCycle = "";
-  const [profileDisplayName, setProfileDisplayName] = useState(ACCOUNT_MOCK_DATA.identity.fullName);
+  const [profileDisplayName, setProfileDisplayName] = useState(() => String(userState?.profile?.displayName || "").trim());
   const [profileHandle, setProfileHandle] = useState(ACCOUNT_MOCK_DATA.profile.handle);
   const [profileBio, setProfileBio] = useState(ACCOUNT_MOCK_DATA.profile.bio);
   const [profileWebsite, setProfileWebsite] = useState(ACCOUNT_MOCK_DATA.profile.website);
   const [accountAvatarDataUrl, setAccountAvatarDataUrl] = useState(() => String(userState?.profile?.avatarDataUrl || ""));
-  const [securityEmail, setSecurityEmail] = useState(accountEmail);
+  const [securityEmail, setSecurityEmail] = useState(() => String(userState?.email || "").trim());
   const [securityTwoFactorEnabled, setSecurityTwoFactorEnabled] = useState(false);
   const [subscriptionAutoRenew, setSubscriptionAutoRenew] = useState(true);
-  const [billingEmail, setBillingEmail] = useState(accountEmail);
+  const [billingEmail, setBillingEmail] = useState(() => String(userState?.email || "").trim());
   const [defaultPaymentMethod, setDefaultPaymentMethod] = useState("Visa •••• 4242");
   const recentSessions = [];
   const recentInvoices = ACCOUNT_MOCK_DATA.billing.invoices;
-  const profileDisplayNameFromState = String(userState?.profile?.displayName || "").trim();
   useEffect(() => {
     setAccountAvatarDataUrl(String(userState?.profile?.avatarDataUrl || ""));
   }, [userState?.profile?.avatarDataUrl]);
+  useEffect(() => {
+    setProfileDisplayName(String(userState?.profile?.displayName || "").trim());
+  }, [userState?.profile?.displayName]);
+  useEffect(() => {
+    const nextEmail = String(userState?.email || "").trim();
+    setSecurityEmail(nextEmail);
+    setBillingEmail(nextEmail);
+  }, [userState?.email]);
   const saveAccountProfile = useCallback(() => {
     updateUserState?.((prev) => ({
       ...prev,
@@ -4380,7 +4408,7 @@ function EditorApp({ navigateTo, pendingOpenPanel = "", onPendingPanelHandled, u
       },
     }));
   }, [accountAvatarDataUrl, profileDisplayName, updateUserState]);
-  const accountSummaryName = isLoggedIn ? profileDisplayNameFromState || accountFullName : "Sign in to TabStudio";
+  const accountSummaryName = isLoggedIn ? resolvedSignedInAccountName : "Sign in to TabStudio";
   const accountSummaryTier = !isLoggedIn
     ? "Guest"
     : editorHasMembership

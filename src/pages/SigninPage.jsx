@@ -44,6 +44,7 @@ export default function SigninPage({ shared }) {
   const [signinHoveredField, setSigninHoveredField] = useState("");
   const [signinCtaHover, setSigninCtaHover] = useState(false);
   const [signinCardHover, setSigninCardHover] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [tabbyFloatUp, setTabbyFloatUp] = useState(false);
   const [signinWelcomeBubbleVisible, setSigninWelcomeBubbleVisible] = useState(true);
   const [signinResetBubbleVisible, setSigninResetBubbleVisible] = useState(false);
@@ -143,7 +144,14 @@ export default function SigninPage({ shared }) {
     padding: 0,
   };
 
-  const submitLabel = mode === "create" ? "Create Account" : mode === "forgot" ? "Send Reset Link" : "Sign In";
+  const submitLabel =
+    mode === "create"
+      ? "Create Account"
+      : mode === "forgot"
+      ? "Send Reset Link"
+      : isSubmitting
+      ? "Signing in..."
+      : "Sign In";
   const validate = () => {
     const nextErrors = {};
     const cleanEmail = String(email || "").trim();
@@ -154,6 +162,7 @@ export default function SigninPage({ shared }) {
   };
   const onSubmit = async (e) => {
     e.preventDefault();
+    if (isSubmitting) return;
     if (!validate()) return;
     if (mode === "forgot") {
       setSigninWelcomeBubbleVisible(false);
@@ -167,19 +176,30 @@ export default function SigninPage({ shared }) {
       }, 3600);
       return;
     }
+
+    setIsSubmitting(true);
     const cleanEmail = String(email || "").trim();
-    const { error } = await signIn(cleanEmail, password);
+    const { data, error } = await signIn(cleanEmail, password);
 
     if (error) {
       setErrors((prev) => ({
         ...prev,
         form: error.message || "Unable to sign in.",
       }));
+      setIsSubmitting(false);
       return;
     }
 
     setErrors({});
-    onAuthSuccess?.({ email: cleanEmail, mode });
+    try {
+      await onAuthSuccess?.({ email: cleanEmail, mode, session: data?.session || null });
+    } catch (authError) {
+      setErrors((prev) => ({
+        ...prev,
+        form: String(authError?.message || "Unable to finish signing in."),
+      }));
+      setIsSubmitting(false);
+    }
   };
 
   const headerRightContent = (
@@ -321,6 +341,7 @@ export default function SigninPage({ shared }) {
                     type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
+                    disabled={isSubmitting}
                     onMouseEnter={() => setSigninHoveredField("email")}
                     onMouseLeave={() => setSigninHoveredField((prev) => (prev === "email" ? "" : prev))}
                     onFocus={() => setSigninFocusedField("email")}
@@ -336,6 +357,7 @@ export default function SigninPage({ shared }) {
                       type="password"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
+                      disabled={isSubmitting}
                       onMouseEnter={() => setSigninHoveredField("password")}
                       onMouseLeave={() => setSigninHoveredField((prev) => (prev === "password" ? "" : prev))}
                       onFocus={() => setSigninFocusedField("password")}
@@ -352,7 +374,12 @@ export default function SigninPage({ shared }) {
                   onMouseLeave={() => setSigninCtaHover(false)}
                   onFocus={() => setSigninCtaHover(true)}
                   onBlur={() => setSigninCtaHover(false)}
-                  style={actionBtnStyle}
+                  disabled={isSubmitting}
+                  style={{
+                    ...actionBtnStyle,
+                    opacity: isSubmitting ? 0.92 : 1,
+                    cursor: isSubmitting ? "progress" : actionBtnStyle.cursor,
+                  }}
                 >
                   {submitLabel}
                 </button>
