@@ -84,6 +84,8 @@ const TRIPLE_CLICK_RESET_COLS = 32;
 const MIN_COLS = 1;
 const MAX_COLS = 64;
 const DEFAULT_COLS_AUTO_DELAY_MS = 1000;
+const EDITOR_AUTOSAVE_DELAY_MS = 1400;
+const EDITOR_AUTOSAVE_RETRY_MS = 4000;
 
 const LS_USER_TUNINGS_KEY = "tab_editor_user_tunings_v1";
 const LS_USER_CHORDS_KEY = "tab_editor_user_chords_v1";
@@ -5131,6 +5133,20 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
     };
   }
 
+  function buildPhaseBProjectSnapshot() {
+    const cleanSongName = String(songTitle || "").trim();
+    const targetArtistName = String(artist || "").trim() || "Unsorted";
+    const targetAlbumName = String(albumName || "").trim() || NO_ALBUM_NAME;
+
+    return {
+      ...buildCurrentProjectSnapshot(),
+      songId: String(currentLoadedSongIdRef.current || ""),
+      songName: cleanSongName,
+      artistName: targetArtistName,
+      albumName: targetAlbumName,
+    };
+  }
+
   const currentProjectSignature = useMemo(
     () => projectSnapshotSignature(buildCurrentProjectSnapshot()),
     [
@@ -5156,6 +5172,7 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
 
   function applyProjectSnapshot(snapshot) {
     if (!snapshot || typeof snapshot !== "object") return;
+    documentSessionKeyRef.current += 1;
     const nextTuning = Array.isArray(snapshot.tuning) && snapshot.tuning.length ? snapshot.tuning.slice() : DEFAULT_TUNING.slice();
     const nextCols = clampColsValue(snapshot.cols, DEFAULT_COLS);
     const nextGrid = makeBlankGrid(nextTuning.length, nextCols);
@@ -5302,11 +5319,23 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [uiDialog, setUiDialog] = useState(null);
   const [saveSoonNotice, setSaveSoonNotice] = useState("");
+  const [editorSaveState, setEditorSaveState] = useState("idle");
   const [editorSaveStatus, setEditorSaveStatus] = useState("");
   const autosaveTimerRef = useRef(null);
+  const autosaveRetryTimerRef = useRef(null);
   const editorSaveStatusTimerRef = useRef(null);
   const editorSaveStatusHideTimerRef = useRef(null);
+  const saveInFlightRef = useRef(false);
+  const queuedSaveRef = useRef(false);
+  const pendingManualSaveRef = useRef(false);
+  const savePromiseRef = useRef(null);
+  const flushProjectSaveRef = useRef(null);
   const lastFlushedProjectSignatureRef = useRef("");
+  const lastFailedSaveSignatureRef = useRef("");
+  const currentProjectSignatureRef = useRef("");
+  const currentLoadedSongIdRef = useRef("");
+  const currentProjectIdRef = useRef("");
+  const documentSessionKeyRef = useRef(1);
   const membershipGateLastShownAtRef = useRef(0);
   const [hasMeaningfulEditorInteraction, setHasMeaningfulEditorInteraction] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -5392,13 +5421,28 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
     }
   }
 
-  function showTransientEditorSaveStatus(status, durationMs = 1800) {
+  function clearProjectSaveTimers() {
+    if (autosaveTimerRef.current) {
+      window.clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+    if (autosaveRetryTimerRef.current) {
+      window.clearTimeout(autosaveRetryTimerRef.current);
+      autosaveRetryTimerRef.current = null;
+    }
+  }
+
+  function setEditorSaveFeedback(nextState, nextStatus = "", { hideAfterMs = 0 } = {}) {
     clearEditorSaveStatusTimers();
-    setEditorSaveStatus(status);
-    editorSaveStatusHideTimerRef.current = window.setTimeout(() => {
-      setEditorSaveStatus("");
-      editorSaveStatusHideTimerRef.current = null;
-    }, durationMs);
+    setEditorSaveState(nextState);
+    setEditorSaveStatus(nextStatus);
+    if (hideAfterMs > 0) {
+      editorSaveStatusHideTimerRef.current = window.setTimeout(() => {
+        setEditorSaveState("idle");
+        setEditorSaveStatus("");
+        editorSaveStatusHideTimerRef.current = null;
+      }, hideAfterMs);
+    }
   }
 
   useEffect(() => {
@@ -5577,7 +5621,7 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
     };
   }
 
-  async function syncPhaseBSongSnapshot({ title, artistName, albumName, snapshot }) {
+  async function syncPhaseBSongSnapshot({ songId = "", title, artistName, albumName, snapshot }) {
     const userId = await requireAuthenticatedSupabaseUserId();
     const artistRecord = await findOrCreatePhaseBArtist(userId, artistName);
     const albumRecord = await findOrCreatePhaseBAlbum(userId, albumName, artistRecord?.id || "");
@@ -5585,13 +5629,13 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
     const cleanTitle = String(title || "").trim();
     const snapshotPayload = {
       ...cloneJson(snapshot, {}),
-      songId: String(currentLoadedSongId || snapshot?.songId || ""),
+      songId: String(songId || snapshot?.songId || ""),
       songName: cleanTitle,
       artistName: String(artistName || "").trim() || "Unsorted",
       albumName: String(albumName || "").trim() || NO_ALBUM_NAME,
     };
 
-    const currentSongId = String(currentLoadedSongId || "").trim();
+    const currentSongId = String(songId || "").trim();
     if (currentSongId) {
       const updatedSong = await supabase
         .from("songs")
@@ -5663,7 +5707,9 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
     const inlineProject = projectInput && typeof projectInput === "object" ? projectInput : null;
     const id = String(inlineProject?.id || projectInput || "").trim();
     if (!id) return;
-    if (!confirmDiscardUnflushedEditorChanges()) return;
+    if (hasUnflushedEditorChanges && canSaveTabs && isLoggedIn && String(songTitle || "").trim()) {
+      await flushProjectSave({ manual: false, reason: "switch-document" });
+    }
 
     setProjectActionBusyId(id);
     setProjectsLoadError("");
@@ -5708,8 +5754,75 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
     }
   }
 
+  const saveEditorSnapshotToPhaseB = useCallback(async () => {
+    const snapshot = buildPhaseBProjectSnapshot();
+    const cleanSongName = String(snapshot.songName || "").trim();
+    const targetArtistName = String(snapshot.artistName || "").trim() || "Unsorted";
+    const targetAlbumName = String(snapshot.albumName || "").trim() || NO_ALBUM_NAME;
+
+    if (!cleanSongName) {
+      return {
+        skipped: true,
+        reason: "missing-title",
+        snapshot,
+        cleanSongName,
+        targetArtistName,
+        targetAlbumName,
+      };
+    }
+
+    const syncedSong = await syncPhaseBSongSnapshot({
+      songId: String(currentLoadedSongIdRef.current || snapshot.songId || ""),
+      title: cleanSongName,
+      artistName: targetArtistName,
+      albumName: targetAlbumName,
+      snapshot,
+    });
+
+    return {
+      skipped: false,
+      snapshot: {
+        ...snapshot,
+        songId: String(syncedSong?.id || snapshot.songId || ""),
+      },
+      syncedSong,
+      cleanSongName,
+      targetArtistName,
+      targetAlbumName,
+    };
+  }, [
+    songTitle,
+    artist,
+    albumName,
+    instrumentId,
+    tuning,
+    tuningLabel,
+    cols,
+    grid,
+    capoEnabled,
+    capoFret,
+    showCapoControl,
+    showTempoControl,
+    tempoBpm,
+    completedRows,
+    chordName,
+    selectedChordId,
+    lastAppliedChordId,
+  ]);
+
+  function scheduleProjectSave(delayMs = EDITOR_AUTOSAVE_DELAY_MS, options = { manual: false, reason: "autosave" }) {
+    if (typeof window === "undefined") return;
+    if (autosaveTimerRef.current) {
+      window.clearTimeout(autosaveTimerRef.current);
+    }
+    autosaveTimerRef.current = window.setTimeout(() => {
+      autosaveTimerRef.current = null;
+      void flushProjectSave(options);
+    }, Math.max(0, Number(delayMs) || 0));
+  }
+
   const flushProjectSave = useCallback(
-    async ({ manual = false } = {}) => {
+    async ({ manual = false, reason = manual ? "manual" : "autosave" } = {}) => {
       if (!canSaveTabs) {
         if (manual) showMembershipGateToast("save");
         return false;
@@ -5718,38 +5831,36 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
         if (manual) navigateTo("/signin");
         return false;
       }
-      if (autosaveTimerRef.current) {
-        window.clearTimeout(autosaveTimerRef.current);
-        autosaveTimerRef.current = null;
-      }
-      const cleanSongName = String(songTitle || "").trim();
-      if (!cleanSongName) {
-        if (manual) setSaveSoonNotice("Add a song name before saving.");
-        setEditorSaveStatus("Unsaved changes");
-        return false;
+      if (saveInFlightRef.current) {
+        queuedSaveRef.current = true;
+        if (manual) pendingManualSaveRef.current = true;
+        return savePromiseRef.current || false;
       }
 
-      const targetArtistName = String(artist || "").trim() || "Unsorted";
-      const targetAlbumName = String(albumName || "").trim() || NO_ALBUM_NAME;
+      clearProjectSaveTimers();
 
-      clearEditorSaveStatusTimers();
-      setEditorSaveStatus("Saving...");
-      const snapshot = buildCurrentProjectSnapshot();
-      snapshot.songName = cleanSongName;
-      snapshot.artistName = targetArtistName;
-      snapshot.albumName = targetAlbumName;
+      const saveStartedForDocument = documentSessionKeyRef.current;
+      const saveStartedWithSignature = currentProjectSignatureRef.current;
+      let saveSucceeded = false;
 
-      try {
-        const syncedSong = await syncPhaseBSongSnapshot({
-          title: cleanSongName,
-          artistName: targetArtistName,
-          albumName: targetAlbumName,
-          snapshot,
-        });
-        snapshot.songId = String(syncedSong?.id || "");
+      saveInFlightRef.current = true;
+      setEditorSaveFeedback("saving", "Saving...");
 
-        const projectRecord = currentProjectId
-          ? await updateProject(currentProjectId, {
+      const saveTask = (async () => {
+        const saveResult = await saveEditorSnapshotToPhaseB();
+        if (saveResult?.skipped) {
+          if (manual) {
+            setEditorSaveFeedback("error", "Add a song name to save.", { hideAfterMs: 2200 });
+          } else {
+            setEditorSaveFeedback("dirty", "");
+          }
+          return false;
+        }
+
+        const { snapshot, syncedSong, cleanSongName, targetArtistName, targetAlbumName } = saveResult;
+        const savedSignature = projectSnapshotSignature(snapshot);
+        const projectRecord = currentProjectIdRef.current
+          ? await updateProject(currentProjectIdRef.current, {
               title: cleanSongName,
               artist: targetArtistName === "Unsorted" ? "" : targetArtistName,
               album: targetAlbumName === NO_ALBUM_NAME ? "" : targetAlbumName,
@@ -5762,63 +5873,87 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
               projectData: snapshot,
             });
 
-        setCurrentLoadedSongId(String(syncedSong?.id || ""));
-        setCurrentLoadedSongPath({
-          artistName: targetArtistName,
-          albumName: targetAlbumName,
-          songName: cleanSongName,
-        });
-        setCurrentProjectId(String(projectRecord?.id || ""));
+        const sameDocumentStillOpen = documentSessionKeyRef.current === saveStartedForDocument;
+        const syncedSongId = String(syncedSong?.id || "");
+        const legacyProjectId = String(projectRecord?.id || "");
+
+        if (sameDocumentStillOpen) {
+          currentLoadedSongIdRef.current = syncedSongId;
+          currentProjectIdRef.current = legacyProjectId;
+          setCurrentLoadedSongId(syncedSongId);
+          setCurrentLoadedSongPath({
+            artistName: targetArtistName,
+            albumName: targetAlbumName,
+            songName: cleanSongName,
+          });
+          setCurrentProjectId(legacyProjectId);
+        }
+
         setUserProjects((prev) => {
           const next = Array.isArray(prev) ? prev.filter((item) => item?.id !== projectRecord?.id) : [];
           return [projectRecord, ...next].sort(
             (a, b) => new Date(b?.updated_at || 0).getTime() - new Date(a?.updated_at || 0).getTime()
           );
         });
-        lastFlushedProjectSignatureRef.current = projectSnapshotSignature(snapshot);
-        if (manual) {
-          setEditorSaveStatus("Saved");
-          editorSaveStatusTimerRef.current = window.setTimeout(() => {
-            showTransientEditorSaveStatus("Saved", 1800);
-            editorSaveStatusTimerRef.current = null;
-          }, 1200);
+
+        if (!sameDocumentStillOpen) return true;
+
+        lastFailedSaveSignatureRef.current = "";
+        lastFlushedProjectSignatureRef.current = savedSignature;
+        if (currentProjectSignatureRef.current === savedSignature) {
+          setEditorSaveFeedback("saved", "Saved", { hideAfterMs: 1800 });
         } else {
-          showTransientEditorSaveStatus("Saved", 1800);
+          queuedSaveRef.current = true;
+          setEditorSaveFeedback("dirty", "");
         }
-        if (manual) setSaveSoonNotice(`Saved: ${cleanSongName}`);
+
+        saveSucceeded = true;
         return true;
-      } catch (error) {
-        const message = String(error?.message || "Unable to save this project.");
-        clearEditorSaveStatusTimers();
-        setEditorSaveStatus("Unsaved changes");
-        if (manual) setSaveSoonNotice(message);
-        return false;
-      }
+      })()
+        .catch((error) => {
+          const message = String(error?.message || "Unable to save this project.");
+          lastFailedSaveSignatureRef.current = saveStartedWithSignature;
+          setEditorSaveFeedback("error", manual ? message : "Save issue");
+          if (canSaveTabs && isLoggedIn && String(songTitle || "").trim()) {
+            autosaveRetryTimerRef.current = window.setTimeout(() => {
+              autosaveRetryTimerRef.current = null;
+              void flushProjectSave({ manual: false, reason: "retry" });
+            }, EDITOR_AUTOSAVE_RETRY_MS);
+          }
+          return false;
+        })
+        .finally(() => {
+          saveInFlightRef.current = false;
+          savePromiseRef.current = null;
+
+          const hasNewDirtyState = currentProjectSignatureRef.current !== lastFlushedProjectSignatureRef.current;
+          const shouldRunAnotherPass = queuedSaveRef.current || hasNewDirtyState;
+          const shouldRunManualPass = pendingManualSaveRef.current;
+
+          queuedSaveRef.current = false;
+          pendingManualSaveRef.current = false;
+
+          if (saveSucceeded && shouldRunAnotherPass && canSaveTabs && isLoggedIn && String(songTitle || "").trim()) {
+            scheduleProjectSave(shouldRunManualPass ? 0 : 250, {
+              manual: shouldRunManualPass,
+              reason: shouldRunManualPass ? "manual-queued" : `${reason}-queued`,
+            });
+          } else if (!hasNewDirtyState && editorSaveState === "dirty") {
+            setEditorSaveFeedback("idle", "");
+          }
+        });
+
+      savePromiseRef.current = saveTask;
+      return saveTask;
     },
     [
       canSaveTabs,
-      currentProjectId,
-      currentLoadedSongId,
       isLoggedIn,
       navigateTo,
-      albumName,
-      artist,
-      showMembershipGateToast,
       songTitle,
-      instrumentId,
-      tuning,
-      tuningLabel,
-      cols,
-      grid,
-      capoEnabled,
-      capoFret,
-      showCapoControl,
-      showTempoControl,
-      tempoBpm,
-      completedRows,
-      chordName,
-      selectedChordId,
-      lastAppliedChordId,
+      showMembershipGateToast,
+      saveEditorSnapshotToPhaseB,
+      editorSaveState,
     ]
   );
 
@@ -5829,55 +5964,92 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
   const hasUnflushedEditorChanges = canSaveTabs && currentProjectSignature !== lastFlushedProjectSignatureRef.current;
 
   useEffect(() => {
+    currentProjectSignatureRef.current = currentProjectSignature;
+  }, [currentProjectSignature]);
+
+  useEffect(() => {
+    currentLoadedSongIdRef.current = String(currentLoadedSongId || "");
+  }, [currentLoadedSongId]);
+
+  useEffect(() => {
+    currentProjectIdRef.current = String(currentProjectId || "");
+  }, [currentProjectId]);
+
+  useEffect(() => {
+    flushProjectSaveRef.current = flushProjectSave;
+  }, [flushProjectSave]);
+
+  useEffect(() => {
     if (!lastFlushedProjectSignatureRef.current) {
       lastFlushedProjectSignatureRef.current = currentProjectSignature;
-      if (canSaveTabs) setEditorSaveStatus("");
+      if (canSaveTabs) setEditorSaveFeedback("idle", "");
       return;
     }
     if (!canSaveTabs) {
-      if (autosaveTimerRef.current) {
-        window.clearTimeout(autosaveTimerRef.current);
-        autosaveTimerRef.current = null;
-      }
-      clearEditorSaveStatusTimers();
-      setEditorSaveStatus("");
+      clearProjectSaveTimers();
+      if (!saveInFlightRef.current) setEditorSaveFeedback("idle", "");
       return;
     }
     if (!hasUnflushedEditorChanges) {
-      if (autosaveTimerRef.current) {
-        window.clearTimeout(autosaveTimerRef.current);
-        autosaveTimerRef.current = null;
+      clearProjectSaveTimers();
+      if (!saveInFlightRef.current && editorSaveState === "dirty") {
+        setEditorSaveFeedback("idle", "");
       }
-      if (editorSaveStatus === "Unsaved changes") {
-        setEditorSaveStatus("");
-      }
+      return;
+    }
+    if (saveInFlightRef.current) {
+      queuedSaveRef.current = true;
       return;
     }
     if (!String(songTitle || "").trim()) {
-      clearEditorSaveStatusTimers();
-      setEditorSaveStatus("");
+      setEditorSaveFeedback("dirty", "");
       return;
     }
-    clearEditorSaveStatusTimers();
-    setEditorSaveStatus("Unsaved changes");
-  }, [canSaveTabs, currentProjectSignature, editorSaveStatus, hasUnflushedEditorChanges, songTitle]);
+    if (editorSaveState === "error" && autosaveRetryTimerRef.current) {
+      if (lastFailedSaveSignatureRef.current === currentProjectSignature) {
+        return;
+      }
+      window.clearTimeout(autosaveRetryTimerRef.current);
+      autosaveRetryTimerRef.current = null;
+      lastFailedSaveSignatureRef.current = "";
+    }
+    setEditorSaveFeedback("dirty", "");
+    scheduleProjectSave(EDITOR_AUTOSAVE_DELAY_MS, { manual: false, reason: "autosave" });
+  }, [canSaveTabs, currentProjectSignature, currentProjectId, currentLoadedSongId, editorSaveState, hasUnflushedEditorChanges, songTitle]);
 
   useEffect(() => {
     return () => {
+      clearProjectSaveTimers();
       clearEditorSaveStatusTimers();
+      if (currentProjectSignatureRef.current !== lastFlushedProjectSignatureRef.current) {
+        void flushProjectSaveRef.current?.({ manual: false, reason: "unmount" });
+      }
     };
   }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
-    const handleBeforeUnload = (e) => {
-      if (!hasUnflushedEditorChanges) return;
-      e.preventDefault();
-      e.returnValue = "";
+    const triggerFinalSave = () => {
+      if (currentProjectSignatureRef.current === lastFlushedProjectSignatureRef.current) return;
+      if (!canSaveTabs || !isLoggedIn) return;
+      if (!String(songTitle || "").trim()) return;
+      void flushProjectSaveRef.current?.({ manual: false, reason: "final-flush" });
     };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        triggerFinalSave();
+      }
+    };
+    const handleBeforeUnload = () => {
+      triggerFinalSave();
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [hasUnflushedEditorChanges]);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, [canSaveTabs, isLoggedIn, songTitle]);
 
   useEffect(() => {
     if (typeof document === "undefined") return undefined;
@@ -5891,11 +6063,6 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
       document.documentElement.style.overflow = previousHtmlOverflow;
     };
   }, [projectsLibraryOpen]);
-
-  function confirmDiscardUnflushedEditorChanges() {
-    if (!hasUnflushedEditorChanges) return true;
-    return window.confirm("You have unsaved changes. Continue?");
-  }
 
   function handleOpenTabClick() {
     if (!canUsePaidEditorFeatures) {
@@ -5912,9 +6079,11 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
     setProjectsLibraryOpen(true);
   }
 
-  function loadLibrarySongByPath(artistName, album, song) {
+  async function loadLibrarySongByPath(artistName, album, song) {
     if (!artistName || !album || !song) return;
-    if (!confirmDiscardUnflushedEditorChanges()) return;
+    if (hasUnflushedEditorChanges && canSaveTabs && isLoggedIn && String(songTitle || "").trim()) {
+      await flushProjectSave({ manual: false, reason: "switch-document" });
+    }
     const songs =
       artistName === "Unsorted"
         ? libraryData?.unsorted?.albums?.[album]?.songs || {}
@@ -5957,14 +6126,14 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
         currentLoadedSongPath?.albumName === album &&
         currentLoadedSongPath?.songName === song)
     ) {
-      if (autosaveTimerRef.current) {
-        window.clearTimeout(autosaveTimerRef.current);
-        autosaveTimerRef.current = null;
-      }
+      clearProjectSaveTimers();
       lastFlushedProjectSignatureRef.current = projectSnapshotSignature(buildCurrentProjectSnapshot());
-      setEditorSaveStatus("All changes saved");
+      currentLoadedSongIdRef.current = "";
+      currentProjectIdRef.current = "";
+      setEditorSaveFeedback("saved", "Saved", { hideAfterMs: 1200 });
       setCurrentLoadedSongId("");
       setCurrentLoadedSongPath(null);
+      setCurrentProjectId("");
     }
   }
 
