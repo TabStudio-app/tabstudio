@@ -134,6 +134,21 @@ export default function SigninPage({ shared }) {
     filter: signinCtaHover ? "brightness(1.05)" : "brightness(1)",
     transition: "transform 0.15s ease, filter 0.15s ease, box-shadow 0.15s ease, background 0.15s ease",
   };
+  const loadingDotsWrapStyle = {
+    display: "inline-flex",
+    alignItems: "flex-end",
+    gap: 4,
+    marginLeft: 2,
+  };
+  const loadingDotStyle = (index) => ({
+    width: 5,
+    height: 5,
+    borderRadius: "50%",
+    background: "#04120a",
+    display: "inline-block",
+    animation: "tabstudioSigninDotBounce 0.9s ease-in-out infinite",
+    animationDelay: `${index * 0.12}s`,
+  });
   const textLinkStyle = {
     border: "none",
     background: "transparent",
@@ -144,14 +159,26 @@ export default function SigninPage({ shared }) {
     padding: 0,
   };
 
-  const submitLabel =
-    mode === "create"
-      ? "Create Account"
-      : mode === "forgot"
-      ? "Send Reset Link"
-      : isSubmitting
-      ? "Signing in..."
-      : "Sign In";
+  const submitLabel = mode === "create" ? "Create Account" : mode === "forgot" ? "Send Reset Link" : "Sign In";
+
+  useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+    const style = document.createElement("style");
+    style.textContent = `
+      @keyframes tabstudioSigninDotBounce {
+        0%, 80%, 100% {
+          transform: translateY(0) scale(1);
+          opacity: 0.55;
+        }
+        40% {
+          transform: translateY(-5px) scale(1.08);
+          opacity: 1;
+        }
+      }
+    `;
+    document.head.appendChild(style);
+    return () => style.remove();
+  }, []);
   const validate = () => {
     const nextErrors = {};
     const cleanEmail = String(email || "").trim();
@@ -381,7 +408,18 @@ export default function SigninPage({ shared }) {
                     cursor: isSubmitting ? "progress" : actionBtnStyle.cursor,
                   }}
                 >
-                  {submitLabel}
+                  {isSubmitting ? (
+                    <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                      <span>Signing in</span>
+                      <span aria-hidden="true" style={loadingDotsWrapStyle}>
+                        {[0, 1, 2].map((index) => (
+                          <span key={index} style={loadingDotStyle(index)} />
+                        ))}
+                      </span>
+                    </span>
+                  ) : (
+                    submitLabel
+                  )}
                 </button>
               </form>
 
