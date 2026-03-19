@@ -5744,6 +5744,22 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
     };
   }
 
+  async function getPhaseBSongById(songId) {
+    const id = String(songId || "").trim();
+    if (!id) return null;
+
+    const userId = await requireAuthenticatedSupabaseUserId();
+    const { data, error } = await supabase
+      .from("songs")
+      .select("id, title, album_id, project_data")
+      .eq("id", id)
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (error) throw error;
+    return data || null;
+  }
+
   async function openSupabaseProject(projectInput) {
     const inlineProject = projectInput && typeof projectInput === "object" ? projectInput : null;
     const id = String(inlineProject?.id || projectInput || "").trim();
@@ -5755,7 +5771,21 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
     setProjectActionBusyId(id);
     setProjectsLoadError("");
     try {
-      const project = inlineProject || (await getProjectById(id));
+      const latestInlineSong = inlineProject ? await getPhaseBSongById(id) : null;
+      const project = inlineProject
+        ? {
+            ...inlineProject,
+            ...(latestInlineSong || {}),
+            id: String(latestInlineSong?.id || inlineProject?.id || ""),
+            title: String(latestInlineSong?.title || inlineProject?.title || ""),
+            project_data:
+              latestInlineSong?.project_data && typeof latestInlineSong.project_data === "object"
+                ? latestInlineSong.project_data
+                : inlineProject?.project_data && typeof inlineProject.project_data === "object"
+                ? inlineProject.project_data
+                : {},
+          }
+        : await getProjectById(id);
       const inlineSongId = inlineProject ? String(project?.id || "") : "";
       const snapshot =
         project?.project_data && typeof project.project_data === "object"
