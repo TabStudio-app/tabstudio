@@ -42,6 +42,7 @@ export default function SignupPage({ shared }) {
   const [isSubmittingSignup, setIsSubmittingSignup] = useState(false);
   const [signupCardHover, setSignupCardHover] = useState(false);
   const [emailAvailability, setEmailAvailability] = useState("idle");
+  const [confirmationEmail, setConfirmationEmail] = useState("");
   const emailAvailabilityRequestRef = useRef(0);
 
   const getSystemThemeForSignup = useCallback(() => {
@@ -199,6 +200,15 @@ export default function SignupPage({ shared }) {
     justifyContent: "center",
     padding: 0,
   };
+  const textLinkStyle = {
+    border: "none",
+    background: "transparent",
+    color: SIGNUP_THEME.accent,
+    fontSize: 13,
+    fontWeight: 800,
+    cursor: "pointer",
+    padding: 0,
+  };
   const passwordHasMinimumLength = String(password || "").length >= 8;
   const shouldShowPasswordLengthError =
     String(password || "").length > 0 &&
@@ -246,7 +256,7 @@ export default function SignupPage({ shared }) {
     if (Object.keys(nextErrors).length) return;
     setIsSubmittingSignup(true);
     try {
-      const { error } = await signUp(cleanEmail, password);
+      const { data, error } = await signUp(cleanEmail, password);
 
       if (error) {
         const errorMessage = String(error?.message || "").toLowerCase();
@@ -261,7 +271,18 @@ export default function SignupPage({ shared }) {
         setIsSubmittingSignup(false);
         return;
       }
-      await onContinue?.({ email: cleanEmail, password, selectedPlan, selectedBillingCycle: activeBillingCycle });
+      const result = await onContinue?.({
+        email: cleanEmail,
+        password,
+        selectedPlan,
+        selectedBillingCycle: activeBillingCycle,
+        requiresEmailConfirmation: !data?.session,
+        session: data?.session || null,
+      });
+      if (result?.requiresEmailConfirmation) {
+        setConfirmationEmail(cleanEmail);
+        setIsSubmittingSignup(false);
+      }
     } catch {
       setIsSubmittingSignup(false);
     }
@@ -407,6 +428,45 @@ export default function SignupPage({ shared }) {
                 </div>
               </div>
 
+              {confirmationEmail ? (
+                <div style={{ display: "grid", gap: 18, textAlign: "center" }}>
+                  <div style={{ display: "grid", gap: 10 }}>
+                    <div
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 800,
+                        lineHeight: 1.2,
+                        letterSpacing: "0.08em",
+                        textTransform: "uppercase",
+                        color: withAlpha(SIGNUP_THEME.text, 0.5),
+                      }}
+                    >
+                      Check your email
+                    </div>
+                    <div style={{ fontSize: 18, fontWeight: 800, lineHeight: 1.5, color: SIGNUP_THEME.text }}>
+                      We sent a confirmation link to <span style={{ color: SIGNUP_THEME.accent }}>{confirmationEmail}</span>.
+                    </div>
+                    <div style={{ color: withAlpha(SIGNUP_THEME.text, 0.68), fontSize: 14, lineHeight: 1.55 }}>
+                      Open the email, confirm your account, and TabStudio will bring you back to the right next step automatically.
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "center", gap: 14, flexWrap: "wrap" }}>
+                    <button type="button" onClick={onGoSignIn} style={textLinkStyle}>
+                      Go to Sign In
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setConfirmationEmail("");
+                        setIsSubmittingSignup(false);
+                      }}
+                      style={textLinkStyle}
+                    >
+                      Use a different email
+                    </button>
+                  </div>
+                </div>
+              ) : (
               <form onSubmit={handleContinue} style={{ display: "grid", gap: 14 }}>
                 <div style={{ display: "grid", gap: 7 }}>
                   <label style={getLabelStyle("email")}>Email</label>
@@ -643,6 +703,7 @@ export default function SignupPage({ shared }) {
                   Secure checkout powered by Stripe • Cancel anytime
                 </div>
               </form>
+              )}
             </div>
           </div>
         </div>

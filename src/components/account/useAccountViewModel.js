@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { ACCOUNT_LANGUAGE_OPTIONS, ACCOUNT_MOCK_DATA } from "./accountMockData";
 import { createBillingPortalSession } from "../../utils/billingPortal";
+import { requestEmailChange, signIn } from "../../lib/auth";
 import {
   accountActionLabel,
   affiliateStatusMeta,
@@ -70,9 +71,9 @@ export function useAccountViewModel(shared) {
   const runAction = useCallback((key, fn, { success = "Saved", error = "Something went wrong" } = {}) => {
     setActionState((prev) => ({ ...prev, [key]: "saving" }));
     setActionMessage((prev) => ({ ...prev, [key]: "" }));
-    window.setTimeout(() => {
+    window.setTimeout(async () => {
       try {
-        fn?.();
+        await fn?.();
         setActionState((prev) => ({ ...prev, [key]: "success" }));
         setActionMessage((prev) => ({ ...prev, [key]: success }));
       } catch {
@@ -264,16 +265,25 @@ export function useAccountViewModel(shared) {
         run: () =>
           runAction(
             "updateEmail",
-            () => {
+            async () => {
               const nextEmail = String(emailDraft.next || "").trim();
               const currentPassword = String(emailDraft.currentPassword || "").trim();
               if (!nextEmail || !nextEmail.includes("@")) throw new Error("Invalid email");
               if (!currentPassword) throw new Error("Missing password");
-              shared.setSecurityEmail?.(nextEmail);
+              if (nextEmail.toLowerCase() === String(accountEmail || securityEmail || "").trim().toLowerCase()) {
+                throw new Error("Same email");
+              }
+
+              const passwordCheck = await signIn(String(accountEmail || securityEmail || "").trim(), currentPassword);
+              if (passwordCheck.error) throw passwordCheck.error;
+
+              const changeRequest = await requestEmailChange(nextEmail);
+              if (changeRequest.error) throw changeRequest.error;
+
               setEmailDraft({ next: nextEmail, currentPassword: "" });
               setEmailChangeOpen(false);
             },
-            { success: "Email change request saved", error: "Enter your new email and current password" }
+            { success: "Confirmation email sent", error: "Enter your new email and current password correctly" }
           ),
       },
       updatePassword: {

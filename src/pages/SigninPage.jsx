@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import tabbyLight from "../assets/tabby-light-v1-transparent.png";
 import tabbyDark from "../assets/tabby-dark-v1-transparent.png";
 import AppHeader from "../components/AppHeader";
-import { signIn } from "../lib/auth";
+import { requestMagicLink, requestPasswordReset, signIn } from "../lib/auth";
 import { inputErrorText, inputImmersive, inputLabel } from "../utils/uiTokens";
 
 export default function SigninPage({ shared }) {
@@ -45,12 +45,14 @@ export default function SigninPage({ shared }) {
   const [signinCtaHover, setSigninCtaHover] = useState(false);
   const [signinCardHover, setSigninCardHover] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitAction, setSubmitAction] = useState("signin");
   const [tabbyFloatUp, setTabbyFloatUp] = useState(false);
   const [signinWelcomeBubbleVisible, setSigninWelcomeBubbleVisible] = useState(true);
   const [signinResetBubbleVisible, setSigninResetBubbleVisible] = useState(false);
   const [signinTabbyDismissed, setSigninTabbyDismissed] = useState(false);
   const [signinHeaderHoverBtn, setSigninHeaderHoverBtn] = useState("");
   const [signinHeaderPressedBtn, setSigninHeaderPressedBtn] = useState("");
+  const [notice, setNotice] = useState("");
   const signinResetBubbleTimerRef = useRef(null);
 
   const isDark = true;
@@ -160,6 +162,8 @@ export default function SigninPage({ shared }) {
   };
 
   const submitLabel = mode === "create" ? "Create Account" : mode === "forgot" ? "Send Reset Link" : "Sign In";
+  const submittingLabel =
+    submitAction === "magiclink" ? "Sending magic link" : submitAction === "reset" ? "Sending reset link" : "Signing in";
 
   useEffect(() => {
     if (typeof document === "undefined") return undefined;
@@ -191,9 +195,24 @@ export default function SigninPage({ shared }) {
     e.preventDefault();
     if (isSubmitting) return;
     if (!validate()) return;
+    setNotice("");
     if (mode === "forgot") {
+      setSubmitAction("reset");
+      setIsSubmitting(true);
+      const cleanEmail = String(email || "").trim();
+      const { error } = await requestPasswordReset(cleanEmail);
+      if (error) {
+        setErrors((prev) => ({
+          ...prev,
+          form: String(error?.message || "Unable to send a reset link right now."),
+        }));
+        setIsSubmitting(false);
+        return;
+      }
+      setErrors({});
       setSigninWelcomeBubbleVisible(false);
       setSigninResetBubbleVisible(true);
+      setNotice("Reset link sent. Check your email to choose a new password.");
       if (signinResetBubbleTimerRef.current) {
         window.clearTimeout(signinResetBubbleTimerRef.current);
       }
@@ -201,9 +220,11 @@ export default function SigninPage({ shared }) {
         setSigninResetBubbleVisible(false);
         signinResetBubbleTimerRef.current = null;
       }, 3600);
+      setIsSubmitting(false);
       return;
     }
 
+    setSubmitAction("signin");
     setIsSubmitting(true);
     const cleanEmail = String(email || "").trim();
     const { data, error } = await signIn(cleanEmail, password);
@@ -227,6 +248,34 @@ export default function SigninPage({ shared }) {
       }));
       setIsSubmitting(false);
     }
+  };
+  const handleSendMagicLink = async () => {
+    if (isSubmitting) return;
+    const cleanEmail = String(email || "").trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      setErrors((prev) => ({
+        ...prev,
+        email: "Enter your email first to get a magic link.",
+      }));
+      return;
+    }
+
+    setNotice("");
+    setSubmitAction("magiclink");
+    setIsSubmitting(true);
+    const { error } = await requestMagicLink(cleanEmail);
+    if (error) {
+      setErrors((prev) => ({
+        ...prev,
+        form: String(error?.message || "Unable to send a magic link right now."),
+      }));
+      setIsSubmitting(false);
+      return;
+    }
+
+    setErrors({});
+    setNotice("Magic link sent. Open the email and TabStudio will sign you in.");
+    setIsSubmitting(false);
   };
 
   const headerRightContent = (
@@ -395,6 +444,7 @@ export default function SigninPage({ shared }) {
                   </div>
                 ) : null}
                 {errors.form ? <div style={errorTextStyle}>{errors.form}</div> : null}
+                {notice ? <div style={{ ...errorTextStyle, color: THEME.accent }}>{notice}</div> : null}
                 <button
                   type="submit"
                   onMouseEnter={() => setSigninCtaHover(true)}
@@ -410,7 +460,7 @@ export default function SigninPage({ shared }) {
                 >
                   {isSubmitting ? (
                     <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
-                      <span>Signing in</span>
+                      <span>{submittingLabel}</span>
                       <span aria-hidden="true" style={loadingDotsWrapStyle}>
                         {[0, 1, 2].map((index) => (
                           <span key={index} style={loadingDotStyle(index)} />
@@ -428,6 +478,7 @@ export default function SigninPage({ shared }) {
                   <button
                     type="button"
                     onClick={() => {
+                      setNotice("");
                       setErrors({});
                       onGoMembership?.();
                     }}
@@ -435,17 +486,20 @@ export default function SigninPage({ shared }) {
                   >
                     Create account
                   </button>
-                  <button type="button" onClick={() => { setMode("forgot"); setErrors({}); }} style={textLinkStyle}>Forgot password</button>
+                  <button type="button" onClick={() => { setMode("forgot"); setNotice(""); setErrors({}); }} style={textLinkStyle}>Forgot password</button>
+                  <button type="button" onClick={handleSendMagicLink} disabled={isSubmitting} style={{ ...textLinkStyle, opacity: isSubmitting ? 0.7 : 1 }}>
+                    Email me a magic link
+                  </button>
                 </div>
               ) : mode === "create" ? (
                 <div style={{ textAlign: "center" }}>
-                  <button type="button" onClick={() => { setMode("signin"); setErrors({}); }} style={textLinkStyle}>
+                  <button type="button" onClick={() => { setMode("signin"); setNotice(""); setErrors({}); }} style={textLinkStyle}>
                     Already have an account? Sign in
                   </button>
                 </div>
               ) : (
                 <div style={{ textAlign: "center" }}>
-                  <button type="button" onClick={() => { setMode("signin"); setErrors({}); }} style={textLinkStyle}>
+                  <button type="button" onClick={() => { setMode("signin"); setNotice(""); setErrors({}); }} style={textLinkStyle}>
                     Back to Sign In
                   </button>
                 </div>

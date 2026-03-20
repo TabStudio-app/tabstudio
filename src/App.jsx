@@ -14,7 +14,9 @@ import SigninPage from "./pages/SigninPage";
 import CheckoutPlaceholderPage from "./pages/CheckoutPlaceholderPage";
 import SuccessPage from "./pages/SuccessPage";
 import BillingPage from "./pages/BillingPage";
+import AuthCallbackPage from "./pages/AuthCallbackPage";
 import BecomeAnAffiliatePage from "./pages/BecomeAnAffiliatePage";
+import ResetPasswordPage from "./pages/ResetPasswordPage";
 import { getPlanMeta } from "./features/pricing";
 import ExportPage from "./pages/ExportPage";
 import {
@@ -504,6 +506,9 @@ function resolvePlaceholderGuardPath(targetPath, routeState) {
       guardedPath = path;
     }
   } else if (path === "/becomeanaffiliate" || path === "/becomeanaffiliate/apply") {
+    guardReason = `${path}-public`;
+    guardedPath = path;
+  } else if (path === "/auth/callback" || path === "/auth/reset-password") {
     guardReason = `${path}-public`;
     guardedPath = path;
   }
@@ -1042,34 +1047,16 @@ export default function App() {
     [hasActiveMembership, isAuthenticated, navigateTo, startMembershipSignup]
   );
   const continueToCheckout = useCallback(
-    ({ email, password, selectedPlan: planId, selectedBillingCycle: billingCycle }) => {
+    async ({ email, password, selectedPlan: planId, selectedBillingCycle: billingCycle, requiresEmailConfirmation = false, session = null }) => {
       const safePlan = normalizePlanId(planId);
       const safeBillingCycle = normalizeBillingCycle(billingCycle);
-      const nextPrePaymentUserState = normalizeUserState({
-        ...userState,
-        isLoggedIn: true,
-        hasMembership: false,
-        planTier: "free",
-        planType: null,
-        email: String(email || ""),
-      });
-      const postSignupGuardedRoute = resolvePlaceholderGuardPath("/checkout", {
-        isAuthenticated: true,
-        hasMembership: false,
-        planTier: nextPrePaymentUserState.planTier,
-        isProfileComplete: isProfileSetupComplete(nextPrePaymentUserState.profile),
-        hasCheckoutIntent: true,
-      });
       onboardingTrace("[ONBOARDING TRACE] continueToCheckout:start", {
         email: String(email || "").trim(),
         selectedPlan: safePlan,
         selectedBillingCycle: safeBillingCycle,
+        requiresEmailConfirmation,
+        hasSession: Boolean(session),
       });
-      onboardingTrace("[ONBOARDING TRACE] continueToCheckout:post-signup-guard-route", {
-        requestedPath: "/checkout",
-        returnedGuardedRoute: postSignupGuardedRoute,
-      });
-      updateUserState(nextPrePaymentUserState);
       try {
         window.localStorage.setItem(LS_SELECTED_PLAN_KEY, safePlan);
         window.localStorage.setItem(LS_SELECTED_BILLING_CYCLE_KEY, safeBillingCycle);
@@ -1082,12 +1069,32 @@ export default function App() {
         selectedBillingCycle: safeBillingCycle,
         updatedAt: Date.now(),
       });
+
+      if (requiresEmailConfirmation) {
+        return { requiresEmailConfirmation: true };
+      }
+
+      if (session) {
+        await completeSignin({ session, persistDraftRestore: false });
+      } else {
+        const nextPrePaymentUserState = normalizeUserState({
+          ...userState,
+          isLoggedIn: true,
+          hasMembership: false,
+          planTier: "free",
+          planType: null,
+          email: String(email || ""),
+        });
+        updateUserState(nextPrePaymentUserState);
+      }
+
       onboardingTrace("[ONBOARDING TRACE] continueToCheckout:navigate", {
         finalRoutePushed: "/checkout",
       });
       navigateTo("/checkout");
+      return { redirected: true };
     },
-    [navigateTo, updateUserState, userState]
+    [completeSignin, navigateTo, updateUserState, userState]
   );
   const activateMembershipDevMode = useCallback(async () => {
     const plan = normalizePlanId(selectedPlan);
@@ -1281,7 +1288,7 @@ export default function App() {
     [supabaseUser, updateUserState, userState]
   );
   const completeSignin = useCallback(
-    async ({ session = null } = {}) => {
+    async ({ session = null, persistDraftRestore = true } = {}) => {
       setAuthReady(false);
       let resolvedSession = session || null;
 
@@ -1298,11 +1305,65 @@ export default function App() {
         throw new Error("Unable to finish signing in.");
       }
 
-      await hydrateSessionState(resolvedSession, { persistDraftRestore: true });
+      const nextState = await hydrateSessionState(resolvedSession, { persistDraftRestore });
       setAuthReady(true);
-      return { error: null };
+      return { error: null, nextState };
     },
     [hydrateSessionState]
+  );
+  const resolveAuthenticatedDestination = useCallback(
+    (nextState, { hasCheckoutIntent = false } = {}) =>
+      resolvePlaceholderGuardPath("/signin", {
+        isAuthenticated: true,
+        hasMembership: Boolean(nextState?.hasMembership),
+        planTier: normalizePlanTier(nextState?.planTier),
+        isProfileComplete: isProfileSetupComplete(nextState?.profile),
+        hasCheckoutIntent,
+        forceProfileSetupAfterPayment: false,
+      }),
+    []
+  );
+  const handleResolvedEmailAuth = useCallback(
+    async ({ session = null, type = "" } = {}) => {
+      const { nextState } = await completeSignin({ session, persistDraftRestore: false });
+      const hasCheckoutIntent = hasReusableConversionSignupState(loadConversionSignupState());
+      const normalizedType = String(type || "").trim().toLowerCase();
+
+      if (normalizedType === "email_change" || normalizedType === "email") {
+        return {
+          title: "Email confirmed.",
+          message: "Your account email has been updated successfully.",
+          path: "/account",
+          navigate: navigateTo,
+        };
+      }
+
+      return {
+        title: normalizedType === "signup" ? "Email confirmed." : "You're signed in.",
+        message:
+          normalizedType === "signup"
+            ? "Your account is ready. We’re taking you to the next step now."
+            : "Your sign-in link worked. Redirecting you now.",
+        path: resolveAuthenticatedDestination(nextState, { hasCheckoutIntent }),
+        navigate: navigateTo,
+      };
+    },
+    [completeSignin, navigateTo, resolveAuthenticatedDestination]
+  );
+  const handleRecoverySessionResolved = useCallback(
+    async ({ session = null } = {}) => {
+      await completeSignin({ session, persistDraftRestore: false });
+    },
+    [completeSignin]
+  );
+  const handleResetPasswordComplete = useCallback(
+    async ({ session = null } = {}) => {
+      const { nextState } = await completeSignin({ session, persistDraftRestore: false });
+      return resolveAuthenticatedDestination(nextState, {
+        hasCheckoutIntent: hasReusableConversionSignupState(loadConversionSignupState()),
+      });
+    },
+    [completeSignin, resolveAuthenticatedDestination]
   );
   const finalizePostPaymentRoute = useCallback(
     (profileRow) => {
@@ -1510,6 +1571,57 @@ export default function App() {
           siteHeaderLeftGroupStyle,
           siteHeaderLogoButtonStyle,
           siteHeaderLogoImageStyle,
+          siteHeaderSloganStyle,
+          withAlpha,
+        }}
+      />
+    );
+  }
+
+  if (routePath === "/auth/callback") {
+    return (
+      <AuthCallbackPage
+        shared={{
+          ACCENT_PRESETS,
+          DARK_THEME,
+          LIGHT_THEME,
+          LS_ACCENT_COLOR_KEY,
+          LS_THEME_MODE_KEY,
+          onAuthResolved: handleResolvedEmailAuth,
+          onBack: () => navigateTo("/editor"),
+          onGoSignIn: () => navigateTo("/signin"),
+          siteHeaderBarStyle,
+          siteHeaderEditorLinkStyle,
+          siteHeaderLeftGroupStyle,
+          siteHeaderLogoButtonStyle,
+          siteHeaderLogoImageStyle,
+          siteHeaderRightGroupStyle,
+          siteHeaderSloganStyle,
+          withAlpha,
+        }}
+      />
+    );
+  }
+
+  if (routePath === "/auth/reset-password") {
+    return (
+      <ResetPasswordPage
+        shared={{
+          ACCENT_PRESETS,
+          DARK_THEME,
+          LS_ACCENT_COLOR_KEY,
+          LS_THEME_MODE_KEY,
+          TABBY_ASSIST_MINT,
+          onBack: () => navigateTo("/editor"),
+          onGoSignIn: () => navigateTo("/signin"),
+          onRecoverySessionResolved: handleRecoverySessionResolved,
+          onResetPasswordComplete: handleResetPasswordComplete,
+          siteHeaderBarStyle,
+          siteHeaderEditorLinkStyle,
+          siteHeaderLeftGroupStyle,
+          siteHeaderLogoButtonStyle,
+          siteHeaderLogoImageStyle,
+          siteHeaderRightGroupStyle,
           siteHeaderSloganStyle,
           withAlpha,
         }}
