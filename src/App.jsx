@@ -5486,6 +5486,7 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
     setSelectedLibraryArtistKey("");
     setSelectedLibraryAlbumName("");
     setSelectedLibrarySongName("");
+    setProjectsLibraryOpen(false);
     setCurrentLoadedSongPath(null);
     setCurrentProjectId("");
     setCurrentLoadedSongId("");
@@ -5513,9 +5514,10 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
     setLastAppliedChordId("");
     setInsertOpen(false);
     setOverwriteNext(false);
+    setSaveSoonNotice("");
     setEditorSaveState("idle");
     setEditorSaveStatus("");
-    lastFlushedProjectSignatureRef.current = projectSnapshotSignature({
+    const clearedSignature = projectSnapshotSignature({
       songName: "",
       artistName: "Unsorted",
       albumName: NO_ALBUM_NAME,
@@ -5534,7 +5536,19 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
       selectedChordId: "",
       lastAppliedChordId: "",
     });
+    lastFlushedProjectSignatureRef.current = clearedSignature;
+    currentProjectSignatureRef.current = clearedSignature;
   }
+
+  useEffect(() => {
+    const nextAuthUserId = String(userState?.authUserId || "");
+    const previousAuthUserId = previousAuthUserIdRef.current;
+    if (previousAuthUserId && previousAuthUserId !== nextAuthUserId) {
+      clearPersistedUserScopedClientState();
+      resetUserScopedEditorAndLibraryState();
+    }
+    previousAuthUserIdRef.current = nextAuthUserId;
+  }, [userState?.authUserId]);
 
   function clearEditorSaveStatusTimers() {
     if (editorSaveStatusTimerRef.current) {
