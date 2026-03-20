@@ -20,6 +20,7 @@ export default function SuccessPage({ shared }) {
     TABBY_ASSIST_MINT = "#34d399",
     onVerificationDetected,
     onContinueToAccountSetup,
+    pendingVerificationState,
     siteHeaderBarStyle,
     siteHeaderLeftGroupStyle,
     siteHeaderLogoButtonStyle,
@@ -82,6 +83,13 @@ export default function SuccessPage({ shared }) {
     let cancelled = false;
     let continueTimer = null;
     let pollTimer = null;
+    let remoteSigninInFlight = false;
+
+    const pendingEmail = String(pendingVerificationState?.flowEmail || "").trim().toLowerCase();
+    const pendingPassword = String(pendingVerificationState?.flowPassword || "");
+    const pendingAuthUserId = String(pendingVerificationState?.pendingAuthUserId || "").trim();
+
+    const canAttemptRemoteVerification = Boolean(pendingAuthUserId && pendingEmail && pendingPassword.length >= 8);
 
     const handleResolvedVerification = async (session) => {
       const nextState = await onVerificationDetected?.({ session });
@@ -91,6 +99,25 @@ export default function SuccessPage({ shared }) {
         onContinueToAccountSetup?.();
       }, 1400);
       return true;
+    };
+
+    const checkRemoteVerificationStatus = async () => {
+      const response = await fetch("/api/check-verification-status", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          pendingAuthUserId,
+          pendingAuthEmail: pendingEmail,
+        }),
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(String(payload?.error || "Unable to check verification status."));
+      }
+      return payload;
     };
 
     const pollForVerification = async () => {
@@ -103,6 +130,26 @@ export default function SuccessPage({ shared }) {
       if (session) {
         const resolved = await handleResolvedVerification(session);
         if (resolved || cancelled) return;
+      } else if (canAttemptRemoteVerification && !remoteSigninInFlight) {
+        try {
+          const verification = await checkRemoteVerificationStatus();
+          if (cancelled) return;
+
+          if (verification?.verified) {
+            remoteSigninInFlight = true;
+            const { data, error } = await supabase.auth.signInWithPassword({
+              email: pendingEmail,
+              password: pendingPassword,
+            });
+            if (error) throw error;
+
+            const resolved = await handleResolvedVerification(data?.session || null);
+            remoteSigninInFlight = false;
+            if (resolved || cancelled) return;
+          }
+        } catch {
+          remoteSigninInFlight = false;
+        }
       }
 
       pollTimer = window.setTimeout(() => {
@@ -125,7 +172,7 @@ export default function SuccessPage({ shared }) {
       if (pollTimer) window.clearTimeout(pollTimer);
       listener.subscription.unsubscribe();
     };
-  }, [onContinueToAccountSetup, onVerificationDetected]);
+  }, [onContinueToAccountSetup, onVerificationDetected, pendingVerificationState]);
 
   const waitingDotStyle = (index) => ({
     width: 6,

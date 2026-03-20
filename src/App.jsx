@@ -32,7 +32,7 @@ import ProfileSetupPage from "./pages/ProfileSetupPage";
 import AccountPage from "./pages/AccountPage";
 import ProjectsPage, { resetPhaseBLibraryRecordsCache } from "./pages/ProjectsPage";
 import AffiliateApplicationPage from "./pages/AffiliateApplicationPage";
-import { signOut } from "./lib/auth";
+import { readAuthRedirectState, signOut } from "./lib/auth";
 import { createProject, getProjectById, getUserProjects, updateProject } from "./lib/projects";
 import { createProfile, getProfile, updateProfile } from "./lib/profile";
 import { supabase } from "./lib/supabaseClient";
@@ -302,6 +302,16 @@ function normalizeAppPath(rawPath) {
   const value = String(rawPath || "/").trim() || "/";
   if (value === "/member") return "/membership";
   return value;
+}
+
+function resolveAuthCallbackPathFromLocation(locationLike) {
+  if (!locationLike) return "";
+  const pathname = normalizeAppPath(locationLike.pathname || "/");
+  if (pathname === "/auth/callback" || pathname === "/auth/reset-password") return pathname;
+
+  const { accessToken, code, errorCode, errorDescription, refreshToken, tokenHash, type } = readAuthRedirectState();
+  const hasAuthRedirectState = Boolean(accessToken || code || errorCode || errorDescription || refreshToken || tokenHash || type);
+  return hasAuthRedirectState ? "/auth/callback" : "";
 }
 
 function normalizeProfileData(rawProfile) {
@@ -818,6 +828,14 @@ export default function App() {
   const helpSupportEverPaidSubscriber = Boolean(userState?.everHadMembership || isPaidPlanTier(userState?.planTier));
   const [path, setPath] = useState(() => {
     if (typeof window === "undefined") return "/";
+    const authCallbackPath = resolveAuthCallbackPathFromLocation(window.location);
+    if (authCallbackPath) {
+      const targetUrl = `${authCallbackPath}${window.location.search || ""}${window.location.hash || ""}`;
+      if (`${window.location.pathname || ""}${window.location.search || ""}${window.location.hash || ""}` !== targetUrl) {
+        window.history.replaceState({}, "", targetUrl);
+      }
+      return authCallbackPath;
+    }
     return normalizeAppPath(window.location.pathname || "/");
   });
   const [pendingEditorPanel, setPendingEditorPanel] = useState(() => {
@@ -966,8 +984,14 @@ export default function App() {
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
     const onPop = () => {
-      const next = normalizeAppPath(window.location.pathname || "/");
-      if (window.location.pathname !== next) {
+      const authCallbackPath = resolveAuthCallbackPathFromLocation(window.location);
+      const next = authCallbackPath || normalizeAppPath(window.location.pathname || "/");
+      if (authCallbackPath) {
+        const targetUrl = `${authCallbackPath}${window.location.search || ""}${window.location.hash || ""}`;
+        if (`${window.location.pathname || ""}${window.location.search || ""}${window.location.hash || ""}` !== targetUrl) {
+          window.history.replaceState({}, "", targetUrl);
+        }
+      } else if (window.location.pathname !== next) {
         window.history.replaceState({}, "", next);
       }
       setPath(next);
@@ -1817,6 +1841,7 @@ export default function App() {
             navigateTo("/profile-setup");
           },
           onVerificationDetected: handleVerifiedEmailDetected,
+          pendingVerificationState: loadConversionSignupState(),
           siteHeaderBarStyle,
           siteHeaderLeftGroupStyle,
           siteHeaderLogoButtonStyle,
