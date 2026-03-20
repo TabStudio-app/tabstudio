@@ -22,7 +22,7 @@ export function getEmailChangeRedirectUrl() {
 }
 
 export function getResetPasswordRedirectUrl() {
-  return buildSiteUrl(AUTH_CALLBACK_PATH);
+  return buildSiteUrl("/auth/reset-password");
 }
 
 export function normalizeAuthOtpType(rawType) {

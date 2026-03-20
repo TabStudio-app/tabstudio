@@ -164,6 +164,11 @@ export default function SigninPage({ shared }) {
   const submitLabel = mode === "create" ? "Create Account" : mode === "forgot" ? "Send Reset Link" : "Sign In";
   const submittingLabel =
     submitAction === "magiclink" ? "Sending magic link" : submitAction === "reset" ? "Sending reset link" : "Signing in";
+  const pageTitle = mode === "forgot" ? "Reset your password" : "Welcome to TabStudio";
+  const pageSubtitle =
+    mode === "forgot"
+      ? "Enter your email and we'll send you a link to reset your password."
+      : "Sign in to access your saved tabs and projects.";
 
   useEffect(() => {
     if (typeof document === "undefined") return undefined;
@@ -204,7 +209,7 @@ export default function SigninPage({ shared }) {
       if (error) {
         setErrors((prev) => ({
           ...prev,
-          form: String(error?.message || "Unable to send a reset link right now."),
+          form: "We couldn't send a reset link right now. Please try again in a moment.",
         }));
         setIsSubmitting(false);
         return;
@@ -212,7 +217,7 @@ export default function SigninPage({ shared }) {
       setErrors({});
       setSigninWelcomeBubbleVisible(false);
       setSigninResetBubbleVisible(true);
-      setNotice("Reset link sent. Check your email to choose a new password.");
+      setNotice("If an account exists for this email, we've sent a reset link.");
       if (signinResetBubbleTimerRef.current) {
         window.clearTimeout(signinResetBubbleTimerRef.current);
       }
@@ -403,10 +408,10 @@ export default function SigninPage({ shared }) {
             >
               <div style={{ display: "grid", gap: 10, textAlign: "center" }}>
                 <h1 style={{ margin: 0, fontSize: signinNarrow ? 35 : 39, fontWeight: 950, lineHeight: 1.04, letterSpacing: "-0.02em" }}>
-                  Welcome to TabStudio
+                  {pageTitle}
                 </h1>
                 <div style={{ color: withAlpha(THEME.text, 0.76), fontSize: 16, fontWeight: 700 }}>
-                  Sign in to access your saved tabs and projects.
+                  {pageSubtitle}
                 </div>
               </div>
 

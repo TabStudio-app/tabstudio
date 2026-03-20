@@ -335,7 +335,8 @@ function resolveAuthCallbackPathFromLocation(locationLike) {
 
   const { accessToken, code, errorCode, errorDescription, refreshToken, tokenHash, type } = readAuthRedirectState();
   const hasAuthRedirectState = Boolean(accessToken || code || errorCode || errorDescription || refreshToken || tokenHash || type);
-  return hasAuthRedirectState ? "/auth/callback" : "";
+  if (!hasAuthRedirectState) return "";
+  return normalizeAuthOtpType(type) === "recovery" ? "/auth/reset-password" : "/auth/callback";
 }
 
 function normalizeProfileData(rawProfile) {
@@ -1426,22 +1427,6 @@ export default function App() {
 
       if (!resolvedSession) {
         throw new Error("Unable to finish signing in.");
-      }
-
-      try {
-        const {
-          data: { user: authUser },
-        } = await supabase.auth.getUser();
-        console.info("[AUTH DEBUG] completeSignin:user-fields", {
-          email: String(authUser?.email || ""),
-          email_confirmed_at: authUser?.email_confirmed_at || null,
-          confirmed_at: authUser?.confirmed_at || null,
-          last_sign_in_at: authUser?.last_sign_in_at || null,
-        });
-      } catch (debugError) {
-        console.warn("[AUTH DEBUG] completeSignin:user-fields-failed", {
-          message: String(debugError?.message || debugError || "Unknown auth debug read failure."),
-        });
       }
 
       const nextState = await hydrateSessionState(resolvedSession, { persistDraftRestore });

@@ -124,6 +124,14 @@ export default function AuthCallbackPage({ shared }) {
     const resolveCallback = async () => {
       const { accessToken, code, errorCode, errorDescription, refreshToken, tokenHash, type } = readAuthRedirectState();
       const resolvedType = normalizeAuthOtpType(type);
+      if (resolvedType === "recovery" && typeof window !== "undefined") {
+        const targetUrl = `/auth/reset-password${window.location.search || ""}${window.location.hash || ""}`;
+        if (`${window.location.pathname || ""}${window.location.search || ""}${window.location.hash || ""}` !== targetUrl) {
+          window.history.replaceState({}, "", targetUrl);
+        }
+        onContinueToResetPassword?.();
+        return;
+      }
       console.info("[AUTH CALLBACK] start", {
         pathname: typeof window !== "undefined" ? window.location.pathname : "",
         hasAccessToken: Boolean(accessToken),

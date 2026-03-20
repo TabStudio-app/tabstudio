@@ -4,6 +4,53 @@ import { clearAuthRedirectStateFromUrl, readAuthRedirectState, updatePassword } 
 import { supabase } from "../lib/supabaseClient";
 import { inputErrorText, inputImmersive, inputLabel } from "../utils/uiTokens";
 
+const RECOVERY_SESSION_STORAGE_KEY = "tabstudioRecoverySessionV1";
+const RECOVERY_SESSION_TTL_MS = 1000 * 60 * 30;
+
+function clearPersistedRecoverySession() {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(RECOVERY_SESSION_STORAGE_KEY);
+  } catch {
+    return;
+  }
+}
+
+function persistRecoverySession(session) {
+  if (typeof window === "undefined") return;
+  const userId = String(session?.user?.id || "").trim();
+  if (!userId) return;
+  try {
+    window.sessionStorage.setItem(
+      RECOVERY_SESSION_STORAGE_KEY,
+      JSON.stringify({
+        userId,
+        createdAt: Date.now(),
+      })
+    );
+  } catch {
+    return;
+  }
+}
+
+function readPersistedRecoverySession() {
+  if (typeof window === "undefined") return null;
+  try {
+    const parsed = JSON.parse(window.sessionStorage.getItem(RECOVERY_SESSION_STORAGE_KEY) || "null");
+    const userId = String(parsed?.userId || "").trim();
+    const createdAt = Number(parsed?.createdAt || 0);
+    const isFresh = Number.isFinite(createdAt) && Date.now() - createdAt <= RECOVERY_SESSION_TTL_MS;
+    if (!userId || !isFresh) {
+      clearPersistedRecoverySession();
+      return null;
+    }
+    return { userId, createdAt };
+  } catch {
+    clearPersistedRecoverySession();
+    return null;
+  }
+}
+
 export default function ResetPasswordPage({ shared }) {
   const {
     ACCENT_PRESETS,
@@ -103,8 +150,9 @@ export default function ResetPasswordPage({ shared }) {
 
       if (errorCode || errorDescription) {
         if (cancelled) return;
+        clearPersistedRecoverySession();
         setStatus("error");
-        setStatusMessage(errorDescription || "This reset link is not valid anymore. Please request a new one.");
+        setStatusMessage("This reset link is invalid or has expired.");
         clearAuthRedirectStateFromUrl();
         return;
       }
@@ -124,16 +172,27 @@ export default function ResetPasswordPage({ shared }) {
           if (error) throw error;
           session = data?.session || null;
         } else {
+          const persistedRecoverySession = readPersistedRecoverySession();
+          if (!persistedRecoverySession) {
+            throw new Error("This reset link is invalid or has expired.");
+          }
           const {
             data: { session: currentSession },
           } = await supabase.auth.getSession();
+          const currentSessionUserId = String(currentSession?.user?.id || "").trim();
+          if (!currentSession || !currentSessionUserId || currentSessionUserId !== persistedRecoverySession.userId) {
+            clearPersistedRecoverySession();
+            throw new Error("This reset link is invalid or has expired.");
+          }
           session = currentSession || null;
         }
 
         if (!session) {
-          throw new Error("This reset link is not valid anymore. Please request a new one.");
+          clearPersistedRecoverySession();
+          throw new Error("This reset link is invalid or has expired.");
         }
 
+        persistRecoverySession(session);
         if (!cancelled) {
           setActiveSession(session);
           setStatus("ready");
@@ -144,8 +203,9 @@ export default function ResetPasswordPage({ shared }) {
         await onRecoverySessionResolved?.({ session });
       } catch (error) {
         if (cancelled) return;
+        clearPersistedRecoverySession();
         setStatus("error");
-        setStatusMessage(String(error?.message || "This reset link could not be completed. Please request a new one."));
+        setStatusMessage(String(error?.message || "This reset link is invalid or has expired."));
         clearAuthRedirectStateFromUrl();
       }
     };
@@ -228,9 +288,10 @@ export default function ResetPasswordPage({ shared }) {
       const { error } = await updatePassword(password);
       if (error) throw error;
 
+      clearPersistedRecoverySession();
       setErrors({});
       setStatus("success");
-      setStatusMessage("Your password has been updated. Redirecting you back into TabStudio.");
+      setStatusMessage("Password updated successfully");
       const nextPath = (await onResetPasswordComplete?.({ session: activeSession })) || "/editor";
       window.setTimeout(() => {
         if (typeof nextPath === "string" && nextPath) {
@@ -371,7 +432,7 @@ export default function ResetPasswordPage({ shared }) {
             >
               <div style={{ display: "grid", gap: 10, textAlign: "center" }}>
                 <h1 style={{ margin: 0, fontSize: resetNarrow ? 35 : 39, fontWeight: 950, lineHeight: 1.04, letterSpacing: "-0.02em" }}>
-                  Reset your password
+                  Set a new password
                 </h1>
                 <div style={{ color: withAlpha(THEME.text, 0.76), fontSize: 16, fontWeight: 700, lineHeight: 1.5 }}>
                   {statusMessage || "Choose a new password for your account."}
