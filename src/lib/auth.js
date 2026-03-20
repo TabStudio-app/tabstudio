@@ -33,9 +33,11 @@ export function normalizeAuthOtpType(rawType) {
 export function readAuthRedirectState() {
   if (typeof window === "undefined") {
     return {
+      accessToken: "",
       code: "",
       errorCode: "",
       errorDescription: "",
+      refreshToken: "",
       tokenHash: "",
       type: "",
     };
@@ -46,9 +48,11 @@ export function readAuthRedirectState() {
   const hashParams = new URLSearchParams(String(window.location.hash || "").replace(/^#/, ""));
 
   return {
+    accessToken: String(searchParams.get("access_token") || hashParams.get("access_token") || "").trim(),
     code: String(searchParams.get("code") || hashParams.get("code") || "").trim(),
     errorCode: String(searchParams.get("error_code") || hashParams.get("error_code") || "").trim(),
     errorDescription: String(searchParams.get("error_description") || hashParams.get("error_description") || "").trim(),
+    refreshToken: String(searchParams.get("refresh_token") || hashParams.get("refresh_token") || "").trim(),
     tokenHash: String(searchParams.get("token_hash") || hashParams.get("token_hash") || "").trim(),
     type: normalizeAuthOtpType(searchParams.get("type") || hashParams.get("type") || ""),
   };

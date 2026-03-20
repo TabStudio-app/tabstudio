@@ -1,5 +1,15 @@
 import React, { useEffect, useMemo, useState } from "react";
 import AppHeader from "../components/AppHeader";
+import { supabase } from "../lib/supabaseClient";
+
+function SuccessIcon({ color = "#34d399" }) {
+  return (
+    <svg width="72" height="72" viewBox="0 0 72 72" fill="none" aria-hidden="true">
+      <circle cx="36" cy="36" r="34" fill="rgba(52,211,153,0.12)" stroke={color} strokeWidth="2" />
+      <path d="M22 36.5 31.5 46 50 27.5" stroke={color} strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
 
 export default function SuccessPage({ shared }) {
   const {
@@ -8,7 +18,8 @@ export default function SuccessPage({ shared }) {
     LS_ACCENT_COLOR_KEY,
     LS_THEME_MODE_KEY,
     TABBY_ASSIST_MINT = "#34d399",
-    TABBY_ASSIST_MINT_STRONG = "#10b981",
+    onVerificationDetected,
+    onContinueToAccountSetup,
     siteHeaderBarStyle,
     siteHeaderLeftGroupStyle,
     siteHeaderLogoButtonStyle,
@@ -19,6 +30,7 @@ export default function SuccessPage({ shared }) {
 
   const [themeRefresh, setThemeRefresh] = useState(0);
   const [cardHover, setCardHover] = useState(false);
+  const [viewMode, setViewMode] = useState("waiting");
 
   const accentId = useMemo(() => {
     const fallback = "white";
@@ -66,6 +78,55 @@ export default function SuccessPage({ shared }) {
     return () => style.remove();
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    let continueTimer = null;
+    let pollTimer = null;
+
+    const handleResolvedVerification = async (session) => {
+      const nextState = await onVerificationDetected?.({ session });
+      if (cancelled || !nextState?.hasMembership) return false;
+      setViewMode("verified");
+      continueTimer = window.setTimeout(() => {
+        onContinueToAccountSetup?.();
+      }, 1400);
+      return true;
+    };
+
+    const pollForVerification = async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (cancelled) return;
+
+      if (session) {
+        const resolved = await handleResolvedVerification(session);
+        if (resolved || cancelled) return;
+      }
+
+      pollTimer = window.setTimeout(() => {
+        void pollForVerification();
+      }, 1200);
+    };
+
+    const {
+      data: listener,
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session || cancelled) return;
+      void handleResolvedVerification(session);
+    });
+
+    void pollForVerification();
+
+    return () => {
+      cancelled = true;
+      if (continueTimer) window.clearTimeout(continueTimer);
+      if (pollTimer) window.clearTimeout(pollTimer);
+      listener.subscription.unsubscribe();
+    };
+  }, [onContinueToAccountSetup, onVerificationDetected]);
+
   const waitingDotStyle = (index) => ({
     width: 6,
     height: 6,
@@ -75,6 +136,13 @@ export default function SuccessPage({ shared }) {
     animation: "tabstudioSuccessDotPulse 1s ease-in-out infinite",
     animationDelay: `${index * 0.14}s`,
   });
+
+  const title = viewMode === "verified" ? "Email verified" : "Almost there — verify your email";
+  const subtitle = viewMode === "verified" ? "Your email has been successfully confirmed." : "Your payment was successful.";
+  const body = viewMode === "verified"
+    ? "We’re taking you to account setup now."
+    : "We’ve sent you a confirmation email.\nPlease verify your email to continue to account setup.";
+  const helper = viewMode === "verified" ? "Preparing your account..." : "You can close this page once you’ve confirmed your email.";
 
   return (
     <div
@@ -178,10 +246,9 @@ export default function SuccessPage({ shared }) {
                 zIndex: 2,
               }}
             >
-              <div style={{ display: "grid", gap: 10, textAlign: "center" }}>
-                <h1 style={{ margin: 0, fontSize: 39, fontWeight: 950, lineHeight: 1.04, letterSpacing: "-0.02em" }}>
-                  Almost there — verify your email
-                </h1>
+              <div style={{ display: "grid", gap: 10, textAlign: "center", justifyItems: "center" }}>
+                {viewMode === "verified" ? <SuccessIcon /> : null}
+                <h1 style={{ margin: 0, fontSize: 39, fontWeight: 950, lineHeight: 1.04, letterSpacing: "-0.02em" }}>{title}</h1>
                 <div
                   style={{
                     color: withAlpha(THEME.text, 0.76),
@@ -189,7 +256,7 @@ export default function SuccessPage({ shared }) {
                     fontWeight: 700,
                   }}
                 >
-                  Your payment was successful.
+                  {subtitle}
                 </div>
                 <div
                   style={{
@@ -197,11 +264,10 @@ export default function SuccessPage({ shared }) {
                     fontSize: 15,
                     fontWeight: 700,
                     lineHeight: 1.55,
+                    whiteSpace: "pre-line",
                   }}
                 >
-                  We&apos;ve sent you a confirmation email.
-                  <br />
-                  Please verify your email to continue to account setup.
+                  {body}
                 </div>
                 <div
                   style={{
@@ -211,7 +277,7 @@ export default function SuccessPage({ shared }) {
                     lineHeight: 1.45,
                   }}
                 >
-                  You can close this page once you&apos;ve confirmed your email.
+                  {helper}
                 </div>
               </div>
 
@@ -227,7 +293,7 @@ export default function SuccessPage({ shared }) {
                   fontWeight: 800,
                 }}
               >
-                <span>Waiting for confirmation</span>
+                <span>{viewMode === "verified" ? "Continuing to account setup" : "Waiting for confirmation"}</span>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
                   <span aria-hidden="true" style={waitingDotStyle(0)} />
                   <span aria-hidden="true" style={waitingDotStyle(1)} />

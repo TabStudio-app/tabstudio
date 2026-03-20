@@ -1449,6 +1449,13 @@ export default function App() {
     },
     [completeSignin, resolveAuthenticatedDestination]
   );
+  const handleVerifiedEmailDetected = useCallback(
+    async ({ session = null } = {}) => {
+      const { nextState } = await completeSignin({ session, persistDraftRestore: false });
+      return nextState;
+    },
+    [completeSignin]
+  );
   const finalizePostPaymentRoute = useCallback(
     (profileRow) => {
       const membershipState = getMembershipStateFromProfileRow(profileRow);
@@ -1673,12 +1680,7 @@ export default function App() {
           TABBY_ASSIST_MINT,
           TABBY_ASSIST_MINT_STRONG,
           onBack: () => navigateTo("/editor"),
-          onContinueToAccountSetup: () => {
-            setForcedProfileSetupAfterPayment(true);
-            navigateTo("/profile-setup");
-          },
           onContinueToResetPassword: () => navigateTo("/auth/reset-password"),
-          onReturnToTabStudio: () => navigateTo("/"),
           siteHeaderBarStyle,
           siteHeaderLeftGroupStyle,
           siteHeaderLogoButtonStyle,
@@ -1807,9 +1809,14 @@ export default function App() {
         shared={{
           ACCENT_PRESETS,
           DARK_THEME,
-          LIGHT_THEME,
           LS_ACCENT_COLOR_KEY,
           LS_THEME_MODE_KEY,
+          TABBY_ASSIST_MINT,
+          onContinueToAccountSetup: () => {
+            setForcedProfileSetupAfterPayment(true);
+            navigateTo("/profile-setup");
+          },
+          onVerificationDetected: handleVerifiedEmailDetected,
           siteHeaderBarStyle,
           siteHeaderLeftGroupStyle,
           siteHeaderLogoButtonStyle,

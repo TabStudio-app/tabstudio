@@ -3,22 +3,6 @@ import AppHeader from "../components/AppHeader";
 import { clearAuthRedirectStateFromUrl, normalizeAuthOtpType, readAuthRedirectState } from "../lib/auth";
 import { supabase } from "../lib/supabaseClient";
 
-const SESSION_CONVERSION_SIGNUP_KEY = "tabstudioConversionSignupStateV1";
-
-function hasPendingSignupCheckoutIntent() {
-  if (typeof window === "undefined") return false;
-  try {
-    const parsed = JSON.parse(window.sessionStorage.getItem(SESSION_CONVERSION_SIGNUP_KEY) || "null");
-    if (!parsed || typeof parsed !== "object") return false;
-    const flowEmail = String(parsed.flowEmail || "").trim();
-    const flowPassword = String(parsed.flowPassword || "");
-    const pendingAuthUserId = String(parsed.pendingAuthUserId || "").trim();
-    return Boolean(parsed.signupCompletedForFlow) && Boolean(flowEmail) && flowPassword.length >= 8 && Boolean(pendingAuthUserId);
-  } catch {
-    return false;
-  }
-}
-
 function SuccessIcon({ color = "#34d399" }) {
   return (
     <svg width="72" height="72" viewBox="0 0 72 72" fill="none" aria-hidden="true">
@@ -47,9 +31,7 @@ export default function AuthCallbackPage({ shared }) {
     TABBY_ASSIST_MINT = "#34d399",
     TABBY_ASSIST_MINT_STRONG = "#10b981",
     onBack,
-    onContinueToAccountSetup,
     onContinueToResetPassword,
-    onReturnToTabStudio,
     siteHeaderBarStyle,
     siteHeaderLeftGroupStyle,
     siteHeaderLogoButtonStyle,
@@ -63,7 +45,6 @@ export default function AuthCallbackPage({ shared }) {
   const [viewState, setViewState] = useState({
     status: "loading",
     type: "",
-    shouldContinueToAccountSetup: false,
     title: "Confirming your link...",
     subtitle: "Please wait while TabStudio verifies your email link.",
     body: "This usually only takes a moment.",
@@ -120,16 +101,14 @@ export default function AuthCallbackPage({ shared }) {
     let cancelled = false;
 
     const resolveCallback = async () => {
-      const { code, errorCode, errorDescription, tokenHash, type } = readAuthRedirectState();
+      const { accessToken, code, errorCode, errorDescription, refreshToken, tokenHash, type } = readAuthRedirectState();
       const resolvedType = normalizeAuthOtpType(type);
-      const shouldContinueToAccountSetup = resolvedType === "signup" && hasPendingSignupCheckoutIntent();
 
       if (errorCode || errorDescription) {
         if (cancelled) return;
         setViewState({
           status: "error",
           type: resolvedType,
-          shouldContinueToAccountSetup: false,
           title: "Verification failed",
           subtitle: "",
           body: errorDescription || "This link may be invalid or expired.",
@@ -142,7 +121,14 @@ export default function AuthCallbackPage({ shared }) {
       try {
         let session = null;
 
-        if (code) {
+        if (accessToken && refreshToken) {
+          const { data, error } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+          if (error) throw error;
+          session = data?.session || null;
+        } else if (code) {
           const { data, error } = await supabase.auth.exchangeCodeForSession(code);
           if (error) throw error;
           session = data?.session || null;
@@ -170,7 +156,6 @@ export default function AuthCallbackPage({ shared }) {
           setViewState({
             status: "success",
             type: resolvedType,
-            shouldContinueToAccountSetup: false,
             title: "Reset link verified",
             subtitle: "Your TabStudio password reset link has been confirmed.",
             body: "You can continue to choose a new password now.",
@@ -180,12 +165,9 @@ export default function AuthCallbackPage({ shared }) {
           setViewState({
             status: "success",
             type: resolvedType,
-            shouldContinueToAccountSetup,
             title: "Email verified",
             subtitle: "Your TabStudio email has been successfully confirmed.",
-            body: shouldContinueToAccountSetup
-              ? "You can continue to account setup now."
-              : "You can safely return to TabStudio to continue setting up your account.",
+            body: "You can now close this window and return to TabStudio.",
             helper: "This page can now be closed.",
           });
         }
@@ -196,7 +178,6 @@ export default function AuthCallbackPage({ shared }) {
         setViewState({
           status: "error",
           type: resolvedType,
-          shouldContinueToAccountSetup: false,
           title: "Verification failed",
           subtitle: "",
           body: String(error?.message || "This link may be invalid or expired."),
@@ -235,18 +216,6 @@ export default function AuthCallbackPage({ shared }) {
     cursor: "pointer",
     boxShadow: `0 10px 18px ${withAlpha(TABBY_ASSIST_MINT, 0.24)}`,
     transition: "transform 0.15s ease, filter 0.15s ease, box-shadow 0.15s ease, background 0.15s ease",
-  };
-
-  const secondaryButtonStyle = {
-    minHeight: 42,
-    width: "100%",
-    borderRadius: 11,
-    border: `1px solid ${withAlpha(THEME.text, 0.12)}`,
-    background: withAlpha(THEME.text, 0.03),
-    color: THEME.text,
-    fontSize: 14,
-    fontWeight: 800,
-    cursor: "pointer",
   };
 
   const accentColor = viewState.status === "error" ? "#ef4444" : TABBY_ASSIST_MINT;
@@ -420,16 +389,6 @@ export default function AuthCallbackPage({ shared }) {
               {viewState.status === "success" && viewState.type === "recovery" ? (
                 <button type="button" onClick={onContinueToResetPassword} style={primaryButtonStyle}>
                   Continue to Reset Password
-                </button>
-              ) : null}
-
-              {viewState.status === "success" && viewState.type !== "recovery" ? (
-                <button
-                  type="button"
-                  onClick={viewState.shouldContinueToAccountSetup ? onContinueToAccountSetup : onReturnToTabStudio}
-                  style={viewState.shouldContinueToAccountSetup ? primaryButtonStyle : secondaryButtonStyle}
-                >
-                  {viewState.shouldContinueToAccountSetup ? "Continue to Account Setup" : "Return to TabStudio"}
                 </button>
               ) : null}
             </div>
