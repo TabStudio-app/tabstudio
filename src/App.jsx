@@ -916,11 +916,14 @@ export default function App() {
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!isMounted) return;
-      void (async () => {
-        await hydrateSessionState(session || null);
+      window.setTimeout(() => {
         if (!isMounted) return;
-        setAuthReady(true);
-      })();
+        void (async () => {
+          await hydrateSessionState(session || null);
+          if (!isMounted) return;
+          setAuthReady(true);
+        })();
+      }, 0);
     });
 
     return () => {

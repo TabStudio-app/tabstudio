@@ -35,6 +35,7 @@ export default function SignupPage({ shared }) {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [errors, setErrors] = useState({});
+  const [submitError, setSubmitError] = useState("");
   const [signupTouchedFields, setSignupTouchedFields] = useState({});
   const [signupFocusedField, setSignupFocusedField] = useState("");
   const [signupHoveredField, setSignupHoveredField] = useState("");
@@ -244,6 +245,7 @@ export default function SignupPage({ shared }) {
 
   const handleContinue = async (e) => {
     e.preventDefault();
+    setSubmitError("");
     const nextErrors = {};
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) nextErrors.email = "Please enter a valid email address.";
     if (String(password || "").length < 8) nextErrors.password = "Password must be at least 8 characters.";
@@ -255,7 +257,15 @@ export default function SignupPage({ shared }) {
     if (Object.keys(nextErrors).length) return;
     setIsSubmittingSignup(true);
     try {
-      const { data, error } = await signUp(cleanEmail, password);
+      const signupResult = await Promise.race([
+        signUp(cleanEmail, password),
+        new Promise((_, reject) => {
+          window.setTimeout(() => {
+            reject(new Error("Signup is taking longer than expected. Please try again."));
+          }, 15000);
+        }),
+      ]);
+      const { data, error } = signupResult;
 
       if (error) {
         const errorMessage = String(error?.message || "").toLowerCase();
@@ -280,7 +290,8 @@ export default function SignupPage({ shared }) {
         pendingAuthUserId: String(data?.user?.id || "").trim(),
       });
       if (!result?.redirected) setIsSubmittingSignup(false);
-    } catch {
+    } catch (error) {
+      setSubmitError(String(error?.message || "We couldn't start secure checkout. Please try again."));
       setIsSubmittingSignup(false);
     }
   };
@@ -657,6 +668,7 @@ export default function SignupPage({ shared }) {
                     "Continue to Checkout"
                   )}
                 </button>
+                {submitError ? <div style={{ ...errorTextStyle, textAlign: "center" }}>{submitError}</div> : null}
                 <div style={{ textAlign: "center", fontSize: 13, color: SIGNUP_THEME.textFaint, fontWeight: 700 }}>
                   Secure checkout powered by Stripe • Cancel anytime
                 </div>
