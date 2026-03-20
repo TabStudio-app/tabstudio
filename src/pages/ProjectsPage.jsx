@@ -18,6 +18,10 @@ const EMPTY_LIBRARY_RECORDS = {
 
 let phaseBLibraryRecordsCache = EMPTY_LIBRARY_RECORDS;
 
+export function resetPhaseBLibraryRecordsCache() {
+  phaseBLibraryRecordsCache = EMPTY_LIBRARY_RECORDS;
+}
+
 function makeLegacyProjectKey(artist, album, title) {
   return [artist, album, title].map((value) => String(value || "").trim().toLowerCase()).join("::");
 }

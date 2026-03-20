@@ -28,7 +28,7 @@ import {
 } from "./features/export/exportHelpers";
 import ProfileSetupPage from "./pages/ProfileSetupPage";
 import AccountPage from "./pages/AccountPage";
-import ProjectsPage from "./pages/ProjectsPage";
+import ProjectsPage, { resetPhaseBLibraryRecordsCache } from "./pages/ProjectsPage";
 import AffiliateApplicationPage from "./pages/AffiliateApplicationPage";
 import { signOut } from "./lib/auth";
 import { createProject, getProjectById, getUserProjects, updateProject } from "./lib/projects";
@@ -4454,6 +4454,8 @@ function EditorApp({ navigateTo, pendingOpenPanel = "", onPendingPanelHandled, u
   const handleAccountSignOut = useCallback(async () => {
     const { error } = await signOut();
     if (error) throw error;
+    clearPersistedUserScopedClientState();
+    resetUserScopedEditorAndLibraryState();
     setSupabaseSession(null);
     setSupabaseUser(null);
     setForcedProfileSetupAfterPayment(false);
@@ -5450,6 +5452,89 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
   const completedRowsToggleRef = useRef(null);
   const completedRowsActionsRef = useRef(null);
   const completedRowsSectionRef = useRef(null);
+  const previousAuthUserIdRef = useRef(String(userState?.authUserId || ""));
+
+  function clearPersistedUserScopedClientState() {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.removeItem(LS_LIBRARY_V1_KEY);
+      window.localStorage.removeItem(LS_TABSTUDIO_DRAFT_KEY);
+      window.localStorage.removeItem(LS_RESTORE_DRAFT_AFTER_MEMBERSHIP_KEY);
+      window.localStorage.removeItem(LS_RESTORE_DRAFT_AFTER_SIGNIN_KEY);
+    } catch {}
+  }
+
+  function resetUserScopedEditorAndLibraryState() {
+    clearProjectSaveTimers();
+    clearEditorSaveStatusTimers();
+    resetPhaseBLibraryRecordsCache();
+    draftRestoreDoneRef.current = false;
+    saveInFlightRef.current = false;
+    queuedSaveRef.current = false;
+    pendingManualSaveRef.current = false;
+    savePromiseRef.current = null;
+    lastFailedSaveSignatureRef.current = "";
+    currentLoadedSongIdRef.current = "";
+    currentProjectIdRef.current = "";
+    documentSessionKeyRef.current += 1;
+    undoStackRef.current = [];
+    redoStackRef.current = [];
+    libraryUndoStackRef.current = [];
+    libraryRedoStackRef.current = [];
+    clearCellSelection();
+    setLibraryData(makeEmptyLibrary());
+    setSelectedLibraryArtistKey("");
+    setSelectedLibraryAlbumName("");
+    setSelectedLibrarySongName("");
+    setCurrentLoadedSongPath(null);
+    setCurrentProjectId("");
+    setCurrentLoadedSongId("");
+    setUserProjects([]);
+    setProjectsLoadError("");
+    setProjectsLoading(false);
+    setProjectActionBusyId("");
+    setSongTitle("");
+    setArtist("");
+    setAlbumName("");
+    setInstrumentId("gtr6");
+    setTuning(DEFAULT_TUNING.slice());
+    setTuningLabel("Standard");
+    setCols(DEFAULT_COLS);
+    setGrid(makeBlankGrid(DEFAULT_TUNING.length, DEFAULT_COLS));
+    setCursor({ r: 0, c: 0 });
+    setCapoEnabled(false);
+    setCapoFret("");
+    setShowCapoControl(true);
+    setShowTempoControl(false);
+    setTempoBpm("120");
+    setCompletedRows([]);
+    setChordName("");
+    setSelectedChordId("");
+    setLastAppliedChordId("");
+    setInsertOpen(false);
+    setOverwriteNext(false);
+    setEditorSaveState("idle");
+    setEditorSaveStatus("");
+    lastFlushedProjectSignatureRef.current = projectSnapshotSignature({
+      songName: "",
+      artistName: "Unsorted",
+      albumName: NO_ALBUM_NAME,
+      instrumentId: "gtr6",
+      tuning: DEFAULT_TUNING.slice(),
+      tuningLabel: "Standard",
+      cols: DEFAULT_COLS,
+      grid: makeBlankGrid(DEFAULT_TUNING.length, DEFAULT_COLS),
+      capoEnabled: false,
+      capoFret: "",
+      showCapoControl: true,
+      showTempoControl: false,
+      tempoBpm: "120",
+      completedRows: [],
+      chordName: "",
+      selectedChordId: "",
+      lastAppliedChordId: "",
+    });
+  }
 
   function clearEditorSaveStatusTimers() {
     if (editorSaveStatusTimerRef.current) {
