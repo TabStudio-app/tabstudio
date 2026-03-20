@@ -1,5 +1,3 @@
-import { createClient } from "@supabase/supabase-js";
-
 const STRIPE_API_BASE = "https://api.stripe.com/v1";
 
 function sendJson(res, status, payload) {
@@ -58,18 +56,6 @@ async function readJsonBody(req) {
   return raw ? JSON.parse(raw) : {};
 }
 
-function buildSupabaseAdminClient() {
-  const supabaseUrl = String(process.env.SUPABASE_URL || "").trim();
-  const serviceRoleKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
-  if (!supabaseUrl || !serviceRoleKey) return null;
-  return createClient(supabaseUrl, serviceRoleKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-  });
-}
-
 async function fetchStripeJson(path, { method = "GET", secretKey, form = null } = {}) {
   const response = await fetch(`${STRIPE_API_BASE}${path}`, {
     method,
@@ -81,10 +67,6 @@ async function fetchStripeJson(path, { method = "GET", secretKey, form = null } 
   });
   const payload = await response.json();
   return { response, payload };
-}
-
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function findOrCreateStripeCustomer({ secretKey, userId, email }) {
@@ -105,7 +87,9 @@ async function findOrCreateStripeCustomer({ secretKey, userId, email }) {
 
   const form = new URLSearchParams();
   form.set("email", normalizedEmail);
-  form.set("metadata[supabase_user_id]", userId);
+  if (userId) {
+    form.set("metadata[supabase_user_id]", userId);
+  }
 
   const createdCustomer = await fetchStripeJson("/customers", {
     method: "POST",
@@ -120,69 +104,18 @@ async function findOrCreateStripeCustomer({ secretKey, userId, email }) {
   return String(createdCustomer.payload?.id || "").trim();
 }
 
-async function resolveCheckoutIdentity({ supabaseAdmin, accessToken, pendingAuthUserId, pendingAuthEmail }) {
+async function resolveCheckoutIdentity({ accessToken, pendingAuthUserId, pendingAuthEmail }) {
   const normalizedPendingUserId = String(pendingAuthUserId || "").trim();
   const normalizedPendingEmail = String(pendingAuthEmail || "").trim().toLowerCase();
 
-  if (accessToken) {
-    const {
-      data: { user },
-      error: authError,
-    } = await supabaseAdmin.auth.getUser(accessToken);
-    if (authError || !user?.id) {
-      throw new Error("Unable to verify authenticated user.");
-    }
-    return {
-      userId: String(user.id || "").trim(),
-      userEmail: String(user.email || "").trim().toLowerCase(),
-    };
-  }
-
-  if (!normalizedPendingUserId || !normalizedPendingEmail) {
-    throw new Error("Authentication is required.");
-  }
-
-  let resolvedPendingUser = null;
-  let pendingLookupError = null;
-
-  for (let attempt = 1; attempt <= 5; attempt += 1) {
-    const { data, error } = await supabaseAdmin.auth.admin.getUserById(normalizedPendingUserId);
-    if (!error && data?.user?.id) {
-      resolvedPendingUser = data.user;
-      pendingLookupError = null;
-      break;
-    }
-
-    pendingLookupError = error || new Error("Pending user not found.");
-    console.warn("[create-checkout-session] pending-account-lookup-retry", {
-      attempt,
-      pendingAuthUserId: normalizedPendingUserId,
-      pendingAuthEmail: normalizedPendingEmail,
-      error: String(pendingLookupError?.message || pendingLookupError || "Unknown error"),
-    });
-
-    if (attempt < 5) {
-      await delay(300);
-    }
-  }
-
-  if (!resolvedPendingUser?.id) {
-    throw new Error("Unable to verify your pending account yet. Please try again.");
-  }
-
-  const resolvedEmail = String(resolvedPendingUser.email || "").trim().toLowerCase();
-  if (!resolvedEmail || resolvedEmail !== normalizedPendingEmail) {
-    console.warn("[create-checkout-session] pending-account-email-mismatch", {
-      pendingAuthUserId: normalizedPendingUserId,
-      pendingAuthEmail: normalizedPendingEmail,
-      resolvedEmail,
-    });
-    throw new Error("Your pending account email could not be verified.");
+  if (!normalizedPendingEmail) {
+    throw new Error("A valid email is required before checkout can begin.");
   }
 
   return {
-    userId: String(resolvedPendingUser.id || "").trim(),
-    userEmail: resolvedEmail,
+    userId: normalizedPendingUserId,
+    userEmail: normalizedPendingEmail,
+    hasAccessToken: Boolean(String(accessToken || "").trim()),
   };
 }
 
@@ -193,8 +126,7 @@ export default async function handler(req, res) {
   }
 
   const stripeSecretKey = String(process.env.STRIPE_SECRET_KEY || "").trim();
-  const supabaseAdmin = buildSupabaseAdminClient();
-  if (!stripeSecretKey || !supabaseAdmin) {
+  if (!stripeSecretKey) {
     return sendJson(res, 500, { error: "Stripe checkout is not configured." });
   }
 
@@ -229,7 +161,6 @@ export default async function handler(req, res) {
       billingCycle,
     });
     const { userId, userEmail } = await resolveCheckoutIdentity({
-      supabaseAdmin,
       accessToken,
       pendingAuthUserId: body?.pendingAuthUserId,
       pendingAuthEmail: body?.pendingAuthEmail,
@@ -248,19 +179,21 @@ export default async function handler(req, res) {
     const form = new URLSearchParams();
     form.set("mode", "subscription");
     form.set("customer", stripeCustomerId);
-    form.set("client_reference_id", userId);
     form.set("success_url", `${appUrl}${successPath}?session_id={CHECKOUT_SESSION_ID}`);
     form.set("cancel_url", `${appUrl}${cancelPath}`);
     form.set("line_items[0][price]", priceId);
     form.set("line_items[0][quantity]", "1");
-    form.set("metadata[supabase_user_id]", userId);
     form.set("metadata[email]", userEmail);
     form.set("metadata[plan_tier]", planTier);
     form.set("metadata[billing_cycle]", billingCycle);
-    form.set("subscription_data[metadata][supabase_user_id]", userId);
     form.set("subscription_data[metadata][email]", userEmail);
     form.set("subscription_data[metadata][plan_tier]", planTier);
     form.set("subscription_data[metadata][billing_cycle]", billingCycle);
+    if (userId) {
+      form.set("client_reference_id", userId);
+      form.set("metadata[supabase_user_id]", userId);
+      form.set("subscription_data[metadata][supabase_user_id]", userId);
+    }
 
     const checkoutSession = await fetchStripeJson("/checkout/sessions", {
       method: "POST",
@@ -278,16 +211,17 @@ export default async function handler(req, res) {
       url: checkoutSession.payload?.url || null,
     });
   } catch (error) {
+    const message = String(error?.message || "Unable to create checkout session.");
     console.error("[create-checkout-session] failed", {
-      error: String(error?.message || error || "Unknown error"),
+      error: message,
       hasAccessToken: Boolean(accessToken),
       pendingAuthUserId: String(body?.pendingAuthUserId || "").trim(),
       pendingAuthEmail: String(body?.pendingAuthEmail || "").trim().toLowerCase(),
       planTier,
       billingCycle,
     });
-    return sendJson(res, 500, {
-      error: String(error?.message || "Unable to reach Stripe right now."),
+    return sendJson(res, 400, {
+      error: message,
     });
   }
 }
