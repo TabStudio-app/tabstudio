@@ -83,6 +83,10 @@ async function fetchStripeJson(path, { method = "GET", secretKey, form = null } 
   return { response, payload };
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function findOrCreateStripeCustomer({ secretKey, userId, email }) {
   const normalizedEmail = String(email || "").trim().toLowerCase();
   const query = new URLSearchParams();
@@ -138,18 +142,46 @@ async function resolveCheckoutIdentity({ supabaseAdmin, accessToken, pendingAuth
     throw new Error("Authentication is required.");
   }
 
-  const { data, error } = await supabaseAdmin.auth.admin.getUserById(normalizedPendingUserId);
-  if (error || !data?.user?.id) {
-    throw new Error("Unable to verify your pending account.");
+  let resolvedPendingUser = null;
+  let pendingLookupError = null;
+
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    const { data, error } = await supabaseAdmin.auth.admin.getUserById(normalizedPendingUserId);
+    if (!error && data?.user?.id) {
+      resolvedPendingUser = data.user;
+      pendingLookupError = null;
+      break;
+    }
+
+    pendingLookupError = error || new Error("Pending user not found.");
+    console.warn("[create-checkout-session] pending-account-lookup-retry", {
+      attempt,
+      pendingAuthUserId: normalizedPendingUserId,
+      pendingAuthEmail: normalizedPendingEmail,
+      error: String(pendingLookupError?.message || pendingLookupError || "Unknown error"),
+    });
+
+    if (attempt < 5) {
+      await delay(300);
+    }
   }
 
-  const resolvedEmail = String(data.user.email || "").trim().toLowerCase();
+  if (!resolvedPendingUser?.id) {
+    throw new Error("Unable to verify your pending account yet. Please try again.");
+  }
+
+  const resolvedEmail = String(resolvedPendingUser.email || "").trim().toLowerCase();
   if (!resolvedEmail || resolvedEmail !== normalizedPendingEmail) {
+    console.warn("[create-checkout-session] pending-account-email-mismatch", {
+      pendingAuthUserId: normalizedPendingUserId,
+      pendingAuthEmail: normalizedPendingEmail,
+      resolvedEmail,
+    });
     throw new Error("Your pending account email could not be verified.");
   }
 
   return {
-    userId: String(data.user.id || "").trim(),
+    userId: String(resolvedPendingUser.id || "").trim(),
     userEmail: resolvedEmail,
   };
 }
@@ -189,6 +221,13 @@ export default async function handler(req, res) {
   const appUrl = getAppUrl(req);
 
   try {
+    console.info("[create-checkout-session] request", {
+      hasAccessToken: Boolean(accessToken),
+      pendingAuthUserId: String(body?.pendingAuthUserId || "").trim(),
+      pendingAuthEmail: String(body?.pendingAuthEmail || "").trim().toLowerCase(),
+      planTier,
+      billingCycle,
+    });
     const { userId, userEmail } = await resolveCheckoutIdentity({
       supabaseAdmin,
       accessToken,
@@ -239,6 +278,14 @@ export default async function handler(req, res) {
       url: checkoutSession.payload?.url || null,
     });
   } catch (error) {
+    console.error("[create-checkout-session] failed", {
+      error: String(error?.message || error || "Unknown error"),
+      hasAccessToken: Boolean(accessToken),
+      pendingAuthUserId: String(body?.pendingAuthUserId || "").trim(),
+      pendingAuthEmail: String(body?.pendingAuthEmail || "").trim().toLowerCase(),
+      planTier,
+      billingCycle,
+    });
     return sendJson(res, 500, {
       error: String(error?.message || "Unable to reach Stripe right now."),
     });

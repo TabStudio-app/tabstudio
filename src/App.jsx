@@ -1192,6 +1192,13 @@ export default function App() {
     const plan = normalizePlanId(selectedPlan);
     const billingCycle = normalizeBillingCycle(selectedBillingCycle);
     const flowSignupState = loadConversionSignupState();
+    onboardingTrace("[ONBOARDING TRACE] createStripeCheckoutSession:start", {
+      selectedPlan: plan,
+      selectedBillingCycle: billingCycle,
+      hasPendingFlowAuthIdentity: hasPendingFlowAuthIdentity(flowSignupState),
+      pendingAuthUserId: hasPendingFlowAuthIdentity(flowSignupState) ? flowSignupState.pendingAuthUserId : "",
+      pendingAuthEmail: hasPendingFlowAuthIdentity(flowSignupState) ? flowSignupState.flowEmail : "",
+    });
     setCheckoutLaunchError("");
     setIsLaunchingCheckout(true);
     try {
@@ -1214,9 +1221,6 @@ export default function App() {
       });
       setCheckoutLaunchError(String(error?.message || "Unable to start secure checkout."));
       setIsLaunchingCheckout(false);
-      if (typeof window !== "undefined") {
-        window.alert(String(error?.message || "Unable to start secure checkout."));
-      }
     }
   }, [selectedBillingCycle, selectedPlan]);
   const saveProfileSetup = useCallback(
