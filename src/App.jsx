@@ -132,6 +132,7 @@ const LS_MEMBERSHIP_SCROLL_TO_PLANS_KEY = "tabstudioMembershipScrollToPlans";
 const SESSION_CONVERSION_SIGNUP_KEY = "tabstudioConversionSignupStateV1";
 const SESSION_CHECKOUT_AUTOSTART_KEY = "tabstudioCheckoutAutostartV1";
 const SESSION_FORCE_PROFILE_SETUP_AFTER_PAYMENT_KEY = "tabstudioForceProfileSetupAfterPayment";
+const CONVERSION_SIGNUP_STATE_TTL_MS = 1000 * 60 * 60 * 2;
 const LS_HEADER_TABBY_NUDGE_SHOWN_SESSION_KEY = "tabstudioHeaderTabbyNudgeShown";
 const LS_HEADER_TABBY_ENGAGED_SESSION_KEY = "tabstudioHeaderTabbyEngaged";
 const LS_MEMBERSHIP_PRICING_GUIDE_SEEN_KEY = "tabstudioMembershipPricingGuideSeen";
@@ -203,14 +204,16 @@ function isValidFlowSignupEmail(email) {
 
 function normalizeConversionSignupState(rawState) {
   const raw = rawState && typeof rawState === "object" ? rawState : {};
+  const updatedAt = Number.isFinite(raw.updatedAt) ? Number(raw.updatedAt) : Date.now();
+  const isStale = Date.now() - updatedAt > CONVERSION_SIGNUP_STATE_TTL_MS;
   return {
     signupCompletedForFlow: Boolean(raw.signupCompletedForFlow),
     flowEmail: String(raw.flowEmail || "").trim(),
-    flowPassword: String(raw.flowPassword || ""),
+    flowPassword: isStale ? "" : String(raw.flowPassword || ""),
     pendingAuthUserId: String(raw.pendingAuthUserId || "").trim(),
     selectedPlan: normalizePlanId(raw.selectedPlan),
     selectedBillingCycle: normalizeBillingCycle(raw.selectedBillingCycle),
-    updatedAt: Number.isFinite(raw.updatedAt) ? Number(raw.updatedAt) : Date.now(),
+    updatedAt,
   };
 }
 
@@ -258,7 +261,11 @@ function loadConversionSignupState() {
   if (typeof window === "undefined") return normalizeConversionSignupState(null);
   try {
     const parsed = JSON.parse(window.sessionStorage.getItem(SESSION_CONVERSION_SIGNUP_KEY) || "null");
-    return normalizeConversionSignupState(parsed);
+    const normalized = normalizeConversionSignupState(parsed);
+    if (normalized.flowPassword !== String(parsed?.flowPassword || "")) {
+      window.sessionStorage.setItem(SESSION_CONVERSION_SIGNUP_KEY, JSON.stringify(normalized));
+    }
+    return normalized;
   } catch {
     return normalizeConversionSignupState(null);
   }
@@ -268,6 +275,23 @@ function persistConversionSignupState(nextState) {
   if (typeof window === "undefined") return;
   try {
     window.sessionStorage.setItem(SESSION_CONVERSION_SIGNUP_KEY, JSON.stringify(normalizeConversionSignupState(nextState)));
+  } catch {}
+}
+
+function clearConversionSignupPassword() {
+  if (typeof window === "undefined") return;
+  try {
+    const currentState = loadConversionSignupState();
+    if (!currentState.flowPassword) return;
+    window.sessionStorage.setItem(
+      SESSION_CONVERSION_SIGNUP_KEY,
+      JSON.stringify(
+        normalizeConversionSignupState({
+          ...currentState,
+          flowPassword: "",
+        })
+      )
+    );
   } catch {}
 }
 
@@ -1405,6 +1429,7 @@ export default function App() {
       }
 
       const nextState = await hydrateSessionState(resolvedSession, { persistDraftRestore });
+      clearConversionSignupPassword();
       setAuthReady(true);
       return { error: null, nextState };
     },
@@ -1766,8 +1791,12 @@ export default function App() {
           isCheckoutProcessing: isLaunchingCheckout,
           normalizeBillingCycle,
           onActivateMembership: enableDevCheckout ? activateMembershipDevMode : launchHostedStripeCheckout,
-          onBack: () => navigateTo("/signup"),
+          onBack: () => {
+            clearConversionSignupState();
+            navigateTo("/signup");
+          },
           onChangePlan: () => {
+            clearConversionSignupState();
             try {
               window.sessionStorage.setItem(LS_MEMBERSHIP_SCROLL_TO_PLANS_KEY, "true");
             } catch {}
@@ -4698,6 +4727,7 @@ function EditorApp({ navigateTo, pendingOpenPanel = "", onPendingPanelHandled, u
   const handleAccountSignOut = useCallback(async () => {
     const { error } = await signOut();
     if (error) throw error;
+    clearConversionSignupState();
     clearPersistedUserScopedClientState();
     resetUserScopedEditorAndLibraryState();
     setSupabaseSession(null);
@@ -5788,6 +5818,7 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
     const nextAuthUserId = String(userState?.authUserId || "");
     const previousAuthUserId = previousAuthUserIdRef.current;
     if (previousAuthUserId && previousAuthUserId !== nextAuthUserId) {
+      clearConversionSignupState();
       clearPersistedUserScopedClientState();
       resetUserScopedEditorAndLibraryState();
     }

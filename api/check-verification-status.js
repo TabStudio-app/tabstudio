@@ -52,14 +52,27 @@ export default async function handler(req, res) {
 
   const pendingAuthUserId = String(body?.pendingAuthUserId || "").trim();
   const pendingAuthEmail = String(body?.pendingAuthEmail || "").trim().toLowerCase();
+  console.info("[CHECK VERIFICATION STATUS] request", {
+    pendingAuthUserId,
+    pendingAuthEmail,
+  });
 
   if (!pendingAuthUserId || !pendingAuthEmail) {
+    console.warn("[CHECK VERIFICATION STATUS] missing-identifier", {
+      pendingAuthUserId,
+      pendingAuthEmail,
+    });
     return sendJson(res, 400, { error: "Pending account details are required." });
   }
 
   try {
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.getUserById(pendingAuthUserId);
     if (authError) {
+      console.warn("[CHECK VERIFICATION STATUS] auth-lookup-failed", {
+        pendingAuthUserId,
+        pendingAuthEmail,
+        error: String(authError?.message || authError),
+      });
       return sendJson(res, 200, {
         verified: false,
         hasMembership: false,
@@ -69,7 +82,18 @@ export default async function handler(req, res) {
 
     const authUser = authData?.user || null;
     const authEmail = String(authUser?.email || "").trim().toLowerCase();
+    console.info("[CHECK VERIFICATION STATUS] matched-user", {
+      userId: String(authUser?.id || ""),
+      authEmail,
+      emailConfirmedAt: authUser?.email_confirmed_at || null,
+      confirmedAt: authUser?.confirmed_at || null,
+    });
     if (authEmail && authEmail !== pendingAuthEmail) {
+      console.warn("[CHECK VERIFICATION STATUS] email-mismatch", {
+        pendingAuthUserId,
+        pendingAuthEmail,
+        authEmail,
+      });
       return sendJson(res, 200, {
         verified: false,
         hasMembership: false,
@@ -87,14 +111,28 @@ export default async function handler(req, res) {
 
     const planTier = normalizePlanTier(profileRow?.plan_tier);
     const hasMembership = String(profileRow?.membership_status || "").trim().toLowerCase() === "active" && planTier !== "free";
-
-    return sendJson(res, 200, {
+    const responsePayload = {
       verified: Boolean(emailConfirmedAt),
       emailConfirmedAt,
+      confirmedAt: authUser?.confirmed_at || null,
       hasMembership,
       planTier,
+    };
+    console.info("[CHECK VERIFICATION STATUS] response", {
+      pendingAuthUserId,
+      pendingAuthEmail,
+      profilePlanTier: profileRow?.plan_tier || null,
+      profileMembershipStatus: profileRow?.membership_status || null,
+      responsePayload,
     });
+
+    return sendJson(res, 200, responsePayload);
   } catch (error) {
+    console.error("[CHECK VERIFICATION STATUS] failed", {
+      pendingAuthUserId,
+      pendingAuthEmail,
+      message: String(error?.message || "Unable to check verification status."),
+    });
     return sendJson(res, 500, {
       error: String(error?.message || "Unable to check verification status."),
     });

@@ -84,6 +84,7 @@ export default function SuccessPage({ shared }) {
     let continueTimer = null;
     let pollTimer = null;
     let remoteSigninInFlight = false;
+    let pollAttempt = 0;
 
     const pendingEmail = String(pendingVerificationState?.flowEmail || "").trim().toLowerCase();
     const pendingPassword = String(pendingVerificationState?.flowPassword || "");
@@ -92,7 +93,19 @@ export default function SuccessPage({ shared }) {
     const canAttemptRemoteVerification = Boolean(pendingAuthUserId && pendingEmail && pendingPassword.length >= 8);
 
     const handleResolvedVerification = async (session) => {
+      console.info("[SUCCESS VERIFY] handleResolvedVerification:start", {
+        hasSession: Boolean(session),
+        sessionUserId: String(session?.user?.id || ""),
+        sessionEmail: String(session?.user?.email || ""),
+      });
       const nextState = await onVerificationDetected?.({ session });
+      console.info("[SUCCESS VERIFY] handleResolvedVerification:nextState", {
+        cancelled,
+        isLoggedIn: Boolean(nextState?.isLoggedIn),
+        hasMembership: Boolean(nextState?.hasMembership),
+        planTier: String(nextState?.planTier || ""),
+        authUserId: String(nextState?.authUserId || ""),
+      });
       if (cancelled || !nextState?.hasMembership) return false;
       setViewMode("verified");
       continueTimer = window.setTimeout(() => {
@@ -102,18 +115,24 @@ export default function SuccessPage({ shared }) {
     };
 
     const checkRemoteVerificationStatus = async () => {
+      const requestPayload = {
+        pendingAuthUserId,
+        pendingAuthEmail: pendingEmail,
+      };
+      console.info("[SUCCESS VERIFY] api-request", requestPayload);
       const response = await fetch("/api/check-verification-status", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          pendingAuthUserId,
-          pendingAuthEmail: pendingEmail,
-        }),
+        body: JSON.stringify(requestPayload),
       });
-
       const payload = await response.json().catch(() => ({}));
+      console.info("[SUCCESS VERIFY] api-response", {
+        ok: response.ok,
+        status: response.status,
+        payload,
+      });
       if (!response.ok) {
         throw new Error(String(payload?.error || "Unable to check verification status."));
       }
@@ -121,9 +140,18 @@ export default function SuccessPage({ shared }) {
     };
 
     const pollForVerification = async () => {
+      pollAttempt += 1;
       const {
         data: { session },
       } = await supabase.auth.getSession();
+      console.info("[SUCCESS VERIFY] poll", {
+        attempt: pollAttempt,
+        hasSession: Boolean(session),
+        sessionUserId: String(session?.user?.id || ""),
+        pendingAuthUserId,
+        pendingEmail,
+        canAttemptRemoteVerification,
+      });
 
       if (cancelled) return;
 
@@ -137,24 +165,42 @@ export default function SuccessPage({ shared }) {
 
           if (verification?.verified) {
             remoteSigninInFlight = true;
+            console.info("[SUCCESS VERIFY] signInWithPassword:start", {
+              pendingAuthUserId,
+              pendingEmail,
+            });
             const { data, error } = await supabase.auth.signInWithPassword({
               email: pendingEmail,
               password: pendingPassword,
             });
             if (error) throw error;
+            console.info("[SUCCESS VERIFY] signInWithPassword:success", {
+              hasSession: Boolean(data?.session),
+              sessionUserId: String(data?.session?.user?.id || ""),
+              sessionEmail: String(data?.session?.user?.email || ""),
+            });
 
             const resolved = await handleResolvedVerification(data?.session || null);
             remoteSigninInFlight = false;
-            if (resolved || cancelled) return;
+            if (resolved || cancelled) {
+              console.info("[SUCCESS VERIFY] verified-branch-reached", {
+                resolved,
+                cancelled,
+              });
+              return;
+            }
           }
-        } catch {
+        } catch (error) {
+          console.warn("[SUCCESS VERIFY] remote-check-or-signin-failed", {
+            message: String(error?.message || error || "Unknown verification polling error."),
+          });
           remoteSigninInFlight = false;
         }
       }
 
       pollTimer = window.setTimeout(() => {
         void pollForVerification();
-      }, 1200);
+      }, canAttemptRemoteVerification ? 3000 : 1200);
     };
 
     const {
@@ -189,7 +235,7 @@ export default function SuccessPage({ shared }) {
   const body = viewMode === "verified"
     ? "We’re taking you to account setup now."
     : "We’ve sent you a confirmation email.\nPlease verify your email to continue to account setup.";
-  const helper = viewMode === "verified" ? "Preparing your account..." : "You can close this page once you’ve confirmed your email.";
+  const helper = viewMode === "verified" ? "Preparing your account..." : "";
 
   return (
     <div

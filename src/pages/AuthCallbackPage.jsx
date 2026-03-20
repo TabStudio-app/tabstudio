@@ -103,9 +103,24 @@ export default function AuthCallbackPage({ shared }) {
     const resolveCallback = async () => {
       const { accessToken, code, errorCode, errorDescription, refreshToken, tokenHash, type } = readAuthRedirectState();
       const resolvedType = normalizeAuthOtpType(type);
+      console.info("[AUTH CALLBACK] start", {
+        pathname: typeof window !== "undefined" ? window.location.pathname : "",
+        hasAccessToken: Boolean(accessToken),
+        hasRefreshToken: Boolean(refreshToken),
+        hasCode: Boolean(code),
+        hasTokenHash: Boolean(tokenHash),
+        resolvedType,
+        errorCode,
+        errorDescription,
+      });
 
       if (errorCode || errorDescription) {
         if (cancelled) return;
+        console.warn("[AUTH CALLBACK] redirect-state-error", {
+          resolvedType,
+          errorCode,
+          errorDescription,
+        });
         setViewState({
           status: "error",
           type: resolvedType,
@@ -120,8 +135,10 @@ export default function AuthCallbackPage({ shared }) {
 
       try {
         let session = null;
+        let resolutionMethod = "existing-session";
 
         if (accessToken && refreshToken) {
+          resolutionMethod = "setSession";
           const { data, error } = await supabase.auth.setSession({
             access_token: accessToken,
             refresh_token: refreshToken,
@@ -129,10 +146,12 @@ export default function AuthCallbackPage({ shared }) {
           if (error) throw error;
           session = data?.session || null;
         } else if (code) {
+          resolutionMethod = "exchangeCodeForSession";
           const { data, error } = await supabase.auth.exchangeCodeForSession(code);
           if (error) throw error;
           session = data?.session || null;
         } else if (tokenHash && resolvedType) {
+          resolutionMethod = "verifyOtp";
           const { data, error } = await supabase.auth.verifyOtp({
             token_hash: tokenHash,
             type: resolvedType,
@@ -146,8 +165,36 @@ export default function AuthCallbackPage({ shared }) {
           session = currentSession || null;
         }
 
+        console.info("[AUTH CALLBACK] session-resolved", {
+          resolutionMethod,
+          hasSession: Boolean(session),
+          sessionUserId: String(session?.user?.id || ""),
+          sessionEmail: String(session?.user?.email || ""),
+        });
+
         if (!session) {
           throw new Error("This link may be invalid or expired.");
+        }
+
+        if (resolvedType !== "recovery") {
+          const {
+            data: { user },
+            error: userError,
+          } = await supabase.auth.getUser();
+          if (userError) throw userError;
+
+          const emailConfirmedAt = user?.email_confirmed_at || user?.confirmed_at || null;
+          console.info("[AUTH CALLBACK] user-read", {
+            resolvedType,
+            userId: String(user?.id || ""),
+            email: String(user?.email || ""),
+            emailConfirmedAt: user?.email_confirmed_at || null,
+            confirmedAt: user?.confirmed_at || null,
+            effectiveConfirmedAt: emailConfirmedAt,
+          });
+          if (!emailConfirmedAt) {
+            throw new Error("Email verification has not completed yet.");
+          }
         }
 
         if (cancelled) return;
@@ -174,6 +221,10 @@ export default function AuthCallbackPage({ shared }) {
 
         clearAuthRedirectStateFromUrl();
       } catch (error) {
+        console.error("[AUTH CALLBACK] failed", {
+          resolvedType,
+          message: String(error?.message || "Unknown auth callback error."),
+        });
         if (cancelled) return;
         setViewState({
           status: "error",
