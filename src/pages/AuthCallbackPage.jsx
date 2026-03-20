@@ -32,6 +32,7 @@ export default function AuthCallbackPage({ shared }) {
     TABBY_ASSIST_MINT_STRONG = "#10b981",
     onBack,
     onContinueToResetPassword,
+    onResolveEmailAuth,
     siteHeaderBarStyle,
     siteHeaderLeftGroupStyle,
     siteHeaderLogoButtonStyle,
@@ -99,9 +100,22 @@ export default function AuthCallbackPage({ shared }) {
 
   useEffect(() => {
     let cancelled = false;
+    const isMagicLinkType = (resolvedType) => resolvedType === "magiclink";
+    const getGenericFailureCopy = (resolvedType, fallbackMessage = "This link may be invalid or expired.") => {
+      if (isMagicLinkType(resolvedType)) {
+        return {
+          title: "Sign-in link failed",
+          body: "This sign-in link is invalid or has expired.",
+        };
+      }
+      return {
+        title: "Verification failed",
+        body: fallbackMessage,
+      };
+    };
 
     const resolveAlreadyVerifiedState = async (resolvedType) => {
-      if (resolvedType === "recovery") return false;
+      if (resolvedType === "recovery" || isMagicLinkType(resolvedType)) return false;
       const {
         data: { user },
         error,
@@ -154,12 +168,13 @@ export default function AuthCallbackPage({ shared }) {
           errorCode,
           errorDescription,
         });
+        const failureCopy = getGenericFailureCopy(resolvedType, errorDescription || "This link may be invalid or expired.");
         setViewState({
           status: "error",
           type: resolvedType,
-          title: "Verification failed",
+          title: failureCopy.title,
           subtitle: "",
-          body: errorDescription || "This link may be invalid or expired.",
+          body: failureCopy.body,
           helper: "",
         });
         clearAuthRedirectStateFromUrl();
@@ -207,6 +222,16 @@ export default function AuthCallbackPage({ shared }) {
 
         if (!session) {
           throw new Error("This link may be invalid or expired.");
+        }
+
+        if (resolvedType === "magiclink") {
+          const resolution = await onResolveEmailAuth?.({ session, type: resolvedType });
+          if (cancelled) return;
+          clearAuthRedirectStateFromUrl();
+          if (resolution?.navigate && resolution?.path) {
+            resolution.navigate(resolution.path);
+          }
+          return;
         }
 
         if (resolvedType !== "recovery") {
@@ -263,12 +288,13 @@ export default function AuthCallbackPage({ shared }) {
           message: String(error?.message || "Unknown auth callback error."),
         });
         if (cancelled) return;
+        const failureCopy = getGenericFailureCopy(resolvedType);
         setViewState({
           status: "error",
           type: resolvedType,
-          title: "Verification failed",
+          title: failureCopy.title,
           subtitle: "",
-          body: String(error?.message || "This link may be invalid or expired."),
+          body: failureCopy.body,
           helper: "",
         });
         clearAuthRedirectStateFromUrl();

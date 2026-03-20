@@ -1731,6 +1731,7 @@ export default function App() {
           TABBY_ASSIST_MINT_STRONG,
           onBack: () => navigateTo("/editor"),
           onContinueToResetPassword: () => navigateTo("/auth/reset-password"),
+          onResolveEmailAuth: handleResolvedEmailAuth,
           siteHeaderBarStyle,
           siteHeaderLeftGroupStyle,
           siteHeaderLogoButtonStyle,
