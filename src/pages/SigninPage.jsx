@@ -5,6 +5,8 @@ import AppHeader from "../components/AppHeader";
 import { requestMagicLink, requestPasswordReset, signIn } from "../lib/auth";
 import { inputErrorText, inputImmersive, inputLabel } from "../utils/uiTokens";
 
+const MAGIC_LINK_REQUEST_STORAGE_KEY = "tabstudioPendingMagicLinkRequestV1";
+
 export default function SigninPage({ shared }) {
   const {
     ACCENT_PRESETS,
@@ -270,6 +272,9 @@ export default function SigninPage({ shared }) {
     setIsSubmitting(true);
     const { error } = await requestMagicLink(cleanEmail);
     if (error) {
+      try {
+        window.localStorage.removeItem(MAGIC_LINK_REQUEST_STORAGE_KEY);
+      } catch {}
       setErrors((prev) => ({
         ...prev,
         form: String(error?.message || "Unable to send a magic link right now."),
@@ -278,6 +283,15 @@ export default function SigninPage({ shared }) {
       return;
     }
 
+    try {
+      window.localStorage.setItem(
+        MAGIC_LINK_REQUEST_STORAGE_KEY,
+        JSON.stringify({
+          email: cleanEmail.toLowerCase(),
+          requestedAt: Date.now(),
+        })
+      );
+    } catch {}
     setErrors({});
     setNotice("Magic link sent. Open the email and TabStudio will sign you in.");
     setIsSubmitting(false);

@@ -3,6 +3,29 @@ import AppHeader from "../components/AppHeader";
 import { clearAuthRedirectStateFromUrl, normalizeAuthOtpType, readAuthRedirectState } from "../lib/auth";
 import { supabase } from "../lib/supabaseClient";
 
+const MAGIC_LINK_REQUEST_STORAGE_KEY = "tabstudioPendingMagicLinkRequestV1";
+const MAGIC_LINK_REQUEST_TTL_MS = 1000 * 60 * 30;
+
+function readPendingMagicLinkRequest() {
+  if (typeof window === "undefined") return null;
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(MAGIC_LINK_REQUEST_STORAGE_KEY) || "null");
+    const email = String(parsed?.email || "").trim().toLowerCase();
+    const requestedAt = Number(parsed?.requestedAt || 0);
+    const isFresh = Number.isFinite(requestedAt) && Date.now() - requestedAt <= MAGIC_LINK_REQUEST_TTL_MS;
+    if (!email || !isFresh) {
+      window.localStorage.removeItem(MAGIC_LINK_REQUEST_STORAGE_KEY);
+      return null;
+    }
+    return { email, requestedAt };
+  } catch {
+    try {
+      window.localStorage.removeItem(MAGIC_LINK_REQUEST_STORAGE_KEY);
+    } catch {}
+    return null;
+  }
+}
+
 function SuccessIcon({ color = "#34d399" }) {
   return (
     <svg width="72" height="72" viewBox="0 0 72 72" fill="none" aria-hidden="true">
@@ -100,9 +123,10 @@ export default function AuthCallbackPage({ shared }) {
 
   useEffect(() => {
     let cancelled = false;
-    const isMagicLinkType = (resolvedType) => resolvedType === "magiclink";
+    const pendingMagicLinkRequest = readPendingMagicLinkRequest();
+    const isLikelyMagicLinkType = (resolvedType) => resolvedType === "magiclink" || ((resolvedType === "email" || !resolvedType) && Boolean(pendingMagicLinkRequest));
     const getGenericFailureCopy = (resolvedType, fallbackMessage = "This link may be invalid or expired.") => {
-      if (isMagicLinkType(resolvedType)) {
+      if (isLikelyMagicLinkType(resolvedType)) {
         return {
           title: "Sign-in link failed",
           body: "This sign-in link is invalid or has expired.",
@@ -115,7 +139,7 @@ export default function AuthCallbackPage({ shared }) {
     };
 
     const resolveAlreadyVerifiedState = async (resolvedType) => {
-      if (resolvedType === "recovery" || isMagicLinkType(resolvedType)) return false;
+      if (resolvedType === "recovery" || isLikelyMagicLinkType(resolvedType)) return false;
       const {
         data: { user },
         error,
@@ -224,8 +248,13 @@ export default function AuthCallbackPage({ shared }) {
           throw new Error("This link may be invalid or expired.");
         }
 
-        if (resolvedType === "magiclink") {
-          const resolution = await onResolveEmailAuth?.({ session, type: resolvedType });
+        const shouldResolveAsMagicLink =
+          isLikelyMagicLinkType(resolvedType) &&
+          (!pendingMagicLinkRequest ||
+            String(session?.user?.email || "").trim().toLowerCase() === String(pendingMagicLinkRequest.email || "").trim().toLowerCase());
+
+        if (shouldResolveAsMagicLink) {
+          const resolution = await onResolveEmailAuth?.({ session, type: "magiclink" });
           if (cancelled) return;
           clearAuthRedirectStateFromUrl();
           if (resolution?.navigate && resolution?.path) {
