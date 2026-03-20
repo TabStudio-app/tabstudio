@@ -80,11 +80,11 @@ export default function SuccessPage({ shared }) {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
+    let effectDisposed = false;
+    let handoffStarted = false;
     let continueTimer = null;
     let pollTimer = null;
     let remoteSigninInFlight = false;
-    let pollAttempt = 0;
 
     const pendingEmail = String(pendingVerificationState?.flowEmail || "").trim().toLowerCase();
     const pendingPassword = String(pendingVerificationState?.flowPassword || "");
@@ -92,25 +92,37 @@ export default function SuccessPage({ shared }) {
 
     const canAttemptRemoteVerification = Boolean(pendingAuthUserId && pendingEmail && pendingPassword.length >= 8);
 
-    const handleResolvedVerification = async (session) => {
-      console.info("[SUCCESS VERIFY] handleResolvedVerification:start", {
-        hasSession: Boolean(session),
-        sessionUserId: String(session?.user?.id || ""),
-        sessionEmail: String(session?.user?.email || ""),
-      });
-      const nextState = await onVerificationDetected?.({ session });
-      console.info("[SUCCESS VERIFY] handleResolvedVerification:nextState", {
-        cancelled,
-        isLoggedIn: Boolean(nextState?.isLoggedIn),
-        hasMembership: Boolean(nextState?.hasMembership),
-        planTier: String(nextState?.planTier || ""),
-        authUserId: String(nextState?.authUserId || ""),
-      });
-      if (cancelled || !nextState?.hasMembership) return false;
+    const completeVerifiedFlow = () => {
+      if (handoffStarted) return;
+      handoffStarted = true;
       setViewMode("verified");
       continueTimer = window.setTimeout(() => {
         onContinueToAccountSetup?.();
       }, 1400);
+    };
+
+    const handleResolvedVerification = async (session) => {
+      const nextState = await onVerificationDetected?.({ session });
+      const hasCompletedAccess = Boolean(nextState?.isLoggedIn) && Boolean(nextState?.hasMembership);
+      console.info("[SUCCESS VERIFY] handleResolvedVerification:nextState", {
+        isLoggedIn: Boolean(nextState?.isLoggedIn),
+        hasMembership: Boolean(nextState?.hasMembership),
+        planTier: String(nextState?.planTier || ""),
+        authUserId: String(nextState?.authUserId || ""),
+        hasCompletedAccess,
+        effectDisposed,
+      });
+      if (!hasCompletedAccess) return false;
+      if (effectDisposed) {
+        if (handoffStarted) return true;
+        handoffStarted = true;
+        console.info("[SUCCESS VERIFY] handleResolvedVerification:continue-despite-cancelled", {
+          reason: "effect-cleanup-during-successful-hydration",
+        });
+        onContinueToAccountSetup?.();
+        return true;
+      }
+      completeVerifiedFlow();
       return true;
     };
 
@@ -140,28 +152,19 @@ export default function SuccessPage({ shared }) {
     };
 
     const pollForVerification = async () => {
-      pollAttempt += 1;
       const {
         data: { session },
       } = await supabase.auth.getSession();
-      console.info("[SUCCESS VERIFY] poll", {
-        attempt: pollAttempt,
-        hasSession: Boolean(session),
-        sessionUserId: String(session?.user?.id || ""),
-        pendingAuthUserId,
-        pendingEmail,
-        canAttemptRemoteVerification,
-      });
 
-      if (cancelled) return;
+      if (effectDisposed) return;
 
       if (session) {
         const resolved = await handleResolvedVerification(session);
-        if (resolved || cancelled) return;
+        if (resolved || effectDisposed) return;
       } else if (canAttemptRemoteVerification && !remoteSigninInFlight) {
         try {
           const verification = await checkRemoteVerificationStatus();
-          if (cancelled) return;
+          if (effectDisposed) return;
 
           if (verification?.verified) {
             remoteSigninInFlight = true;
@@ -182,10 +185,10 @@ export default function SuccessPage({ shared }) {
 
             const resolved = await handleResolvedVerification(data?.session || null);
             remoteSigninInFlight = false;
-            if (resolved || cancelled) {
+            if (resolved || effectDisposed) {
               console.info("[SUCCESS VERIFY] verified-branch-reached", {
                 resolved,
-                cancelled,
+                effectDisposed,
               });
               return;
             }
@@ -206,14 +209,14 @@ export default function SuccessPage({ shared }) {
     const {
       data: listener,
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!session || cancelled) return;
+      if (!session || effectDisposed) return;
       void handleResolvedVerification(session);
     });
 
     void pollForVerification();
 
     return () => {
-      cancelled = true;
+      effectDisposed = true;
       if (continueTimer) window.clearTimeout(continueTimer);
       if (pollTimer) window.clearTimeout(pollTimer);
       listener.subscription.unsubscribe();
