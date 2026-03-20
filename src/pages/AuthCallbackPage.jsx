@@ -100,6 +100,27 @@ export default function AuthCallbackPage({ shared }) {
   useEffect(() => {
     let cancelled = false;
 
+    const resolveAlreadyVerifiedState = async (resolvedType) => {
+      if (resolvedType === "recovery") return false;
+      const {
+        data: { user },
+        error,
+      } = await supabase.auth.getUser();
+      if (error) return false;
+      const emailConfirmedAt = user?.email_confirmed_at || user?.confirmed_at || null;
+      if (!emailConfirmedAt) return false;
+      if (cancelled) return true;
+      setViewState({
+        status: "success",
+        type: resolvedType,
+        title: "Email already verified",
+        subtitle: "",
+        body: "This verification link has already been used. Your email is confirmed and your account is ready.",
+        helper: "This page can now be closed.",
+      });
+      return true;
+    };
+
     const resolveCallback = async () => {
       const { accessToken, code, errorCode, errorDescription, refreshToken, tokenHash, type } = readAuthRedirectState();
       const resolvedType = normalizeAuthOtpType(type);
@@ -115,6 +136,10 @@ export default function AuthCallbackPage({ shared }) {
       });
 
       if (errorCode || errorDescription) {
+        if (await resolveAlreadyVerifiedState(resolvedType)) {
+          clearAuthRedirectStateFromUrl();
+          return;
+        }
         if (cancelled) return;
         console.warn("[AUTH CALLBACK] redirect-state-error", {
           resolvedType,
@@ -221,6 +246,10 @@ export default function AuthCallbackPage({ shared }) {
 
         clearAuthRedirectStateFromUrl();
       } catch (error) {
+        if (await resolveAlreadyVerifiedState(resolvedType)) {
+          clearAuthRedirectStateFromUrl();
+          return;
+        }
         console.error("[AUTH CALLBACK] failed", {
           resolvedType,
           message: String(error?.message || "Unknown auth callback error."),
