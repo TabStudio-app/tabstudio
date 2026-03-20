@@ -7,6 +7,7 @@ export default function CheckoutPlaceholderPage({ shared }) {
     ACCENT_PRESETS,
     checkoutAutostartKey = "",
     checkoutButtonLabel = "Continue to Secure Checkout",
+    checkoutErrorMessage = "",
     DARK_THEME,
     LIGHT_THEME,
     LS_ACCENT_COLOR_KEY,
@@ -337,6 +338,19 @@ export default function CheckoutPlaceholderPage({ shared }) {
               >
                 {isCheckoutProcessing ? "Opening secure checkout..." : checkoutButtonLabel}
               </button>
+              {checkoutErrorMessage ? (
+                <div
+                  style={{
+                    marginTop: 8,
+                    textAlign: "center",
+                    fontSize: 13,
+                    fontWeight: 700,
+                    color: "#fca5a5",
+                  }}
+                >
+                  {checkoutErrorMessage}
+                </div>
+              ) : null}
               <button
                 type="button"
                 onClick={onChangePlan}

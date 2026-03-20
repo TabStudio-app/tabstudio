@@ -415,6 +415,7 @@ function resolvePlaceholderGuardPath(targetPath, routeState) {
     planTier = "free",
     isProfileComplete = false,
     hasCheckoutIntent = false,
+    canAccessCheckoutWhileSignedOut = false,
     forceProfileSetupAfterPayment = false,
   } = routeState || {};
   const hasPaidTier = isPaidPlanTier(planTier);
@@ -439,8 +440,8 @@ function resolvePlaceholderGuardPath(targetPath, routeState) {
     guardedPath = !isAuthenticated ? path : resolvePostSigninPath();
   } else if (path === "/checkout") {
     if (!isAuthenticated) {
-      guardReason = "checkout-requires-auth";
-      guardedPath = "/signup";
+      guardReason = canAccessCheckoutWhileSignedOut ? "checkout-allowed-pending-email-confirmation" : "checkout-requires-auth";
+      guardedPath = canAccessCheckoutWhileSignedOut ? "/checkout" : "/signup";
     } else if (!hasPaidTier) {
       guardReason = hasCheckoutIntent ? "checkout-allowed-pending-payment" : "checkout-no-intent";
       guardedPath = hasCheckoutIntent ? "/checkout" : "/membership";
@@ -526,6 +527,7 @@ function resolvePlaceholderGuardPath(targetPath, routeState) {
     hasMembership,
     planTier,
     hasCheckoutIntent,
+    canAccessCheckoutWhileSignedOut,
     isProfileComplete,
     forceProfileSetupAfterPayment,
     returnedGuardedPath: guardedPath,
@@ -540,6 +542,7 @@ function resolvePlaceholderGuardPath(targetPath, routeState) {
       hasMembership,
       planTier,
       hasCheckoutIntent,
+      canAccessCheckoutWhileSignedOut,
       isProfileComplete,
     });
   }
@@ -781,6 +784,7 @@ export default function App() {
   const [authReady, setAuthReady] = useState(false);
   const [userState, setUserState] = useState(() => loadUserStateFromStorage());
   const [isLaunchingCheckout, setIsLaunchingCheckout] = useState(false);
+  const [checkoutLaunchError, setCheckoutLaunchError] = useState("");
   const helpSupportUserEmail = String(userState?.email || "");
   const helpSupportUserId = "harry_bolton";
   const helpSupportPaidSubscriber = Boolean(isPaidPlanTier(userState?.planTier));
@@ -997,6 +1001,7 @@ export default function App() {
     const reusableSignupState = loadConversionSignupState();
     return hasReusableConversionSignupState(reusableSignupState) || hasStoredPlanSelection();
   }, [path, userState]);
+  const canAccessCheckoutWhileSignedOut = useMemo(() => hasPendingFlowAuthIdentity(loadConversionSignupState()), [path, userState]);
   const forceProfileSetupAfterPayment = useMemo(() => hasForcedProfileSetupAfterPayment(), [path, userState]);
   const guardedPath = useMemo(() => {
     if (!authReady) return path;
@@ -1006,9 +1011,10 @@ export default function App() {
       planTier,
       isProfileComplete,
       hasCheckoutIntent,
+      canAccessCheckoutWhileSignedOut,
       forceProfileSetupAfterPayment,
     });
-  }, [authReady, path, isAuthenticated, hasActiveMembership, planTier, isProfileComplete, hasCheckoutIntent, forceProfileSetupAfterPayment]);
+  }, [authReady, path, isAuthenticated, hasActiveMembership, planTier, isProfileComplete, hasCheckoutIntent, canAccessCheckoutWhileSignedOut, forceProfileSetupAfterPayment]);
   const routePath = guardedPath;
 
   useEffect(() => {
@@ -1075,6 +1081,7 @@ export default function App() {
         requiresEmailConfirmation,
         hasSession: Boolean(session),
       });
+      setCheckoutLaunchError("");
       try {
         window.localStorage.setItem(LS_SELECTED_PLAN_KEY, safePlan);
         window.localStorage.setItem(LS_SELECTED_BILLING_CYCLE_KEY, safeBillingCycle);
@@ -1185,6 +1192,7 @@ export default function App() {
     const plan = normalizePlanId(selectedPlan);
     const billingCycle = normalizeBillingCycle(selectedBillingCycle);
     const flowSignupState = loadConversionSignupState();
+    setCheckoutLaunchError("");
     setIsLaunchingCheckout(true);
     try {
       const { url } = await createStripeCheckoutSession({
@@ -1204,6 +1212,7 @@ export default function App() {
         selectedBillingCycle: billingCycle,
         error,
       });
+      setCheckoutLaunchError(String(error?.message || "Unable to start secure checkout."));
       setIsLaunchingCheckout(false);
       if (typeof window !== "undefined") {
         window.alert(String(error?.message || "Unable to start secure checkout."));
@@ -1670,6 +1679,7 @@ export default function App() {
           TABBY_ASSIST_MINT_STRONG,
           checkoutAutostartKey: SESSION_CHECKOUT_AUTOSTART_KEY,
           checkoutButtonLabel: enableDevCheckout ? "Continue to Secure Checkout (Developer Mode)" : "Continue to Secure Checkout",
+          checkoutErrorMessage: checkoutLaunchError,
           isCheckoutProcessing: isLaunchingCheckout,
           normalizeBillingCycle,
           onActivateMembership: enableDevCheckout ? activateMembershipDevMode : launchHostedStripeCheckout,
