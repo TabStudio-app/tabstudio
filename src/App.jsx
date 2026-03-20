@@ -1757,10 +1757,11 @@ export default function App() {
           LIGHT_THEME,
           LS_ACCENT_COLOR_KEY,
           LS_THEME_MODE_KEY,
-          onMembershipActivated: finalizePostPaymentRoute,
-          onBack: () => navigateTo("/editor"),
-          onGoSignIn: () => navigateTo("/signin"),
-          selectedPlan,
+          siteHeaderBarStyle,
+          siteHeaderLeftGroupStyle,
+          siteHeaderLogoButtonStyle,
+          siteHeaderLogoImageStyle,
+          siteHeaderSloganStyle,
           withAlpha,
         }}
       />
