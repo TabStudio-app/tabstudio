@@ -32,7 +32,7 @@ import ProfileSetupPage from "./pages/ProfileSetupPage";
 import AccountPage from "./pages/AccountPage";
 import ProjectsPage, { resetPhaseBLibraryRecordsCache } from "./pages/ProjectsPage";
 import AffiliateApplicationPage from "./pages/AffiliateApplicationPage";
-import { readAuthRedirectState, signOut } from "./lib/auth";
+import { normalizeAuthOtpType, readAuthRedirectState, signOut } from "./lib/auth";
 import { createProject, getProjectById, getUserProjects, updateProject } from "./lib/projects";
 import { createProfile, getProfile, updateProfile } from "./lib/profile";
 import { supabase } from "./lib/supabaseClient";
