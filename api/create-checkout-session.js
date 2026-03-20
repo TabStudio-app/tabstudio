@@ -116,6 +116,44 @@ async function findOrCreateStripeCustomer({ secretKey, userId, email }) {
   return String(createdCustomer.payload?.id || "").trim();
 }
 
+async function resolveCheckoutIdentity({ supabaseAdmin, accessToken, pendingAuthUserId, pendingAuthEmail }) {
+  const normalizedPendingUserId = String(pendingAuthUserId || "").trim();
+  const normalizedPendingEmail = String(pendingAuthEmail || "").trim().toLowerCase();
+
+  if (accessToken) {
+    const {
+      data: { user },
+      error: authError,
+    } = await supabaseAdmin.auth.getUser(accessToken);
+    if (authError || !user?.id) {
+      throw new Error("Unable to verify authenticated user.");
+    }
+    return {
+      userId: String(user.id || "").trim(),
+      userEmail: String(user.email || "").trim().toLowerCase(),
+    };
+  }
+
+  if (!normalizedPendingUserId || !normalizedPendingEmail) {
+    throw new Error("Authentication is required.");
+  }
+
+  const { data, error } = await supabaseAdmin.auth.admin.getUserById(normalizedPendingUserId);
+  if (error || !data?.user?.id) {
+    throw new Error("Unable to verify your pending account.");
+  }
+
+  const resolvedEmail = String(data.user.email || "").trim().toLowerCase();
+  if (!resolvedEmail || resolvedEmail !== normalizedPendingEmail) {
+    throw new Error("Your pending account email could not be verified.");
+  }
+
+  return {
+    userId: String(data.user.id || "").trim(),
+    userEmail: resolvedEmail,
+  };
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
@@ -130,9 +168,6 @@ export default async function handler(req, res) {
 
   const authHeader = String(req.headers.authorization || "").trim();
   const accessToken = authHeader.toLowerCase().startsWith("bearer ") ? authHeader.slice(7).trim() : "";
-  if (!accessToken) {
-    return sendJson(res, 401, { error: "Authentication is required." });
-  }
 
   let body = {};
   try {
@@ -149,25 +184,22 @@ export default async function handler(req, res) {
     return sendJson(res, 400, { error: "Invalid membership selection." });
   }
 
-  const {
-    data: { user },
-    error: authError,
-  } = await supabaseAdmin.auth.getUser(accessToken);
-  if (authError || !user?.id) {
-    return sendJson(res, 401, { error: "Unable to verify authenticated user." });
-  }
-
-  const userId = String(user.id || "").trim();
-  const userEmail = String(user.email || "").trim().toLowerCase();
-  if (!userId || !userEmail) {
-    return sendJson(res, 400, { error: "Authenticated account is missing an email address." });
-  }
-
   const successPath = normalizeAppPath(body?.successPath, "/success");
   const cancelPath = normalizeAppPath(body?.cancelPath, "/checkout");
   const appUrl = getAppUrl(req);
 
   try {
+    const { userId, userEmail } = await resolveCheckoutIdentity({
+      supabaseAdmin,
+      accessToken,
+      pendingAuthUserId: body?.pendingAuthUserId,
+      pendingAuthEmail: body?.pendingAuthEmail,
+    });
+
+    if (!userId || !userEmail) {
+      return sendJson(res, 400, { error: "A valid account is required before checkout can begin." });
+    }
+
     const stripeCustomerId = await findOrCreateStripeCustomer({
       secretKey: stripeSecretKey,
       userId,

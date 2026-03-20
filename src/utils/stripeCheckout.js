@@ -5,27 +5,33 @@ export async function createStripeCheckoutSession({
   billingCycle,
   successPath = "/success",
   cancelPath = "/checkout",
+  pendingAuthUserId = "",
+  pendingAuthEmail = "",
 } = {}) {
   const {
     data: { session },
   } = await supabase.auth.getSession();
 
   const accessToken = String(session?.access_token || "").trim();
-  if (!accessToken) {
-    throw new Error("You must be signed in before starting checkout.");
+  const normalizedPendingAuthUserId = String(pendingAuthUserId || "").trim();
+  const normalizedPendingAuthEmail = String(pendingAuthEmail || "").trim().toLowerCase();
+  if (!accessToken && (!normalizedPendingAuthUserId || !normalizedPendingAuthEmail)) {
+    throw new Error("We couldn't prepare your account for checkout. Please create your account again.");
   }
 
   const response = await fetch("/api/create-checkout-session", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     },
     body: JSON.stringify({
       planTier,
       billingCycle,
       successPath,
       cancelPath,
+      pendingAuthUserId: normalizedPendingAuthUserId,
+      pendingAuthEmail: normalizedPendingAuthEmail,
     }),
   });
 

@@ -206,6 +206,7 @@ function normalizeConversionSignupState(rawState) {
     signupCompletedForFlow: Boolean(raw.signupCompletedForFlow),
     flowEmail: String(raw.flowEmail || "").trim(),
     flowPassword: String(raw.flowPassword || ""),
+    pendingAuthUserId: String(raw.pendingAuthUserId || "").trim(),
     selectedPlan: normalizePlanId(raw.selectedPlan),
     selectedBillingCycle: normalizeBillingCycle(raw.selectedBillingCycle),
     updatedAt: Number.isFinite(raw.updatedAt) ? Number(raw.updatedAt) : Date.now(),
@@ -218,6 +219,11 @@ function hasReusableConversionSignupState(rawState) {
   if (!isValidFlowSignupEmail(state.flowEmail)) return false;
   if (String(state.flowPassword || "").length < 8) return false;
   return true;
+}
+
+function hasPendingFlowAuthIdentity(rawState) {
+  const state = normalizeConversionSignupState(rawState);
+  return hasReusableConversionSignupState(state) && Boolean(String(state.pendingAuthUserId || "").trim());
 }
 
 function loadConversionSignupState() {
@@ -1047,7 +1053,15 @@ export default function App() {
     [hasActiveMembership, isAuthenticated, navigateTo, startMembershipSignup]
   );
   const continueToCheckout = useCallback(
-    async ({ email, password, selectedPlan: planId, selectedBillingCycle: billingCycle, requiresEmailConfirmation = false, session = null }) => {
+    async ({
+      email,
+      password,
+      selectedPlan: planId,
+      selectedBillingCycle: billingCycle,
+      requiresEmailConfirmation = false,
+      session = null,
+      pendingAuthUserId = "",
+    }) => {
       const safePlan = normalizePlanId(planId);
       const safeBillingCycle = normalizeBillingCycle(billingCycle);
       onboardingTrace("[ONBOARDING TRACE] continueToCheckout:start", {
@@ -1065,37 +1079,24 @@ export default function App() {
         signupCompletedForFlow: true,
         flowEmail: String(email || "").trim(),
         flowPassword: String(password || ""),
+        pendingAuthUserId: String(pendingAuthUserId || "").trim(),
         selectedPlan: safePlan,
         selectedBillingCycle: safeBillingCycle,
         updatedAt: Date.now(),
       });
 
-      if (requiresEmailConfirmation) {
-        return { requiresEmailConfirmation: true };
-      }
-
       if (session) {
         await hydrateSessionState(session, { persistDraftRestore: false });
         setAuthReady(true);
-      } else {
-        const nextPrePaymentUserState = normalizeUserState({
-          ...userState,
-          isLoggedIn: true,
-          hasMembership: false,
-          planTier: "free",
-          planType: null,
-          email: String(email || ""),
-        });
-        updateUserState(nextPrePaymentUserState);
       }
 
       onboardingTrace("[ONBOARDING TRACE] continueToCheckout:navigate", {
         finalRoutePushed: "/checkout",
       });
       navigateTo("/checkout");
-      return { redirected: true };
+      return { redirected: true, requiresEmailConfirmation };
     },
-    [hydrateSessionState, navigateTo, updateUserState, userState]
+    [hydrateSessionState, navigateTo]
   );
   const activateMembershipDevMode = useCallback(async () => {
     const plan = normalizePlanId(selectedPlan);
@@ -1176,6 +1177,7 @@ export default function App() {
   const launchHostedStripeCheckout = useCallback(async () => {
     const plan = normalizePlanId(selectedPlan);
     const billingCycle = normalizeBillingCycle(selectedBillingCycle);
+    const flowSignupState = loadConversionSignupState();
     setIsLaunchingCheckout(true);
     try {
       const { url } = await createStripeCheckoutSession({
@@ -1183,6 +1185,8 @@ export default function App() {
         billingCycle,
         successPath: "/success",
         cancelPath: "/checkout",
+        pendingAuthUserId: hasPendingFlowAuthIdentity(flowSignupState) ? flowSignupState.pendingAuthUserId : "",
+        pendingAuthEmail: hasPendingFlowAuthIdentity(flowSignupState) ? flowSignupState.flowEmail : "",
       });
       if (typeof window !== "undefined") {
         window.location.assign(url);
@@ -1335,6 +1339,15 @@ export default function App() {
           title: "Email confirmed.",
           message: "Your account email has been updated successfully.",
           path: "/account",
+          navigate: navigateTo,
+        };
+      }
+
+      if (normalizedType === "signup" && hasCheckoutIntent && !nextState?.hasMembership) {
+        return {
+          title: "Email confirmed.",
+          message: "Your account is confirmed. We’re finishing your membership activation now.",
+          path: "/success",
           navigate: navigateTo,
         };
       }
@@ -1715,6 +1728,8 @@ export default function App() {
           LS_ACCENT_COLOR_KEY,
           LS_THEME_MODE_KEY,
           onMembershipActivated: finalizePostPaymentRoute,
+          onBack: () => navigateTo("/editor"),
+          onGoSignIn: () => navigateTo("/signin"),
           selectedPlan,
           withAlpha,
         }}
