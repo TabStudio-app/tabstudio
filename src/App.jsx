@@ -1075,7 +1075,8 @@ export default function App() {
       }
 
       if (session) {
-        await completeSignin({ session, persistDraftRestore: false });
+        await hydrateSessionState(session, { persistDraftRestore: false });
+        setAuthReady(true);
       } else {
         const nextPrePaymentUserState = normalizeUserState({
           ...userState,
@@ -1094,7 +1095,7 @@ export default function App() {
       navigateTo("/checkout");
       return { redirected: true };
     },
-    [completeSignin, navigateTo, updateUserState, userState]
+    [hydrateSessionState, navigateTo, updateUserState, userState]
   );
   const activateMembershipDevMode = useCallback(async () => {
     const plan = normalizePlanId(selectedPlan);
