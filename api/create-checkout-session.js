@@ -34,7 +34,7 @@ function getRequestOrigin(req) {
 
 function getAppUrl(req) {
   const configured = String(process.env.APP_URL || "").trim().replace(/\/+$/g, "");
-  return configured || getRequestOrigin(req) || "http://localhost:5173";
+  return configured || getRequestOrigin(req) || "";
 }
 
 function normalizeAppPath(rawPath, fallbackPath) {
@@ -151,6 +151,9 @@ export default async function handler(req, res) {
   const successPath = normalizeAppPath(body?.successPath, "/success");
   const cancelPath = normalizeAppPath(body?.cancelPath, "/checkout");
   const appUrl = getAppUrl(req);
+  if (!appUrl) {
+    return sendJson(res, 500, { error: "Unable to determine the application URL for checkout." });
+  }
 
   try {
     console.info("[create-checkout-session] request", {

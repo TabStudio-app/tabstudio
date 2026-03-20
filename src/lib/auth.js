@@ -1,7 +1,6 @@
 import { supabase } from "./supabaseClient";
 
 const AUTH_CALLBACK_PATH = "/auth/callback";
-const AUTH_RESET_PASSWORD_PATH = "/auth/reset-password";
 const AUTH_OTP_TYPES = new Set(["signup", "magiclink", "recovery", "email_change", "email"]);
 
 export function buildSiteUrl(path = "/") {
@@ -23,7 +22,7 @@ export function getEmailChangeRedirectUrl() {
 }
 
 export function getResetPasswordRedirectUrl() {
-  return buildSiteUrl(AUTH_RESET_PASSWORD_PATH);
+  return buildSiteUrl(AUTH_CALLBACK_PATH);
 }
 
 export function normalizeAuthOtpType(rawType) {

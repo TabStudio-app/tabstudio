@@ -3,42 +3,55 @@ import AppHeader from "../components/AppHeader";
 import { clearAuthRedirectStateFromUrl, normalizeAuthOtpType, readAuthRedirectState } from "../lib/auth";
 import { supabase } from "../lib/supabaseClient";
 
+function SuccessIcon({ color = "#34d399" }) {
+  return (
+    <svg width="72" height="72" viewBox="0 0 72 72" fill="none" aria-hidden="true">
+      <circle cx="36" cy="36" r="34" fill="rgba(52,211,153,0.12)" stroke={color} strokeWidth="2" />
+      <path d="M22 36.5 31.5 46 50 27.5" stroke={color} strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function ErrorIcon({ color = "#ef4444" }) {
+  return (
+    <svg width="72" height="72" viewBox="0 0 72 72" fill="none" aria-hidden="true">
+      <circle cx="36" cy="36" r="34" fill="rgba(239,68,68,0.12)" stroke={color} strokeWidth="2" />
+      <path d="M27 27 45 45" stroke={color} strokeWidth="4.5" strokeLinecap="round" />
+      <path d="M45 27 27 45" stroke={color} strokeWidth="4.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export default function AuthCallbackPage({ shared }) {
   const {
     ACCENT_PRESETS,
     DARK_THEME,
     LS_ACCENT_COLOR_KEY,
     LS_THEME_MODE_KEY,
-    TABBY_ASSIST_MINT,
-    TABBY_ASSIST_MINT_STRONG,
-    onAuthResolved,
+    TABBY_ASSIST_MINT = "#34d399",
+    TABBY_ASSIST_MINT_STRONG = "#10b981",
     onBack,
-    onGoSignIn,
+    onContinueToResetPassword,
+    onReturnToTabStudio,
     siteHeaderBarStyle,
-    siteHeaderEditorLinkStyle,
     siteHeaderLeftGroupStyle,
     siteHeaderLogoButtonStyle,
     siteHeaderLogoImageStyle,
-    siteHeaderRightGroupStyle,
     siteHeaderSloganStyle,
     withAlpha,
   } = shared;
 
   const [themeRefresh, setThemeRefresh] = useState(0);
-  const [callbackNarrow, setCallbackNarrow] = useState(() => (typeof window !== "undefined" ? window.innerWidth < 980 : false));
-  const [callbackCardHover, setCallbackCardHover] = useState(false);
-  const [callbackCtaHover, setCallbackCtaHover] = useState(false);
-  const [callbackHeaderHoverBtn, setCallbackHeaderHoverBtn] = useState("");
-  const [callbackHeaderPressedBtn, setCallbackHeaderPressedBtn] = useState("");
+  const [cardHover, setCardHover] = useState(false);
   const [viewState, setViewState] = useState({
     status: "loading",
+    type: "",
     title: "Confirming your link...",
-    message: "Please wait while TabStudio finishes signing you in.",
-    ctaLabel: "",
-    ctaAction: null,
+    subtitle: "Please wait while TabStudio verifies your email link.",
+    body: "This usually only takes a moment.",
+    helper: "",
   });
 
-  const isDark = true;
   const accentId = useMemo(() => {
     const fallback = "white";
     if (typeof window === "undefined") return fallback;
@@ -51,6 +64,7 @@ export default function AuthCallbackPage({ shared }) {
     } catch {}
     return fallback;
   }, [ACCENT_PRESETS, LS_ACCENT_COLOR_KEY, themeRefresh]);
+
   const accent = useMemo(() => (ACCENT_PRESETS.find((preset) => preset.id === accentId) || ACCENT_PRESETS[0]).hex, [ACCENT_PRESETS, accentId]);
   const THEME = useMemo(() => ({ ...DARK_THEME, accent }), [DARK_THEME, accent]);
 
@@ -64,13 +78,6 @@ export default function AuthCallbackPage({ shared }) {
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, [LS_ACCENT_COLOR_KEY, LS_THEME_MODE_KEY]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return undefined;
-    const onResize = () => setCallbackNarrow(window.innerWidth < 980);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
 
   useEffect(() => {
     if (typeof document === "undefined") return undefined;
@@ -93,19 +100,20 @@ export default function AuthCallbackPage({ shared }) {
 
   useEffect(() => {
     let cancelled = false;
-    let redirectTimer = null;
 
-    const resolveAuthLink = async () => {
+    const resolveCallback = async () => {
       const { code, errorCode, errorDescription, tokenHash, type } = readAuthRedirectState();
+      const resolvedType = normalizeAuthOtpType(type);
 
       if (errorCode || errorDescription) {
         if (cancelled) return;
         setViewState({
           status: "error",
-          title: "This link could not be completed.",
-          message: errorDescription || "The sign-in link may have expired or already been used. Please request a new one.",
-          ctaLabel: "Back to Sign In",
-          ctaAction: () => onGoSignIn?.(),
+          type: resolvedType,
+          title: "Verification failed",
+          subtitle: "",
+          body: errorDescription || "This link may be invalid or expired.",
+          helper: "",
         });
         clearAuthRedirectStateFromUrl();
         return;
@@ -113,7 +121,6 @@ export default function AuthCallbackPage({ shared }) {
 
       try {
         let session = null;
-        let resolvedType = normalizeAuthOtpType(type);
 
         if (code) {
           const { data, error } = await supabase.auth.exchangeCodeForSession(code);
@@ -128,74 +135,59 @@ export default function AuthCallbackPage({ shared }) {
           session = data?.session || null;
         } else {
           const {
-            data: { session: activeSession },
+            data: { session: currentSession },
           } = await supabase.auth.getSession();
-          session = activeSession || null;
+          session = currentSession || null;
         }
 
         if (!session) {
-          throw new Error("This link is no longer valid. Please request a new email and try again.");
+          throw new Error("This link may be invalid or expired.");
         }
 
-        const resolution = (await onAuthResolved?.({ session, type: resolvedType || "magiclink" })) || {};
         if (cancelled) return;
 
-        setViewState({
-          status: "success",
-          title: resolution.title || "You're in.",
-          message: resolution.message || "Your link was confirmed successfully. Redirecting now.",
-          ctaLabel: resolution.path ? "Continue" : "",
-          ctaAction: resolution.path ? () => resolution.navigate?.(resolution.path) : null,
-        });
-        clearAuthRedirectStateFromUrl();
-
-        if (resolution.path && typeof resolution.navigate === "function") {
-          redirectTimer = window.setTimeout(() => {
-            resolution.navigate(resolution.path);
-          }, 900);
+        if (resolvedType === "recovery") {
+          setViewState({
+            status: "success",
+            type: resolvedType,
+            title: "Reset link verified",
+            subtitle: "Your TabStudio password reset link has been confirmed.",
+            body: "You can continue to choose a new password now.",
+            helper: "This page can now be closed.",
+          });
+        } else {
+          setViewState({
+            status: "success",
+            type: resolvedType,
+            title: "Email verified",
+            subtitle: "Your TabStudio email has been successfully confirmed.",
+            body: "You can safely return to TabStudio to continue setting up your account.",
+            helper: "This page can now be closed.",
+          });
         }
+
+        clearAuthRedirectStateFromUrl();
       } catch (error) {
         if (cancelled) return;
         setViewState({
           status: "error",
-          title: "This link could not be completed.",
-          message: String(error?.message || "The link may have expired or already been used. Please request a fresh email and try again."),
-          ctaLabel: "Back to Sign In",
-          ctaAction: () => onGoSignIn?.(),
+          type: resolvedType,
+          title: "Verification failed",
+          subtitle: "",
+          body: String(error?.message || "This link may be invalid or expired."),
+          helper: "",
         });
         clearAuthRedirectStateFromUrl();
       }
     };
 
-    void resolveAuthLink();
+    void resolveCallback();
 
     return () => {
       cancelled = true;
-      if (redirectTimer) window.clearTimeout(redirectTimer);
     };
-  }, [onAuthResolved, onGoSignIn]);
+  }, []);
 
-  const actionBtnStyle = {
-    minHeight: 46,
-    borderRadius: 11,
-    width: "100%",
-    border: "none",
-    background: callbackCtaHover ? TABBY_ASSIST_MINT_STRONG : TABBY_ASSIST_MINT,
-    color: "#04120a",
-    fontSize: 17,
-    fontWeight: 900,
-    cursor: "pointer",
-    boxShadow: callbackCtaHover ? `0 10px 18px ${withAlpha(TABBY_ASSIST_MINT, 0.24)}` : "none",
-    transform: callbackCtaHover ? "translateY(-1px)" : "translateY(0)",
-    filter: callbackCtaHover ? "brightness(1.05)" : "brightness(1)",
-    transition: "transform 0.15s ease, filter 0.15s ease, box-shadow 0.15s ease, background 0.15s ease",
-  };
-  const loadingDotsWrapStyle = {
-    display: "inline-flex",
-    alignItems: "flex-end",
-    gap: 4,
-    marginLeft: 2,
-  };
   const loadingDotStyle = (index) => ({
     width: 5,
     height: 5,
@@ -206,30 +198,41 @@ export default function AuthCallbackPage({ shared }) {
     animationDelay: `${index * 0.12}s`,
   });
 
-  const headerRightContent = (
-    <button
-      type="button"
-      onClick={onBack}
-      onMouseEnter={() => setCallbackHeaderHoverBtn("back")}
-      onMouseLeave={() => setCallbackHeaderHoverBtn((current) => (current === "back" ? "" : current))}
-      onFocus={() => setCallbackHeaderHoverBtn("back")}
-      onBlur={() => setCallbackHeaderHoverBtn((current) => (current === "back" ? "" : current))}
-      onPointerDown={() => setCallbackHeaderPressedBtn("back")}
-      onPointerUp={() => setCallbackHeaderPressedBtn("")}
-      onPointerCancel={() => setCallbackHeaderPressedBtn("")}
-      style={siteHeaderEditorLinkStyle(THEME, { hovered: callbackHeaderHoverBtn === "back", pressed: callbackHeaderPressedBtn === "back" })}
-    >
-      Editor
-    </button>
-  );
+  const primaryButtonStyle = {
+    minHeight: 46,
+    borderRadius: 11,
+    width: "100%",
+    border: "none",
+    background: TABBY_ASSIST_MINT,
+    color: "#04120a",
+    fontSize: 17,
+    fontWeight: 900,
+    cursor: "pointer",
+    boxShadow: `0 10px 18px ${withAlpha(TABBY_ASSIST_MINT, 0.24)}`,
+    transition: "transform 0.15s ease, filter 0.15s ease, box-shadow 0.15s ease, background 0.15s ease",
+  };
+
+  const secondaryButtonStyle = {
+    minHeight: 42,
+    width: "100%",
+    borderRadius: 11,
+    border: `1px solid ${withAlpha(THEME.text, 0.12)}`,
+    background: withAlpha(THEME.text, 0.03),
+    color: THEME.text,
+    fontSize: 14,
+    fontWeight: 800,
+    cursor: "pointer",
+  };
+
+  const accentColor = viewState.status === "error" ? "#ef4444" : TABBY_ASSIST_MINT;
 
   return (
     <div
       style={{
         width: "100vw",
         maxWidth: "100vw",
-        minHeight: "100vh",
         height: "100dvh",
+        minHeight: "100vh",
         backgroundColor: THEME.bg,
         backgroundImage: `radial-gradient(1100px 760px at 50% 46%, ${withAlpha(TABBY_ASSIST_MINT, 0.1)} 0%, ${withAlpha(
           TABBY_ASSIST_MINT,
@@ -247,16 +250,15 @@ export default function AuthCallbackPage({ shared }) {
     >
       <AppHeader
         shared={{
-          isDark,
+          isDark: true,
           logoAriaLabel: "Back to editor",
           onLogoClick: onBack,
-          rightContent: headerRightContent,
-          showRightGroup: true,
+          rightContent: null,
+          showRightGroup: false,
           siteHeaderBarStyle,
           siteHeaderLeftGroupStyle,
           siteHeaderLogoButtonStyle,
           siteHeaderLogoImageStyle,
-          siteHeaderRightGroupStyle,
           siteHeaderSloganStyle,
           theme: THEME,
         }}
@@ -270,7 +272,7 @@ export default function AuthCallbackPage({ shared }) {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          padding: callbackNarrow ? "18px 14px 28px" : "26px 20px 36px",
+          padding: "26px 20px 36px",
           boxSizing: "border-box",
           position: "relative",
         }}
@@ -291,16 +293,16 @@ export default function AuthCallbackPage({ shared }) {
                 position: "absolute",
                 left: "50%",
                 top: "50%",
-                width: callbackNarrow ? 570 : 660,
-                height: callbackNarrow ? 530 : 600,
+                width: 660,
+                height: 600,
                 transform: "translate(-50%, -50%)",
                 borderRadius: "50%",
-                background: `radial-gradient(circle at center, ${withAlpha(TABBY_ASSIST_MINT, 0.09)} 0%, ${withAlpha(
-                  TABBY_ASSIST_MINT,
-                  0.04
-                )} 40%, ${withAlpha(TABBY_ASSIST_MINT, 0)} 75%)`,
-                filter: `blur(${callbackCardHover ? 28 : 24}px)`,
-                opacity: callbackCardHover ? 0.95 : 0.8,
+                background: `radial-gradient(circle at center, ${withAlpha(accentColor, 0.09)} 0%, ${withAlpha(accentColor, 0.04)} 40%, ${withAlpha(
+                  accentColor,
+                  0
+                )} 75%)`,
+                filter: `blur(${cardHover ? 28 : 24}px)`,
+                opacity: cardHover ? 0.95 : 0.8,
                 pointerEvents: "none",
                 zIndex: 0,
                 transition: "opacity 220ms ease, filter 220ms ease",
@@ -308,57 +310,97 @@ export default function AuthCallbackPage({ shared }) {
             />
 
             <div
-              onMouseEnter={() => setCallbackCardHover(true)}
-              onMouseLeave={() => setCallbackCardHover(false)}
-              onFocus={() => setCallbackCardHover(true)}
-              onBlur={() => setCallbackCardHover(false)}
+              onMouseEnter={() => setCardHover(true)}
+              onMouseLeave={() => setCardHover(false)}
+              onFocus={() => setCardHover(true)}
+              onBlur={() => setCardHover(false)}
               style={{
                 width: "min(620px, 100%)",
                 borderRadius: 14,
-                border: `1px solid ${viewState.status === "error" ? "rgba(239,68,68,0.4)" : callbackCardHover ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.08)"}`,
+                border: `1px solid ${viewState.status === "error" ? "rgba(239,68,68,0.35)" : "rgba(255,255,255,0.08)"}`,
                 background: "rgba(18,18,18,0.95)",
-                padding: callbackNarrow ? "24px 18px" : "30px 26px",
+                padding: "30px 26px",
                 boxSizing: "border-box",
                 display: "grid",
                 gap: 18,
-                boxShadow: callbackCardHover ? "0 14px 44px rgba(0,0,0,0.5)" : "0 12px 40px rgba(0,0,0,0.45)",
-                transform: callbackCardHover ? "translateY(-1px)" : "translateY(0)",
+                boxShadow: cardHover ? "0 14px 44px rgba(0,0,0,0.5)" : "0 12px 40px rgba(0,0,0,0.45)",
+                transform: cardHover ? "translateY(-1px)" : "translateY(0)",
                 transition: "transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease",
                 position: "relative",
                 zIndex: 2,
               }}
             >
-              <div style={{ display: "grid", gap: 10, textAlign: "center" }}>
-                <h1 style={{ margin: 0, fontSize: callbackNarrow ? 35 : 39, fontWeight: 950, lineHeight: 1.04, letterSpacing: "-0.02em" }}>
-                  {viewState.title}
-                </h1>
-                <div style={{ color: withAlpha(THEME.text, 0.76), fontSize: 16, fontWeight: 700, lineHeight: 1.5 }}>{viewState.message}</div>
-              </div>
-
-              {viewState.status === "loading" ? (
-                <div style={{ display: "flex", justifyContent: "center" }}>
-                  <div style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 4, fontSize: 16, fontWeight: 800 }}>
-                    <span>Verifying link</span>
-                    <span aria-hidden="true" style={loadingDotsWrapStyle}>
-                      {[0, 1, 2].map((index) => (
-                        <span key={index} style={loadingDotStyle(index)} />
-                      ))}
+              <div style={{ display: "grid", gap: 10, textAlign: "center", justifyItems: "center" }}>
+                {viewState.status === "loading" ? (
+                  <div
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 8,
+                      color: withAlpha(THEME.text, 0.58),
+                      fontSize: 14,
+                      fontWeight: 800,
+                    }}
+                  >
+                    <span>Confirming your link</span>
+                    <span style={{ display: "inline-flex", alignItems: "flex-end", gap: 4 }}>
+                      <span aria-hidden="true" style={loadingDotStyle(0)} />
+                      <span aria-hidden="true" style={loadingDotStyle(1)} />
+                      <span aria-hidden="true" style={loadingDotStyle(2)} />
                     </span>
                   </div>
+                ) : viewState.status === "error" ? (
+                  <ErrorIcon />
+                ) : (
+                  <SuccessIcon />
+                )}
+
+                <h1 style={{ margin: 0, fontSize: 39, fontWeight: 950, lineHeight: 1.04, letterSpacing: "-0.02em" }}>{viewState.title}</h1>
+                {viewState.subtitle ? (
+                  <div
+                    style={{
+                      color: withAlpha(THEME.text, 0.76),
+                      fontSize: 16,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {viewState.subtitle}
+                  </div>
+                ) : null}
+                <div
+                  style={{
+                    color: withAlpha(THEME.text, 0.62),
+                    fontSize: 15,
+                    fontWeight: 700,
+                    lineHeight: 1.55,
+                    maxWidth: 440,
+                  }}
+                >
+                  {viewState.body}
                 </div>
+                {viewState.helper ? (
+                  <div
+                    style={{
+                      color: withAlpha(THEME.text, 0.42),
+                      fontSize: 13,
+                      fontWeight: 600,
+                      lineHeight: 1.45,
+                    }}
+                  >
+                    {viewState.helper}
+                  </div>
+                ) : null}
+              </div>
+
+              {viewState.status === "success" && viewState.type === "recovery" ? (
+                <button type="button" onClick={onContinueToResetPassword} style={primaryButtonStyle}>
+                  Continue to Reset Password
+                </button>
               ) : null}
 
-              {viewState.status !== "loading" && viewState.ctaLabel && typeof viewState.ctaAction === "function" ? (
-                <button
-                  type="button"
-                  onClick={viewState.ctaAction}
-                  onMouseEnter={() => setCallbackCtaHover(true)}
-                  onMouseLeave={() => setCallbackCtaHover(false)}
-                  onFocus={() => setCallbackCtaHover(true)}
-                  onBlur={() => setCallbackCtaHover(false)}
-                  style={actionBtnStyle}
-                >
-                  {viewState.ctaLabel}
+              {viewState.status === "success" && viewState.type !== "recovery" ? (
+                <button type="button" onClick={onReturnToTabStudio} style={secondaryButtonStyle}>
+                  Return to TabStudio
                 </button>
               ) : null}
             </div>
