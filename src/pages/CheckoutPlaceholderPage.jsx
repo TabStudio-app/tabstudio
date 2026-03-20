@@ -1,10 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppHeader from "../components/AppHeader";
 import { getPlanMeta } from "../features/pricing";
 
 export default function CheckoutPlaceholderPage({ shared }) {
   const {
     ACCENT_PRESETS,
+    checkoutAutostartKey = "",
     checkoutButtonLabel = "Continue to Secure Checkout",
     DARK_THEME,
     LIGHT_THEME,
@@ -19,6 +20,7 @@ export default function CheckoutPlaceholderPage({ shared }) {
     onChangePlan,
     selectedBillingCycle = "monthly",
     selectedPlan = "solo",
+    shouldAutoLaunchCheckout = false,
     siteHeaderBarStyle,
     siteHeaderLeftGroupStyle,
     siteHeaderLogoButtonStyle,
@@ -30,6 +32,7 @@ export default function CheckoutPlaceholderPage({ shared }) {
   const [themeRefresh, setThemeRefresh] = useState(0);
   const [checkoutCardHover, setCheckoutCardHover] = useState(false);
   const [checkoutActivateHover, setCheckoutActivateHover] = useState(false);
+  const hasConsumedAutostartRef = useRef(false);
   const getSystemTheme = useCallback(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return "light";
     return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
@@ -105,6 +108,20 @@ export default function CheckoutPlaceholderPage({ shared }) {
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, [LS_ACCENT_COLOR_KEY, LS_THEME_MODE_KEY]);
+
+  useEffect(() => {
+    if (!shouldAutoLaunchCheckout || isCheckoutProcessing || typeof onActivateMembership !== "function") return;
+    if (hasConsumedAutostartRef.current) return;
+
+    hasConsumedAutostartRef.current = true;
+    if (typeof window !== "undefined" && checkoutAutostartKey) {
+      try {
+        window.sessionStorage.removeItem(checkoutAutostartKey);
+      } catch {}
+    }
+
+    void onActivateMembership();
+  }, [checkoutAutostartKey, isCheckoutProcessing, onActivateMembership, shouldAutoLaunchCheckout]);
 
   return (
     <div

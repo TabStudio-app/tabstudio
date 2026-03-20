@@ -130,6 +130,7 @@ const LS_RESTORE_DRAFT_AFTER_MEMBERSHIP_KEY = "tabstudioRestoreDraftAfterMembers
 const LS_RESTORE_DRAFT_AFTER_SIGNIN_KEY = "tabstudioRestoreDraftAfterSignin";
 const LS_MEMBERSHIP_SCROLL_TO_PLANS_KEY = "tabstudioMembershipScrollToPlans";
 const SESSION_CONVERSION_SIGNUP_KEY = "tabstudioConversionSignupStateV1";
+const SESSION_CHECKOUT_AUTOSTART_KEY = "tabstudioCheckoutAutostartV1";
 const SESSION_FORCE_PROFILE_SETUP_AFTER_PAYMENT_KEY = "tabstudioForceProfileSetupAfterPayment";
 const LS_HEADER_TABBY_NUDGE_SHOWN_SESSION_KEY = "tabstudioHeaderTabbyNudgeShown";
 const LS_HEADER_TABBY_ENGAGED_SESSION_KEY = "tabstudioHeaderTabbyEngaged";
@@ -1084,6 +1085,9 @@ export default function App() {
         selectedBillingCycle: safeBillingCycle,
         updatedAt: Date.now(),
       });
+      try {
+        window.sessionStorage.setItem(SESSION_CHECKOUT_AUTOSTART_KEY, "true");
+      } catch {}
 
       if (session) {
         await hydrateSessionState(session, { persistDraftRestore: false });
@@ -1644,6 +1648,13 @@ export default function App() {
   }
 
   if (routePath === "/checkout") {
+    let shouldAutoLaunchCheckout = false;
+    if (typeof window !== "undefined") {
+      try {
+        shouldAutoLaunchCheckout = window.sessionStorage.getItem(SESSION_CHECKOUT_AUTOSTART_KEY) === "true";
+      } catch {}
+    }
+
     return (
       <CheckoutPlaceholderPage
         shared={{
@@ -1654,6 +1665,7 @@ export default function App() {
           LS_THEME_MODE_KEY,
           TABBY_ASSIST_MINT,
           TABBY_ASSIST_MINT_STRONG,
+          checkoutAutostartKey: SESSION_CHECKOUT_AUTOSTART_KEY,
           checkoutButtonLabel: enableDevCheckout ? "Continue to Secure Checkout (Developer Mode)" : "Continue to Secure Checkout",
           isCheckoutProcessing: isLaunchingCheckout,
           normalizeBillingCycle,
@@ -1665,6 +1677,7 @@ export default function App() {
             } catch {}
             navigateTo("/membership");
           },
+          shouldAutoLaunchCheckout,
           selectedBillingCycle,
           selectedPlan,
           siteHeaderBarStyle,
