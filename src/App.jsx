@@ -227,6 +227,33 @@ function hasPendingFlowAuthIdentity(rawState) {
   return hasReusableConversionSignupState(state) && Boolean(String(state.pendingAuthUserId || "").trim());
 }
 
+function buildPendingFlowCheckoutRequestKey(rawState, planTier, billingCycle) {
+  const state = normalizeConversionSignupState(rawState);
+  if (!hasPendingFlowAuthIdentity(state)) return "";
+  return [
+    "checkout",
+    String(state.pendingAuthUserId || state.flowEmail || "").trim().toLowerCase(),
+    normalizePlanId(planTier),
+    normalizeBillingCycle(billingCycle),
+    String(state.updatedAt || ""),
+  ]
+    .filter(Boolean)
+    .join(":");
+}
+
+function isRetryableCheckoutLaunchError(error) {
+  if (Boolean(error?.retryable)) return true;
+  const message = String(error?.message || "").trim().toLowerCase();
+  if (!message) return false;
+  return (
+    message.includes("failed to fetch") ||
+    message.includes("network") ||
+    message.includes("timed out") ||
+    message.includes("taking longer than expected") ||
+    message.includes("load failed")
+  );
+}
+
 function loadConversionSignupState() {
   if (typeof window === "undefined") return normalizeConversionSignupState(null);
   try {
@@ -1192,26 +1219,49 @@ export default function App() {
     const plan = normalizePlanId(selectedPlan);
     const billingCycle = normalizeBillingCycle(selectedBillingCycle);
     const flowSignupState = loadConversionSignupState();
+    const pendingFlowIdentityReady = hasPendingFlowAuthIdentity(flowSignupState);
+    const checkoutRequestKey = buildPendingFlowCheckoutRequestKey(flowSignupState, plan, billingCycle);
     onboardingTrace("[ONBOARDING TRACE] createStripeCheckoutSession:start", {
       selectedPlan: plan,
       selectedBillingCycle: billingCycle,
-      hasPendingFlowAuthIdentity: hasPendingFlowAuthIdentity(flowSignupState),
-      pendingAuthUserId: hasPendingFlowAuthIdentity(flowSignupState) ? flowSignupState.pendingAuthUserId : "",
-      pendingAuthEmail: hasPendingFlowAuthIdentity(flowSignupState) ? flowSignupState.flowEmail : "",
+      hasPendingFlowAuthIdentity: pendingFlowIdentityReady,
+      pendingAuthUserId: pendingFlowIdentityReady ? flowSignupState.pendingAuthUserId : "",
+      pendingAuthEmail: pendingFlowIdentityReady ? flowSignupState.flowEmail : "",
+      checkoutRequestKey,
     });
     setCheckoutLaunchError("");
     setIsLaunchingCheckout(true);
     try {
-      const { url } = await createStripeCheckoutSession({
-        planTier: plan,
-        billingCycle,
-        successPath: "/success",
-        cancelPath: "/checkout",
-        pendingAuthUserId: hasPendingFlowAuthIdentity(flowSignupState) ? flowSignupState.pendingAuthUserId : "",
-        pendingAuthEmail: hasPendingFlowAuthIdentity(flowSignupState) ? flowSignupState.flowEmail : "",
-      });
-      if (typeof window !== "undefined") {
-        window.location.assign(url);
+      for (let attempt = 1; attempt <= 2; attempt += 1) {
+        try {
+          const { url } = await createStripeCheckoutSession({
+            planTier: plan,
+            billingCycle,
+            successPath: "/success",
+            cancelPath: "/checkout",
+            pendingAuthUserId: pendingFlowIdentityReady ? flowSignupState.pendingAuthUserId : "",
+            pendingAuthEmail: pendingFlowIdentityReady ? flowSignupState.flowEmail : "",
+            idempotencyKey: checkoutRequestKey,
+          });
+          if (typeof window !== "undefined") {
+            window.location.assign(url);
+          }
+          return;
+        } catch (error) {
+          const shouldRetry = attempt === 1 && isRetryableCheckoutLaunchError(error);
+          onboardingTrace("[ONBOARDING TRACE] createStripeCheckoutSession:attempt-failed", {
+            selectedPlan: plan,
+            selectedBillingCycle: billingCycle,
+            attempt,
+            shouldRetry,
+            error: String(error?.message || error || "Unknown error"),
+          });
+          if (shouldRetry) {
+            await new Promise((resolve) => window.setTimeout(resolve, 1000));
+            continue;
+          }
+          throw error;
+        }
       }
     } catch (error) {
       console.error("[ONBOARDING TRACE] createStripeCheckoutSession:failed", {
@@ -1623,6 +1673,10 @@ export default function App() {
           TABBY_ASSIST_MINT,
           TABBY_ASSIST_MINT_STRONG,
           onBack: () => navigateTo("/editor"),
+          onContinueToAccountSetup: () => {
+            setForcedProfileSetupAfterPayment(true);
+            navigateTo("/profile-setup");
+          },
           onContinueToResetPassword: () => navigateTo("/auth/reset-password"),
           onReturnToTabStudio: () => navigateTo("/"),
           siteHeaderBarStyle,

@@ -338,6 +338,19 @@ export default function CheckoutPlaceholderPage({ shared }) {
               >
                 {isCheckoutProcessing ? "Opening secure checkout..." : checkoutButtonLabel}
               </button>
+              {isCheckoutProcessing ? (
+                <div
+                  style={{
+                    marginTop: 8,
+                    textAlign: "center",
+                    fontSize: 12,
+                    fontWeight: 700,
+                    color: withAlpha(THEME.text, 0.46),
+                  }}
+                >
+                  This may take a moment.
+                </div>
+              ) : null}
               {checkoutErrorMessage ? (
                 <div
                   style={{

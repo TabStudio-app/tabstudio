@@ -56,12 +56,13 @@ async function readJsonBody(req) {
   return raw ? JSON.parse(raw) : {};
 }
 
-async function fetchStripeJson(path, { method = "GET", secretKey, form = null } = {}) {
+async function fetchStripeJson(path, { method = "GET", secretKey, form = null, extraHeaders = {} } = {}) {
   const response = await fetch(`${STRIPE_API_BASE}${path}`, {
     method,
     headers: {
       Authorization: `Bearer ${secretKey}`,
       ...(form ? { "Content-Type": "application/x-www-form-urlencoded" } : {}),
+      ...extraHeaders,
     },
     body: form,
   });
@@ -132,6 +133,7 @@ export default async function handler(req, res) {
 
   const authHeader = String(req.headers.authorization || "").trim();
   const accessToken = authHeader.toLowerCase().startsWith("bearer ") ? authHeader.slice(7).trim() : "";
+  const checkoutRequestKey = String(req.headers["x-checkout-request-key"] || "").trim();
 
   let body = {};
   try {
@@ -158,6 +160,7 @@ export default async function handler(req, res) {
   try {
     console.info("[create-checkout-session] request", {
       hasAccessToken: Boolean(accessToken),
+      checkoutRequestKey,
       pendingAuthUserId: String(body?.pendingAuthUserId || "").trim(),
       pendingAuthEmail: String(body?.pendingAuthEmail || "").trim().toLowerCase(),
       planTier,
@@ -202,6 +205,7 @@ export default async function handler(req, res) {
       method: "POST",
       secretKey: stripeSecretKey,
       form,
+      extraHeaders: checkoutRequestKey ? { "Idempotency-Key": checkoutRequestKey } : {},
     });
 
     if (!checkoutSession.response.ok) {
@@ -218,6 +222,7 @@ export default async function handler(req, res) {
     console.error("[create-checkout-session] failed", {
       error: message,
       hasAccessToken: Boolean(accessToken),
+      checkoutRequestKey,
       pendingAuthUserId: String(body?.pendingAuthUserId || "").trim(),
       pendingAuthEmail: String(body?.pendingAuthEmail || "").trim().toLowerCase(),
       planTier,
