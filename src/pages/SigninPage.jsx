@@ -254,6 +254,7 @@ export default function SigninPage({ shared }) {
     setErrors({});
     try {
       await onAuthSuccess?.({ email: cleanEmail, mode, session: data?.session || null });
+      setIsSubmitting(false);
     } catch (authError) {
       setErrors((prev) => ({
         ...prev,

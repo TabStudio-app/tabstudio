@@ -1676,6 +1676,17 @@ export default function App() {
     },
     [completeSignin]
   );
+  const handleSigninSuccess = useCallback(
+    async ({ session = null } = {}) => {
+      const { nextState } = await completeSignin({ session, persistDraftRestore: false });
+      const destination = resolveAuthenticatedDestination(nextState, {
+        hasCheckoutIntent: hasReusableConversionSignupState(loadConversionSignupState()),
+      });
+      navigateTo(destination);
+      return { nextState, destination };
+    },
+    [completeSignin, navigateTo, resolveAuthenticatedDestination]
+  );
   const finalizePostPaymentRoute = useCallback(
     (profileRow) => {
       const membershipState = getMembershipStateFromProfileRow(profileRow);
@@ -1869,7 +1880,7 @@ export default function App() {
           VIEWPORT_TABBY_RIGHT_PX,
           VIEWPORT_TABBY_Z_INDEX,
           getTabStudioInteractiveFieldStyle,
-          onAuthSuccess: completeSignin,
+	          onAuthSuccess: handleSigninSuccess,
           onBack: () => navigateTo("/editor"),
           onGoMembership: () => {
             try {
