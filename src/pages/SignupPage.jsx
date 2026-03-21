@@ -272,7 +272,13 @@ export default function SignupPage({ shared }) {
     setIsSubmittingSignup(true);
     try {
       const signupResult = await Promise.race([
-        signUp(cleanEmail, password),
+        signUp(cleanEmail, password, {
+          userData: approvedCreatorFlow
+            ? {
+                signup_context: "affiliate_approved",
+              }
+            : null,
+        }),
         new Promise((_, reject) => {
           window.setTimeout(() => {
             reject(new Error("Signup is taking longer than expected. Please try again."));

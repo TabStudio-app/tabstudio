@@ -64,12 +64,14 @@ export function clearAuthRedirectStateFromUrl() {
   window.history.replaceState({}, "", cleanPath === "/?" ? "/" : cleanPath);
 }
 
-export async function signUp(email, password, { emailRedirectTo = getSignupRedirectUrl() } = {}) {
+export async function signUp(email, password, { emailRedirectTo = getSignupRedirectUrl(), userData = null } = {}) {
+  const hasUserData = userData && typeof userData === "object" && !Array.isArray(userData);
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
     options: {
       emailRedirectTo,
+      ...(hasUserData ? { data: userData } : {}),
     },
   });
   return { data, error };
