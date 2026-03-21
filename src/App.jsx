@@ -548,6 +548,15 @@ function resolvePlaceholderGuardPath(targetPath, routeState) {
     forceProfileSetupAfterPayment = false,
   } = routeState || {};
   const hasPaidTier = isPaidPlanTier(planTier);
+  const isApprovedCreatorSignupRoute = (() => {
+    if (path !== "/signup" || typeof window === "undefined") return false;
+    try {
+      const params = new URLSearchParams(String(window.location.search || ""));
+      return String(params.get("approved") || "").trim().toLowerCase() === "true";
+    } catch {
+      return false;
+    }
+  })();
   let guardReason = "no-redirect";
 
   const resolvePostSigninPath = () => {
@@ -566,7 +575,12 @@ function resolvePlaceholderGuardPath(targetPath, routeState) {
   let guardedPath = path;
 
   if (path === "/signup") {
-    guardedPath = !isAuthenticated ? path : resolvePostSigninPath();
+    if (isApprovedCreatorSignupRoute) {
+      guardReason = "signup-approved-creator-route";
+      guardedPath = "/signup";
+    } else {
+      guardedPath = !isAuthenticated ? path : resolvePostSigninPath();
+    }
   } else if (path === "/signin") {
     guardReason = isAuthenticated ? "signin-allowed-authenticated" : "signin-public";
     guardedPath = "/signin";
