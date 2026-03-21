@@ -81,17 +81,26 @@ export default function SignupPage({ shared }) {
     return { ...base, accent: signupAccent };
   }, [isSignupDarkMode, signupAccent]);
   const activeBillingCycle = normalizeBillingCycle(selectedBillingCycle);
+  const approvedCreatorInviteToken = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    try {
+      const params = new URLSearchParams(window.location.search || "");
+      return String(params.get("invite") || "").trim();
+    } catch {
+      return "";
+    }
+  }, []);
   const approvedCreatorFlow = useMemo(() => {
     if (typeof window === "undefined") return false;
     try {
       const params = new URLSearchParams(window.location.search || "");
       const planParam = String(params.get("plan") || "").trim().toLowerCase();
       const approvedParam = String(params.get("approved") || "").trim().toLowerCase();
-      return planParam === "creator" && approvedParam === "true";
+      return planParam === "creator" && approvedParam === "true" && Boolean(approvedCreatorInviteToken);
     } catch {
       return false;
     }
-  }, []);
+  }, [approvedCreatorInviteToken]);
   const effectiveSelectedPlan = approvedCreatorFlow ? "creator" : selectedPlan;
   const planMeta = getPlanMeta(effectiveSelectedPlan);
   const selectedPlanPriceLabel = activeBillingCycle === "yearly" ? planMeta.yearly : planMeta.monthly;
@@ -276,6 +285,7 @@ export default function SignupPage({ shared }) {
           userData: approvedCreatorFlow
             ? {
                 signup_context: "affiliate_approved",
+                affiliate_invite_token: approvedCreatorInviteToken,
               }
             : null,
         }),
@@ -289,10 +299,18 @@ export default function SignupPage({ shared }) {
 
       if (error) {
         const errorMessage = String(error?.message || "").toLowerCase();
+        const invalidAffiliateInvite =
+          errorMessage.includes("affiliate_invite_invalid_or_used") ||
+          errorMessage.includes("affiliate_invite_missing");
         const duplicateEmail =
           errorMessage.includes("already registered") ||
           errorMessage.includes("already been registered") ||
           errorMessage.includes("user already registered");
+        if (invalidAffiliateInvite) {
+          setSubmitError("This invite link is invalid or already used. Please contact support for a new approval email.");
+          setIsSubmittingSignup(false);
+          return;
+        }
         setErrors((prev) => ({
           ...prev,
           email: duplicateEmail ? duplicateEmailMessage : error.message,

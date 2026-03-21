@@ -552,7 +552,10 @@ function resolvePlaceholderGuardPath(targetPath, routeState) {
     if (path !== "/signup" || typeof window === "undefined") return false;
     try {
       const params = new URLSearchParams(String(window.location.search || ""));
-      return String(params.get("approved") || "").trim().toLowerCase() === "true";
+      const planParam = String(params.get("plan") || "").trim().toLowerCase();
+      const approvedParam = String(params.get("approved") || "").trim().toLowerCase();
+      const inviteToken = String(params.get("invite") || "").trim();
+      return planParam === "creator" && approvedParam === "true" && Boolean(inviteToken);
     } catch {
       return false;
     }

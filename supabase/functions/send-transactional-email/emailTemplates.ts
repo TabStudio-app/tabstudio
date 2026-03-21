@@ -179,6 +179,7 @@ function affiliateApplicationReceivedTemplate(data: TemplateData): BuiltEmailTem
 
 type AffiliateApprovedData = TemplateData & {
   fullName?: unknown
+  inviteToken?: unknown
 }
 
 function affiliateApprovedTemplate(data: TemplateData): BuiltEmailTemplate {
@@ -187,6 +188,15 @@ function affiliateApprovedTemplate(data: TemplateData): BuiltEmailTemplate {
     typeof affiliateData.fullName === "string" && affiliateData.fullName.trim()
       ? escapeHtml(affiliateData.fullName.trim())
       : "there"
+
+  const inviteToken =
+    typeof affiliateData.inviteToken === "string" && affiliateData.inviteToken.trim()
+      ? affiliateData.inviteToken.trim()
+      : ""
+
+  const signupUrl = inviteToken
+    ? `https://tabstudio.app/signup?plan=creator&approved=true&invite=${encodeURIComponent(inviteToken)}`
+    : "https://tabstudio.app/signup"
 
   const bodyHtml = `
     <p style="margin: 0 0 14px;">Hi ${fullName},</p>
@@ -207,7 +217,7 @@ function affiliateApprovedTemplate(data: TemplateData): BuiltEmailTemplate {
       heading: "You’re approved",
       bodyHtml,
       ctaText: "Create your Creator account",
-      ctaUrl: "https://tabstudio.app/signup?plan=creator&approved=true",
+      ctaUrl: signupUrl,
     }),
   }
 }
