@@ -365,7 +365,11 @@ export default async function handler(req, res) {
         });
         return sendJson(res, 200, { received: true, ignored: true });
       }
-      await sendSubscriptionConfirmedEmail(invoiceFields);
+      await sendSubscriptionConfirmedEmail({
+        to: invoiceFields.email,
+        planTier: invoiceFields.planTier,
+        billingCycle: invoiceFields.billingCycle,
+      });
       logWebhook("info", "invoice_paid_subscription_email_sent", {
         eventType: event.type,
         invoiceId: String(event?.data?.object?.id || "").trim(),
