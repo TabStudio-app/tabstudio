@@ -64,6 +64,20 @@ function normalizeWebhookMembershipState(rawStatus) {
   return "free";
 }
 
+function normalizePotentialUserId(rawUserId) {
+  const value = String(rawUserId || "").trim();
+  if (!value) return "";
+  const lowered = value.toLowerCase();
+  if (lowered === "undefined" || lowered === "null" || lowered === "nan") {
+    return "";
+  }
+  return value;
+}
+
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || "").trim());
+}
+
 async function readRawBody(req) {
   const chunks = [];
   for await (const chunk of req) {
@@ -153,7 +167,7 @@ function deriveSubscriptionMembershipFields(subscription) {
 function deriveCheckoutSessionMembershipFields(session) {
   const metadata = session?.metadata && typeof session.metadata === "object" ? session.metadata : {};
   return {
-    userId: String(metadata.supabase_user_id || session?.client_reference_id || "").trim(),
+    userId: normalizePotentialUserId(metadata.supabase_user_id || session?.client_reference_id || ""),
     email: String(metadata.email || session?.customer_details?.email || session?.customer_email || "").trim().toLowerCase(),
     planTier: normalizePlanTier(metadata.plan_tier),
     billingCycle: normalizeBillingCycle(metadata.billing_cycle),
@@ -165,6 +179,12 @@ function ensureMembershipFields(eventType, membershipFields) {
   if (!membershipFields.userId) {
     const error = new Error("Missing user metadata for membership sync.");
     error.code = "missing_user_metadata";
+    error.eventType = eventType;
+    throw error;
+  }
+  if (!isUuid(membershipFields.userId)) {
+    const error = new Error("Invalid user metadata for membership sync.");
+    error.code = "invalid_user_metadata";
     error.eventType = eventType;
     throw error;
   }
@@ -250,7 +270,17 @@ export default async function handler(req, res) {
 
     return sendJson(res, 200, { received: true });
   } catch (error) {
-    const branch = error?.code === "missing_user_metadata" ? "missing_user_metadata" : "profile_update_failure";
+    const isMetadataIssue = error?.code === "missing_user_metadata" || error?.code === "invalid_user_metadata";
+    const branch = isMetadataIssue ? String(error.code) : "profile_update_failure";
+
+    if (isMetadataIssue) {
+      logWebhook("warn", branch, {
+        eventType: event.type,
+        message: String(error?.message || "Membership metadata issue."),
+      });
+      return sendJson(res, 200, { received: true, ignored: true });
+    }
+
     logWebhook("error", branch, {
       eventType: event.type,
       message: String(error?.message || "Webhook handling failed."),
