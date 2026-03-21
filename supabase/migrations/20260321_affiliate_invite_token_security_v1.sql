@@ -47,6 +47,9 @@ as $$
 declare
   fn_base_url text;
   service_jwt text;
+  existing_profile_id uuid;
+  has_existing_auth_user boolean := false;
+  template_type_value text;
 begin
   if not (old.status is distinct from new.status and new.status = 'approved') then
     return new;
@@ -68,8 +71,39 @@ begin
     raise exception 'Missing vault secrets: SUPABASE_FUNCTIONS_URL or SUPABASE_SERVICE_ROLE_JWT';
   end if;
 
-  if new.invite_token is null or btrim(new.invite_token) = '' then
-    raise exception 'AFFILIATE_INVITE_TOKEN_NOT_GENERATED';
+  select p.id
+  into existing_profile_id
+  from public.profiles p
+  where lower(coalesce(p.email, '')) = lower(new.email)
+  limit 1;
+
+  if existing_profile_id is not null then
+    has_existing_auth_user := true;
+    update public.profiles
+    set
+      affiliate_approved = true,
+      affiliate_approved_at = coalesce(affiliate_approved_at, timezone('utc', now())),
+      affiliate_application_id = new.id
+    where id = existing_profile_id;
+  else
+    select exists (
+      select 1
+      from auth.users u
+      where lower(coalesce(u.email, '')) = lower(new.email)
+    )
+    into has_existing_auth_user;
+  end if;
+
+  if has_existing_auth_user then
+    template_type_value := 'affiliate_approved_existing_account';
+    update public.affiliate_applications
+    set invite_token_consumed_at = coalesce(invite_token_consumed_at, timezone('utc', now()))
+    where id = new.id;
+  else
+    if new.invite_token is null or btrim(new.invite_token) = '' then
+      raise exception 'AFFILIATE_INVITE_TOKEN_NOT_GENERATED';
+    end if;
+    template_type_value := 'affiliate_approved';
   end if;
 
   perform net.http_post(
@@ -81,7 +115,7 @@ begin
     ),
     body := jsonb_build_object(
       'to', new.email,
-      'template_type', 'affiliate_approved',
+      'template_type', template_type_value,
       'template_data', jsonb_build_object(
         'fullName', coalesce(nullif(new.full_name, ''), 'there'),
         'inviteToken', new.invite_token,

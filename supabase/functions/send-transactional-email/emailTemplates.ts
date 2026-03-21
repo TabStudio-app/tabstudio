@@ -5,6 +5,7 @@ export const SUPPORTED_EMAIL_TYPES = [
   "subscription_confirmed",
   "affiliate_application_received",
   "affiliate_approved",
+  "affiliate_approved_existing_account",
   "support_received",
 ] as const
 
@@ -230,6 +231,37 @@ function affiliateApprovedTemplate(data: TemplateData): BuiltEmailTemplate {
   }
 }
 
+function affiliateApprovedExistingAccountTemplate(data: TemplateData): BuiltEmailTemplate {
+  const affiliateData = data as AffiliateApprovedData
+  const fullName =
+    typeof affiliateData.fullName === "string" && affiliateData.fullName.trim()
+      ? escapeHtml(affiliateData.fullName.trim())
+      : "there"
+
+  const bodyHtml = `
+    <p style="margin: 0 0 14px;">Hi ${fullName},</p>
+    <p style="margin: 0 0 14px;">
+      Great news. You’ve been accepted into the TabStudio Affiliate Program.
+    </p>
+    <p style="margin: 0 0 14px;">
+      We detected that this email already has a TabStudio account, so your affiliate access has been applied to your existing account.
+    </p>
+    <p style="margin: 0;">
+      Sign in to continue.
+    </p>
+  `
+
+  return {
+    subject: "You’ve been accepted to the TabStudio Affiliate Program",
+    html: renderTabStudioEmailLayout({
+      heading: "You’re approved",
+      bodyHtml,
+      ctaText: "Sign in to TabStudio",
+      ctaUrl: "https://tabstudio.app/signin",
+    }),
+  }
+}
+
 type SupportReceivedData = TemplateData & {
   fullName?: unknown
 }
@@ -293,6 +325,8 @@ export function buildEmailTemplate(
       return affiliateApplicationReceivedTemplate(data)
     case "affiliate_approved":
       return affiliateApprovedTemplate(data)
+    case "affiliate_approved_existing_account":
+      return affiliateApprovedExistingAccountTemplate(data)
     case "support_received":
       return supportReceivedTemplate(data)
     default: {
