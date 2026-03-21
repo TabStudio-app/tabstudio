@@ -234,7 +234,6 @@ export default function AffiliateApplicationForm({ theme, withAlpha, TABBY_ASSIS
               "Content-Type": "application/json",
               Authorization: `Bearer ${anonKey}`,
               apikey: anonKey,
-              "X-Function-Secret": "<YOUR_FUNCTION_SECRET>",
             },
             body: JSON.stringify(emailPayload),
           });

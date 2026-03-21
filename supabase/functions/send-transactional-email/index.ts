@@ -7,11 +7,15 @@ import {
 } from "./emailTemplates.ts"
 
 const jsonHeaders = { "Content-Type": "application/json" }
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, apikey, content-type",
+}
 
 function jsonResponse(status: number, body: Record<string, unknown>): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: jsonHeaders,
+    headers: { ...jsonHeaders, ...corsHeaders },
   })
 }
 
@@ -25,15 +29,12 @@ function getRequiredEnv(name: string): string {
 
 Deno.serve(async (req) => {
   try {
-    if (req.method !== "POST") {
-      return jsonResponse(405, { success: false, error: "Method not allowed" })
+    if (req.method === "OPTIONS") {
+      return new Response("ok", { headers: corsHeaders })
     }
 
-    const functionSecret = getRequiredEnv("FUNCTION_SECRET")
-    const incomingSecret = req.headers.get("X-Function-Secret")
-
-    if (!incomingSecret || incomingSecret !== functionSecret) {
-      return jsonResponse(401, { success: false, error: "Unauthorized" })
+    if (req.method !== "POST") {
+      return jsonResponse(405, { success: false, error: "Method not allowed" })
     }
 
     let body: unknown
