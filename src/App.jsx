@@ -1253,11 +1253,15 @@ export default function App() {
           updatedAt: Date.now(),
         });
         clearConversionSignupState();
-        onboardingTrace("[ONBOARDING TRACE] continueApprovedCreatorSignup:navigate-pending-confirmation", {
-          finalRoutePushed: "/signin",
+        onboardingTrace("[ONBOARDING TRACE] continueApprovedCreatorSignup:pending-confirmation", {
+          staysOnPage: true,
         });
-        navigateTo("/signin");
-        return { redirected: true, requiresEmailConfirmation };
+        return {
+          redirected: false,
+          requiresEmailConfirmation: true,
+          pendingEmailConfirmation: true,
+          message: "Check your email to confirm your account, then we’ll continue to profile setup.",
+        };
       }
 
       persistConversionSignupState({

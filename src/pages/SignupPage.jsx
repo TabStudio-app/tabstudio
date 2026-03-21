@@ -36,6 +36,7 @@ export default function SignupPage({ shared }) {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [errors, setErrors] = useState({});
   const [submitError, setSubmitError] = useState("");
+  const [submitNotice, setSubmitNotice] = useState("");
   const [signupTouchedFields, setSignupTouchedFields] = useState({});
   const [signupFocusedField, setSignupFocusedField] = useState("");
   const [signupHoveredField, setSignupHoveredField] = useState("");
@@ -258,6 +259,7 @@ export default function SignupPage({ shared }) {
   const handleContinue = async (e) => {
     e.preventDefault();
     setSubmitError("");
+    setSubmitNotice("");
     const nextErrors = {};
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) nextErrors.email = "Please enter a valid email address.";
     if (String(password || "").length < 8) nextErrors.password = "Password must be at least 8 characters.";
@@ -302,6 +304,14 @@ export default function SignupPage({ shared }) {
         session: data?.session || null,
         pendingAuthUserId: String(data?.user?.id || "").trim(),
       });
+      if (approvedCreatorFlow && result?.pendingEmailConfirmation) {
+        setSubmitNotice(
+          String(
+            result?.message ||
+              "Check your email to confirm your account, then we’ll continue to profile setup."
+          )
+        );
+      }
       if (!result?.redirected) setIsSubmittingSignup(false);
     } catch (error) {
       setSubmitError(
@@ -695,6 +705,18 @@ export default function SignupPage({ shared }) {
                   )}
                 </button>
                 {submitError ? <div style={{ ...errorTextStyle, textAlign: "center" }}>{submitError}</div> : null}
+                {submitNotice ? (
+                  <div
+                    style={{
+                      textAlign: "center",
+                      fontSize: 13,
+                      fontWeight: 700,
+                      color: "#34d399",
+                    }}
+                  >
+                    {submitNotice}
+                  </div>
+                ) : null}
                 <div style={{ textAlign: "center", fontSize: 13, color: SIGNUP_THEME.textFaint, fontWeight: 700 }}>
                   {approvedCreatorFlow
                     ? "Approved creator signup • No payment required"
