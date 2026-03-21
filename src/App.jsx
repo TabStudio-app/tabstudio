@@ -310,6 +310,7 @@ function normalizeApprovedCreatorSignupState(rawState) {
   return {
     approvedCreatorFlow: Boolean(raw.approvedCreatorFlow) && !isStale,
     flowEmail: String(raw.flowEmail || "").trim().toLowerCase(),
+    flowPassword: isStale ? "" : String(raw.flowPassword || ""),
     pendingAuthUserId: String(raw.pendingAuthUserId || "").trim(),
     selectedBillingCycle: normalizeBillingCycle(raw.selectedBillingCycle),
     updatedAt,
@@ -345,6 +346,22 @@ function clearApprovedCreatorSignupState() {
   try {
     window.sessionStorage.removeItem(SESSION_APPROVED_CREATOR_SIGNUP_KEY);
   } catch {}
+}
+
+function getPendingVerificationState() {
+  const approvedState = loadApprovedCreatorSignupState();
+  if (approvedState.approvedCreatorFlow && approvedState.pendingAuthUserId && approvedState.flowEmail) {
+    return {
+      signupCompletedForFlow: true,
+      flowEmail: approvedState.flowEmail,
+      flowPassword: approvedState.flowPassword,
+      pendingAuthUserId: approvedState.pendingAuthUserId,
+      selectedPlan: "creator",
+      selectedBillingCycle: approvedState.selectedBillingCycle || "monthly",
+      updatedAt: approvedState.updatedAt,
+    };
+  }
+  return loadConversionSignupState();
 }
 
 function hasForcedProfileSetupAfterPayment() {
@@ -1248,19 +1265,19 @@ export default function App() {
         persistApprovedCreatorSignupState({
           approvedCreatorFlow: true,
           flowEmail: normalizedAccountEmail,
+          flowPassword: String(password || ""),
           pendingAuthUserId: String(pendingAuthUserId || "").trim(),
           selectedBillingCycle: safeBillingCycle,
           updatedAt: Date.now(),
         });
         clearConversionSignupState();
-        onboardingTrace("[ONBOARDING TRACE] continueApprovedCreatorSignup:pending-confirmation", {
-          staysOnPage: true,
+        onboardingTrace("[ONBOARDING TRACE] continueApprovedCreatorSignup:navigate-waiting", {
+          finalRoutePushed: "/success",
         });
+        navigateTo("/success");
         return {
-          redirected: false,
+          redirected: true,
           requiresEmailConfirmation: true,
-          pendingEmailConfirmation: true,
-          message: "Check your email to confirm your account, then we’ll continue to profile setup.",
         };
       }
 
@@ -2004,7 +2021,7 @@ export default function App() {
             navigateTo("/profile-setup");
           },
           onVerificationDetected: handleVerifiedEmailDetected,
-          pendingVerificationState: loadConversionSignupState(),
+          pendingVerificationState: getPendingVerificationState(),
           siteHeaderBarStyle,
           siteHeaderLeftGroupStyle,
           siteHeaderLogoButtonStyle,
