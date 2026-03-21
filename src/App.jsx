@@ -352,6 +352,7 @@ function getPendingVerificationState() {
   const approvedState = loadApprovedCreatorSignupState();
   if (approvedState.approvedCreatorFlow && approvedState.pendingAuthUserId && approvedState.flowEmail) {
     return {
+      approvedCreatorFlow: true,
       signupCompletedForFlow: true,
       flowEmail: approvedState.flowEmail,
       flowPassword: approvedState.flowPassword,

@@ -32,6 +32,7 @@ export default function SuccessPage({ shared }) {
   const [themeRefresh, setThemeRefresh] = useState(0);
   const [cardHover, setCardHover] = useState(false);
   const [viewMode, setViewMode] = useState("waiting");
+  const isApprovedCreatorFlow = Boolean(pendingVerificationState?.approvedCreatorFlow);
 
   const accentId = useMemo(() => {
     const fallback = "white";
@@ -234,10 +235,16 @@ export default function SuccessPage({ shared }) {
   });
 
   const title = viewMode === "verified" ? "Email verified" : "Almost there — verify your email";
-  const subtitle = viewMode === "verified" ? "Your email has been successfully confirmed." : "Your payment was successful.";
+  const subtitle = viewMode === "verified"
+    ? "Your email has been successfully confirmed."
+    : isApprovedCreatorFlow
+      ? "Your approved Creator access is almost ready."
+      : "Your payment was successful.";
   const body = viewMode === "verified"
     ? "We’re taking you to account setup now."
-    : "We’ve sent you a confirmation email.\nPlease verify your email to continue to account setup.";
+    : isApprovedCreatorFlow
+      ? "We’ve sent you a confirmation email.\nPlease verify your email to continue to your Creator account setup."
+      : "We’ve sent you a confirmation email.\nPlease verify your email to continue to account setup.";
   const helper = viewMode === "verified" ? "Preparing your account..." : "";
 
   return (
