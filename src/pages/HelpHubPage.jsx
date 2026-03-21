@@ -594,7 +594,7 @@ export default function HelpHubPage({ shared }) {
       supportSwapTimerRef.current = null;
     }, 220);
   };
-  const onSubmitSupportMessage = (e) => {
+  const onSubmitSupportMessage = async (e) => {
     e.preventDefault();
     if (!supportMessagingAvailable || supportSending) return;
     const nextErrors = {};
@@ -609,8 +609,72 @@ export default function HelpHubPage({ shared }) {
     setSupportFormErrors(nextErrors);
     if (Object.keys(nextErrors).length) return;
     setSupportSending(true);
-    // TODO(tabstudio-support): Replace this client-only placeholder success flow with a real backend POST
-    // when backend infrastructure is introduced. Email delivery must happen server-side (no mailto/app launch).
+    try {
+      const supabaseUrl = String(import.meta.env.VITE_SUPABASE_URL || "").trim().replace(/\/+$/g, "");
+      const anonKey = String(import.meta.env.VITE_SUPABASE_ANON_KEY || "").trim();
+      if (!supabaseUrl || !anonKey) {
+        throw new Error("Support email service is not configured.");
+      }
+
+      const functionUrl = `${supabaseUrl}/functions/v1/send-transactional-email`;
+      const supportEmailPayload = {
+        to: "support@tabstudio.app",
+        subject: `Support Request: ${nextSubject}`,
+        from: "TabStudio <support@tabstudio.app>",
+        html: `
+          <p><strong>Sender:</strong> ${nextEmail}</p>
+          <p><strong>Subject:</strong> ${nextSubject}</p>
+          <p><strong>Message:</strong></p>
+          <p>${nextMessage.replace(/\n/g, "<br/>")}</p>
+          <p><strong>Attachment count:</strong> ${supportAttachedImages.length}</p>
+          <p><strong>Attachment names:</strong> ${
+            supportAttachedImages.length
+              ? supportAttachedImages.map((file) => String(file?.name || "").trim()).filter(Boolean).join(", ")
+              : "None"
+          }</p>
+        `,
+      };
+      const requesterEmailPayload = {
+        to: nextEmail,
+        template_type: "support_received",
+        template_data: {},
+      };
+
+      const headers = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${anonKey}`,
+        apikey: anonKey,
+      };
+
+      const [supportEmailResponse, requesterEmailResponse] = await Promise.all([
+        fetch(functionUrl, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(supportEmailPayload),
+        }),
+        fetch(functionUrl, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(requesterEmailPayload),
+        }),
+      ]);
+
+      if (!supportEmailResponse.ok || !requesterEmailResponse.ok) {
+        const supportErrorText = supportEmailResponse.ok ? "" : await supportEmailResponse.text().catch(() => "");
+        const requesterErrorText = requesterEmailResponse.ok ? "" : await requesterEmailResponse.text().catch(() => "");
+        throw new Error(
+          `Support email failed. support_status=${supportEmailResponse.status} requester_status=${requesterEmailResponse.status} support_body=${supportErrorText} requester_body=${requesterErrorText}`
+        );
+      }
+    } catch (error) {
+      console.error("[HelpHubPage] support email submission failed", error);
+      setSupportFormErrors({
+        form: "We couldn't send your support request right now. Please try again.",
+      });
+      setSupportSending(false);
+      return;
+    }
+
     setSupportSenderEmail("");
     setSupportSubject("");
     setSupportMessage("");
@@ -1401,6 +1465,18 @@ export default function HelpHubPage({ shared }) {
                             ))}
                           </div>
                         ) : null}
+                      </div>
+                    ) : null}
+                    {supportFormErrors.form ? (
+                      <div
+                        style={{
+                          marginTop: -2,
+                          fontSize: 12,
+                          fontWeight: 700,
+                          color: "#FF6E7A",
+                        }}
+                      >
+                        {supportFormErrors.form}
                       </div>
                     ) : null}
                     <div

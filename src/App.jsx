@@ -565,8 +565,11 @@ function resolvePlaceholderGuardPath(targetPath, routeState) {
 
   let guardedPath = path;
 
-  if (path === "/signup" || path === "/signin") {
+  if (path === "/signup") {
     guardedPath = !isAuthenticated ? path : resolvePostSigninPath();
+  } else if (path === "/signin") {
+    guardReason = isAuthenticated ? "signin-allowed-authenticated" : "signin-public";
+    guardedPath = "/signin";
   } else if (path === "/checkout") {
     if (!isAuthenticated) {
       guardReason = canAccessCheckoutWhileSignedOut ? "checkout-allowed-pending-email-confirmation" : "checkout-requires-auth";

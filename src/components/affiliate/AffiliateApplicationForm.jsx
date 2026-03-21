@@ -221,7 +221,7 @@ export default function AffiliateApplicationForm({ theme, withAlpha, TABBY_ASSIS
 
       if (supabaseUrl && anonKey) {
         const functionUrl = `${supabaseUrl}/functions/v1/send-transactional-email`;
-        const emailPayload = {
+        const supportEmailPayload = {
           to: "support@tabstudio.app",
           subject: "New Affiliate Application 🚀",
           from: "TabStudio <support@tabstudio.app>",
@@ -257,26 +257,54 @@ export default function AffiliateApplicationForm({ theme, withAlpha, TABBY_ASSIS
             <p><strong>Anything Else:</strong> ${String(formData.extra || "").trim() || "Not provided"}</p>
           `,
         };
+        const applicantEmailPayload = {
+          to: String(formData.email || "").trim(),
+          template_type: "affiliate_application_received",
+          template_data: {
+            fullName: String(formData.fullName || "").trim(),
+          },
+        };
 
         try {
-          const emailResponse = await fetch(functionUrl, {
+          const supportEmailResponse = await fetch(functionUrl, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
               Authorization: `Bearer ${anonKey}`,
               apikey: anonKey,
             },
-            body: JSON.stringify(emailPayload),
+            body: JSON.stringify(supportEmailPayload),
           });
-          if (!emailResponse.ok) {
-            const emailErrorText = await emailResponse.text().catch(() => "");
+          if (!supportEmailResponse.ok) {
+            const emailErrorText = await supportEmailResponse.text().catch(() => "");
             console.error("[AffiliateApplicationForm] notification email failed", {
-              status: emailResponse.status,
+              status: supportEmailResponse.status,
               body: emailErrorText,
             });
           }
         } catch (emailError) {
           console.error("[AffiliateApplicationForm] notification email request failed", emailError);
+        }
+
+        try {
+          const applicantEmailResponse = await fetch(functionUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${anonKey}`,
+              apikey: anonKey,
+            },
+            body: JSON.stringify(applicantEmailPayload),
+          });
+          if (!applicantEmailResponse.ok) {
+            const applicantEmailErrorText = await applicantEmailResponse.text().catch(() => "");
+            console.error("[AffiliateApplicationForm] applicant confirmation email failed", {
+              status: applicantEmailResponse.status,
+              body: applicantEmailErrorText,
+            });
+          }
+        } catch (applicantEmailError) {
+          console.error("[AffiliateApplicationForm] applicant confirmation email request failed", applicantEmailError);
         }
       } else {
         console.error("[AffiliateApplicationForm] missing Supabase env for notification email", {
