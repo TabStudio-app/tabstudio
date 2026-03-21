@@ -1607,15 +1607,13 @@ export default function App() {
     [hydrateSessionState]
   );
   const resolveAuthenticatedDestination = useCallback(
-    (nextState, { hasCheckoutIntent = false } = {}) =>
-      resolvePlaceholderGuardPath("/signin", {
-        isAuthenticated: true,
-        hasMembership: Boolean(nextState?.hasMembership),
-        planTier: normalizePlanTier(nextState?.planTier),
-        isProfileComplete: isProfileSetupComplete(nextState?.profile),
-        hasCheckoutIntent,
-        forceProfileSetupAfterPayment: false,
-      }),
+    (nextState, { hasCheckoutIntent = false } = {}) => {
+      const planTier = normalizePlanTier(nextState?.planTier);
+      const hasPaidTier = isPaidPlanTier(planTier);
+      if (!hasPaidTier) return hasCheckoutIntent ? "/checkout" : "/membership";
+      if (!isProfileSetupComplete(nextState?.profile)) return "/profile-setup";
+      return "/editor";
+    },
     []
   );
   const handleResolvedEmailAuth = useCallback(
