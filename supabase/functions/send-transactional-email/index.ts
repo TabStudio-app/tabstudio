@@ -1,10 +1,5 @@
 import "@supabase/functions-js/edge-runtime.d.ts"
 import nodemailer from "npm:nodemailer"
-import {
-  buildEmailTemplate,
-  isSupportedTemplateType,
-  type TemplateData,
-} from "./emailTemplates.ts"
 
 const jsonHeaders = { "Content-Type": "application/json" }
 const corsHeaders = {
@@ -44,14 +39,13 @@ Deno.serve(async (req) => {
       return jsonResponse(400, { success: false, error: "Invalid JSON body" })
     }
 
-    const { to, subject, html, from, type, data } = body as {
+    const { to, subject, html, from } = body as {
       to?: unknown
       subject?: unknown
       html?: unknown
       from?: unknown
-      type?: unknown
-      data?: unknown
     }
+    console.log("EMAIL HTML RECEIVED:", html)
 
     if (typeof to !== "string" || !to.trim()) {
       return jsonResponse(400, { success: false, error: "Invalid 'to' field" })
@@ -79,36 +73,15 @@ Deno.serve(async (req) => {
       },
     })
 
-    let resolvedSubject = ""
-    let resolvedHtml = ""
+    const resolvedSubject =
+      typeof subject === "string" && subject.trim()
+      ? subject.trim()
+      : "New Notification"
 
-    if (
-      typeof subject === "string" &&
-      subject.trim() &&
-      typeof html === "string" &&
-      html.trim()
-    ) {
-      resolvedSubject = subject.trim()
-      resolvedHtml = html
-    } else {
-      if (typeof type !== "string" || !type.trim()) {
-        return jsonResponse(400, {
-          success: false,
-          error: "Invalid 'type' field",
-        })
-      }
-
-      if (!isSupportedTemplateType(type)) {
-        return jsonResponse(400, {
-          success: false,
-          error: "Unsupported email type",
-        })
-      }
-
-      const template = buildEmailTemplate(type, (data ?? {}) as TemplateData)
-      resolvedSubject = template.subject
-      resolvedHtml = template.html
-    }
+    const resolvedHtml =
+      typeof html === "string" && html.trim()
+      ? html
+      : "<p>No content provided</p>"
 
     const resolvedFrom =
       typeof from === "string" && from.trim()
@@ -124,7 +97,6 @@ Deno.serve(async (req) => {
 
     return jsonResponse(200, {
       success: true,
-      type,
       to: to.trim(),
       messageId: info.messageId,
     })

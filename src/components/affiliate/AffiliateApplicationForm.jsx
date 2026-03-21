@@ -224,7 +224,38 @@ export default function AffiliateApplicationForm({ theme, withAlpha, TABBY_ASSIS
         const emailPayload = {
           to: "support@tabstudio.app",
           subject: "New Affiliate Application 🚀",
-          html: `<pre>${JSON.stringify(formData, null, 2)}</pre>`,
+          from: "TabStudio <support@tabstudio.app>",
+          html: `
+            <p><strong>Full Name:</strong> ${String(formData.fullName || "").trim() || "Not provided"}</p>
+            <p><strong>Email:</strong> ${String(formData.email || "").trim() || "Not provided"}</p>
+            <p><strong>Instagram:</strong> ${String(formData.instagram || "").trim() || "Not provided"}</p>
+            <p><strong>YouTube:</strong> ${String(formData.youtube || "").trim() || "Not provided"}</p>
+            <p><strong>TikTok:</strong> ${String(formData.tiktok || "").trim() || "Not provided"}</p>
+            <p><strong>Other Link:</strong> ${String(formData.otherLink || "").trim() || "Not provided"}</p>
+            <p><strong>Main Platform:</strong> ${String(formData.mainPlatform || "").trim() || "Not provided"}</p>
+            <p><strong>Approximate Following:</strong> ${String(formData.following || "").trim() || "Not provided"}</p>
+            <p><strong>Content Type:</strong> ${
+              Array.isArray(formData.contentType) && formData.contentType.length
+                ? formData.contentType.join(", ")
+                : "None selected"
+            }</p>
+            <p><strong>Tab Usage:</strong> ${
+              Array.isArray(formData.tabUsage) && formData.tabUsage.length
+                ? formData.tabUsage.join(", ")
+                : "None selected"
+            }</p>
+            <p><strong>Feature Plan:</strong> ${
+              Array.isArray(formData.featurePlan) && formData.featurePlan.length
+                ? formData.featurePlan.join(", ")
+                : "None selected"
+            }</p>
+            <p><strong>Motivation:</strong> ${
+              Array.isArray(formData.motivation) && formData.motivation.length
+                ? formData.motivation.join(", ")
+                : "None selected"
+            }</p>
+            <p><strong>Anything Else:</strong> ${String(formData.extra || "").trim() || "Not provided"}</p>
+          `,
         };
 
         try {
