@@ -81,6 +81,15 @@ export default function SignupPage({ shared }) {
     return { ...base, accent: signupAccent };
   }, [isSignupDarkMode, signupAccent]);
   const activeBillingCycle = normalizeBillingCycle(selectedBillingCycle);
+  const approvedCreatorEmailFromLink = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    try {
+      const params = new URLSearchParams(window.location.search || "");
+      return String(params.get("email") || "").trim().toLowerCase();
+    } catch {
+      return "";
+    }
+  }, []);
   const approvedCreatorInviteToken = useMemo(() => {
     if (typeof window === "undefined") return "";
     try {
@@ -101,6 +110,7 @@ export default function SignupPage({ shared }) {
       return false;
     }
   }, [approvedCreatorInviteToken]);
+  const isApprovedCreatorEmailLocked = approvedCreatorFlow && Boolean(approvedCreatorEmailFromLink);
   const effectiveSelectedPlan = approvedCreatorFlow ? "creator" : selectedPlan;
   const planMeta = getPlanMeta(effectiveSelectedPlan);
   const selectedPlanPriceLabel = activeBillingCycle === "yearly" ? planMeta.yearly : planMeta.monthly;
@@ -124,6 +134,17 @@ export default function SignupPage({ shared }) {
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, [LS_ACCENT_COLOR_KEY, LS_THEME_MODE_KEY]);
+
+  useEffect(() => {
+    if (!isApprovedCreatorEmailLocked) return;
+    setEmail(approvedCreatorEmailFromLink);
+    setErrors((prev) => {
+      if (!prev?.email) return prev;
+      const updated = { ...prev };
+      delete updated.email;
+      return updated;
+    });
+  }, [approvedCreatorEmailFromLink, isApprovedCreatorEmailLocked]);
 
   const runEmailAvailabilityCheck = useCallback(async (candidateEmail) => {
     const normalizedEmail = String(candidateEmail || "").trim();
@@ -499,7 +520,9 @@ export default function SignupPage({ shared }) {
                     <input
                       type="email"
                       value={email}
+                      readOnly={isApprovedCreatorEmailLocked}
                       onChange={(e) => {
+                        if (isApprovedCreatorEmailLocked) return;
                         setEmail(e.target.value);
                         setEmailAvailability("idle");
                         setErrors((prev) => {
@@ -515,7 +538,9 @@ export default function SignupPage({ shared }) {
                       onBlur={() => {
                         setSignupFocusedField((prev) => (prev === "email" ? "" : prev));
                         setSignupTouchedFields((prev) => ({ ...prev, email: true }));
-                        validateEmailOnBlur();
+                        if (!isApprovedCreatorEmailLocked) {
+                          validateEmailOnBlur();
+                        }
                       }}
                       style={inputStyle("email", { paddingRight: 40 })}
                     />
@@ -577,6 +602,11 @@ export default function SignupPage({ shared }) {
                           </button>
                         </>
                       ) : null}
+                    </div>
+                  ) : null}
+                  {isApprovedCreatorEmailLocked ? (
+                    <div style={{ ...errorTextStyle, color: withAlpha("#34d399", 0.9) }}>
+                      Email is locked to your approved affiliate address.
                     </div>
                   ) : null}
                 </div>

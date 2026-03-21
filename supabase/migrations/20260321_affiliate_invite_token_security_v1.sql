@@ -84,7 +84,8 @@ begin
       'template_type', 'affiliate_approved',
       'template_data', jsonb_build_object(
         'fullName', coalesce(nullif(new.full_name, ''), 'there'),
-        'inviteToken', new.invite_token
+        'inviteToken', new.invite_token,
+        'approvedEmail', lower(new.email)
       )
     )
   );

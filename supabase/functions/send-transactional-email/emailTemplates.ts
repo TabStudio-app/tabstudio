@@ -180,6 +180,7 @@ function affiliateApplicationReceivedTemplate(data: TemplateData): BuiltEmailTem
 type AffiliateApprovedData = TemplateData & {
   fullName?: unknown
   inviteToken?: unknown
+  approvedEmail?: unknown
 }
 
 function affiliateApprovedTemplate(data: TemplateData): BuiltEmailTemplate {
@@ -194,8 +195,15 @@ function affiliateApprovedTemplate(data: TemplateData): BuiltEmailTemplate {
       ? affiliateData.inviteToken.trim()
       : ""
 
+  const approvedEmail =
+    typeof affiliateData.approvedEmail === "string" && affiliateData.approvedEmail.trim()
+      ? affiliateData.approvedEmail.trim().toLowerCase()
+      : ""
+
   const signupUrl = inviteToken
-    ? `https://tabstudio.app/signup?plan=creator&approved=true&invite=${encodeURIComponent(inviteToken)}`
+    ? `https://tabstudio.app/signup?plan=creator&approved=true&invite=${encodeURIComponent(inviteToken)}${
+      approvedEmail ? `&email=${encodeURIComponent(approvedEmail)}` : ""
+    }`
     : "https://tabstudio.app/signup"
 
   const bodyHtml = `
