@@ -214,8 +214,50 @@ export default function AffiliateApplicationForm({ theme, withAlpha, TABBY_ASSIS
       if (error) {
         throw error;
       }
+
+      const formData = form;
+      const supabaseUrl = String(import.meta.env.VITE_SUPABASE_URL || "").trim().replace(/\/+$/g, "");
+      const anonKey = String(import.meta.env.VITE_SUPABASE_ANON_KEY || "").trim();
+
+      if (supabaseUrl && anonKey) {
+        const functionUrl = `${supabaseUrl}/functions/v1/send-transactional-email`;
+        const emailPayload = {
+          to: "support@tabstudio.app",
+          subject: "New Affiliate Application 🚀",
+          html: `<pre>${JSON.stringify(formData, null, 2)}</pre>`,
+        };
+
+        try {
+          const emailResponse = await fetch(functionUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${anonKey}`,
+              apikey: anonKey,
+              "X-Function-Secret": "<YOUR_FUNCTION_SECRET>",
+            },
+            body: JSON.stringify(emailPayload),
+          });
+          if (!emailResponse.ok) {
+            const emailErrorText = await emailResponse.text().catch(() => "");
+            console.error("[AffiliateApplicationForm] notification email failed", {
+              status: emailResponse.status,
+              body: emailErrorText,
+            });
+          }
+        } catch (emailError) {
+          console.error("[AffiliateApplicationForm] notification email request failed", emailError);
+        }
+      } else {
+        console.error("[AffiliateApplicationForm] missing Supabase env for notification email", {
+          hasSupabaseUrl: Boolean(supabaseUrl),
+          hasAnonKey: Boolean(anonKey),
+        });
+      }
+
       setSubmitted(true);
     } catch (error) {
+      console.error("[AffiliateApplicationForm] submit failed", error);
       setSubmitError(
         String(error?.message || "We couldn't submit your application right now. Please try again."),
       );

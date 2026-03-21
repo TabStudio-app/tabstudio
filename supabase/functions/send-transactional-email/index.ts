@@ -36,35 +36,24 @@ Deno.serve(async (req) => {
       return jsonResponse(401, { success: false, error: "Unauthorized" })
     }
 
-    let payload: unknown
+    let body: unknown
     try {
-      payload = await req.json()
+      body = await req.json()
     } catch {
       return jsonResponse(400, { success: false, error: "Invalid JSON body" })
     }
 
-    const { to, type, data } = payload as {
+    const { to, subject, html, from, type, data } = body as {
       to?: unknown
+      subject?: unknown
+      html?: unknown
+      from?: unknown
       type?: unknown
       data?: unknown
     }
 
     if (typeof to !== "string" || !to.trim()) {
       return jsonResponse(400, { success: false, error: "Invalid 'to' field" })
-    }
-
-    if (typeof type !== "string" || !type.trim()) {
-      return jsonResponse(400, {
-        success: false,
-        error: "Invalid 'type' field",
-      })
-    }
-
-    if (!isSupportedTemplateType(type)) {
-      return jsonResponse(400, {
-        success: false,
-        error: "Unsupported email type",
-      })
     }
 
     const host = getRequiredEnv("ZOHO_SMTP_HOST")
@@ -89,13 +78,47 @@ Deno.serve(async (req) => {
       },
     })
 
-    const template = buildEmailTemplate(type, (data ?? {}) as TemplateData)
+    let resolvedSubject = ""
+    let resolvedHtml = ""
+
+    if (
+      typeof subject === "string" &&
+      subject.trim() &&
+      typeof html === "string" &&
+      html.trim()
+    ) {
+      resolvedSubject = subject.trim()
+      resolvedHtml = html
+    } else {
+      if (typeof type !== "string" || !type.trim()) {
+        return jsonResponse(400, {
+          success: false,
+          error: "Invalid 'type' field",
+        })
+      }
+
+      if (!isSupportedTemplateType(type)) {
+        return jsonResponse(400, {
+          success: false,
+          error: "Unsupported email type",
+        })
+      }
+
+      const template = buildEmailTemplate(type, (data ?? {}) as TemplateData)
+      resolvedSubject = template.subject
+      resolvedHtml = template.html
+    }
+
+    const resolvedFrom =
+      typeof from === "string" && from.trim()
+        ? from.trim()
+        : `${fromName} <${fromAddress}>`
 
     const info = await transporter.sendMail({
-      from: `${fromName} <${fromAddress}>`,
+      from: resolvedFrom,
       to: to.trim(),
-      subject: template.subject,
-      html: template.html,
+      subject: resolvedSubject,
+      html: resolvedHtml,
     })
 
     return jsonResponse(200, {

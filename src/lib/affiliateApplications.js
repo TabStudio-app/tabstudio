@@ -42,5 +42,19 @@ export function buildAffiliateApplicationInsertPayload(formValues = {}) {
 export async function createAffiliateApplication(formValues = {}) {
   const payload = buildAffiliateApplicationInsertPayload(formValues);
   const { data, error } = await supabase.from("affiliate_applications").insert(payload).select("id").single();
+  if (error) {
+    console.error("[affiliate_applications.insert] Supabase error", {
+      error,
+      message: error?.message,
+      details: error?.details,
+      hint: error?.hint,
+      code: error?.code,
+      payloadPreview: {
+        email: payload.email,
+        full_name: payload.full_name,
+        creator_links_count: Array.isArray(payload.creator_links) ? payload.creator_links.length : 0,
+      },
+    });
+  }
   return { data, error };
 }
