@@ -107,6 +107,52 @@ function buildStripeClient() {
   return new Stripe(String(process.env.STRIPE_SECRET_KEY || "sk_test_webhook_placeholder"));
 }
 
+function getSupabaseFunctionBaseUrl() {
+  const supabaseUrl = String(process.env.SUPABASE_URL || "").trim().replace(/\/+$/g, "");
+  return supabaseUrl ? `${supabaseUrl}/functions/v1` : "";
+}
+
+async function sendSubscriptionConfirmedEmail({ to, planTier, billingCycle }) {
+  const supabaseFunctionBaseUrl = getSupabaseFunctionBaseUrl();
+  const serviceRoleKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+  if (!supabaseFunctionBaseUrl || !serviceRoleKey) {
+    const error = new Error("Missing Supabase function configuration for transactional email.");
+    error.code = "missing_email_env";
+    throw error;
+  }
+
+  const normalizedTo = String(to || "").trim().toLowerCase();
+  if (!normalizedTo) {
+    const error = new Error("Missing recipient email for subscription confirmation.");
+    error.code = "missing_email_recipient";
+    throw error;
+  }
+
+  const response = await fetch(`${supabaseFunctionBaseUrl}/send-transactional-email`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${serviceRoleKey}`,
+      apikey: serviceRoleKey,
+    },
+    body: JSON.stringify({
+      to: normalizedTo,
+      template_type: "subscription_confirmed",
+      template_data: {
+        planTier: normalizePlanTier(planTier),
+        billingCycle: normalizeBillingCycle(billingCycle),
+      },
+    }),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(String(payload?.error || "Failed to send subscription confirmation email."));
+    error.code = "subscription_email_failed";
+    throw error;
+  }
+}
+
 async function upsertProfileMembership(supabaseAdmin, userId, updates) {
   const normalizedUserId = String(userId || "").trim();
   if (!normalizedUserId) {
@@ -171,6 +217,17 @@ function deriveSubscriptionMembershipFields(subscription) {
     planTier,
     billingCycle,
     membershipStatus,
+  };
+}
+
+function deriveInvoiceEmailFields(invoice) {
+  const line = Array.isArray(invoice?.lines?.data) ? invoice.lines.data[0] : null;
+  const priceId = String(line?.price?.id || "").trim();
+  const fromPrice = resolvePlanFromPriceId(priceId);
+  return {
+    email: String(invoice?.customer_email || "").trim().toLowerCase(),
+    planTier: normalizePlanTier(fromPrice.planTier),
+    billingCycle: normalizeBillingCycle(line?.price?.recurring?.interval || fromPrice.billingCycle),
   };
 }
 
@@ -272,6 +329,23 @@ export default async function handler(req, res) {
         eventType: event.type,
         userId: membershipFields.userId,
       });
+    } else if (event.type === "invoice.paid") {
+      const invoiceFields = deriveInvoiceEmailFields(event.data.object || {});
+      if (!invoiceFields.email) {
+        logWebhook("warn", "invoice_paid_missing_email", {
+          eventType: event.type,
+          invoiceId: String(event?.data?.object?.id || "").trim(),
+        });
+      } else {
+        await sendSubscriptionConfirmedEmail(invoiceFields);
+        logWebhook("info", "invoice_paid_subscription_email_sent", {
+          eventType: event.type,
+          invoiceId: String(event?.data?.object?.id || "").trim(),
+          email: invoiceFields.email,
+          planTier: invoiceFields.planTier,
+          billingCycle: invoiceFields.billingCycle,
+        });
+      }
     } else {
       logWebhook("info", "ignored_event", {
         eventType: event.type,
