@@ -130,6 +130,7 @@ const LS_RESTORE_DRAFT_AFTER_MEMBERSHIP_KEY = "tabstudioRestoreDraftAfterMembers
 const LS_RESTORE_DRAFT_AFTER_SIGNIN_KEY = "tabstudioRestoreDraftAfterSignin";
 const LS_MEMBERSHIP_SCROLL_TO_PLANS_KEY = "tabstudioMembershipScrollToPlans";
 const SESSION_CONVERSION_SIGNUP_KEY = "tabstudioConversionSignupStateV1";
+const SESSION_APPROVED_CREATOR_SIGNUP_KEY = "tabstudioApprovedCreatorSignupStateV1";
 const SESSION_CHECKOUT_AUTOSTART_KEY = "tabstudioCheckoutAutostartV1";
 const SESSION_FORCE_PROFILE_SETUP_AFTER_PAYMENT_KEY = "tabstudioForceProfileSetupAfterPayment";
 const CONVERSION_SIGNUP_STATE_TTL_MS = 1000 * 60 * 60 * 2;
@@ -299,6 +300,50 @@ function clearConversionSignupState() {
   if (typeof window === "undefined") return;
   try {
     window.sessionStorage.removeItem(SESSION_CONVERSION_SIGNUP_KEY);
+  } catch {}
+}
+
+function normalizeApprovedCreatorSignupState(rawState) {
+  const raw = rawState && typeof rawState === "object" ? rawState : {};
+  const updatedAt = Number.isFinite(raw.updatedAt) ? Number(raw.updatedAt) : Date.now();
+  const isStale = Date.now() - updatedAt > CONVERSION_SIGNUP_STATE_TTL_MS;
+  return {
+    approvedCreatorFlow: Boolean(raw.approvedCreatorFlow) && !isStale,
+    flowEmail: String(raw.flowEmail || "").trim().toLowerCase(),
+    pendingAuthUserId: String(raw.pendingAuthUserId || "").trim(),
+    selectedBillingCycle: normalizeBillingCycle(raw.selectedBillingCycle),
+    updatedAt,
+  };
+}
+
+function loadApprovedCreatorSignupState() {
+  if (typeof window === "undefined") return normalizeApprovedCreatorSignupState(null);
+  try {
+    const parsed = JSON.parse(window.sessionStorage.getItem(SESSION_APPROVED_CREATOR_SIGNUP_KEY) || "null");
+    const normalized = normalizeApprovedCreatorSignupState(parsed);
+    if (JSON.stringify(normalized) !== JSON.stringify(parsed || {})) {
+      window.sessionStorage.setItem(SESSION_APPROVED_CREATOR_SIGNUP_KEY, JSON.stringify(normalized));
+    }
+    return normalized;
+  } catch {
+    return normalizeApprovedCreatorSignupState(null);
+  }
+}
+
+function persistApprovedCreatorSignupState(nextState) {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(
+      SESSION_APPROVED_CREATOR_SIGNUP_KEY,
+      JSON.stringify(normalizeApprovedCreatorSignupState(nextState))
+    );
+  } catch {}
+}
+
+function clearApprovedCreatorSignupState() {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(SESSION_APPROVED_CREATOR_SIGNUP_KEY);
   } catch {}
 }
 
@@ -1148,16 +1193,19 @@ export default function App() {
       password,
       selectedPlan: planId,
       selectedBillingCycle: billingCycle,
+      approvedCreatorFlow = false,
       requiresEmailConfirmation = false,
       session = null,
       pendingAuthUserId = "",
     }) => {
       const safePlan = normalizePlanId(planId);
       const safeBillingCycle = normalizeBillingCycle(billingCycle);
+      const isApprovedCreatorFlow = Boolean(approvedCreatorFlow) && safePlan === "creator";
       onboardingTrace("[ONBOARDING TRACE] continueToCheckout:start", {
         email: String(email || "").trim(),
         selectedPlan: safePlan,
         selectedBillingCycle: safeBillingCycle,
+        approvedCreatorFlow: isApprovedCreatorFlow,
         requiresEmailConfirmation,
         hasSession: Boolean(session),
       });
@@ -1166,6 +1214,52 @@ export default function App() {
         window.localStorage.setItem(LS_SELECTED_PLAN_KEY, safePlan);
         window.localStorage.setItem(LS_SELECTED_BILLING_CYCLE_KEY, safeBillingCycle);
       } catch {}
+
+      if (isApprovedCreatorFlow) {
+        const normalizedAccountEmail = String(email || "").trim().toLowerCase();
+        if (session?.user?.id) {
+          const membershipProfileRow = {
+            email: normalizedAccountEmail || null,
+            plan_tier: "creator",
+            membership_status: "active",
+            billing_cycle: safeBillingCycle,
+          };
+          const existingProfile = await getProfile(session.user.id);
+          if (existingProfile.error) {
+            throw existingProfile.error;
+          }
+          const profileWriteResult = existingProfile.data
+            ? await updateProfile(session.user.id, membershipProfileRow)
+            : await createProfile(session.user.id, membershipProfileRow);
+          if (profileWriteResult.error) {
+            throw profileWriteResult.error;
+          }
+          await hydrateSessionState(session, { persistDraftRestore: false });
+          setAuthReady(true);
+          clearApprovedCreatorSignupState();
+          clearConversionSignupState();
+          onboardingTrace("[ONBOARDING TRACE] continueApprovedCreatorSignup:navigate", {
+            finalRoutePushed: "/profile-setup",
+          });
+          navigateTo("/profile-setup");
+          return { redirected: true, requiresEmailConfirmation };
+        }
+
+        persistApprovedCreatorSignupState({
+          approvedCreatorFlow: true,
+          flowEmail: normalizedAccountEmail,
+          pendingAuthUserId: String(pendingAuthUserId || "").trim(),
+          selectedBillingCycle: safeBillingCycle,
+          updatedAt: Date.now(),
+        });
+        clearConversionSignupState();
+        onboardingTrace("[ONBOARDING TRACE] continueApprovedCreatorSignup:navigate-pending-confirmation", {
+          finalRoutePushed: "/signin",
+        });
+        navigateTo("/signin");
+        return { redirected: true, requiresEmailConfirmation };
+      }
+
       persistConversionSignupState({
         signupCompletedForFlow: true,
         flowEmail: String(email || "").trim(),
@@ -1433,7 +1527,37 @@ export default function App() {
         throw new Error("Unable to finish signing in.");
       }
 
-      const nextState = await hydrateSessionState(resolvedSession, { persistDraftRestore });
+      let nextState = await hydrateSessionState(resolvedSession, { persistDraftRestore });
+      const approvedCreatorSignupState = loadApprovedCreatorSignupState();
+      if (approvedCreatorSignupState.approvedCreatorFlow && !nextState?.hasMembership) {
+        const normalizedSessionEmail = String(resolvedSession.user?.email || "").trim().toLowerCase();
+        const pendingAuthUserId = String(approvedCreatorSignupState.pendingAuthUserId || "").trim();
+        const canApplyApprovedCreatorFlow =
+          !pendingAuthUserId ||
+          pendingAuthUserId === String(resolvedSession.user?.id || "").trim() ||
+          (approvedCreatorSignupState.flowEmail &&
+            approvedCreatorSignupState.flowEmail === normalizedSessionEmail);
+
+        if (canApplyApprovedCreatorFlow) {
+          const membershipProfileRow = {
+            email: normalizedSessionEmail || null,
+            plan_tier: "creator",
+            membership_status: "active",
+            billing_cycle: approvedCreatorSignupState.selectedBillingCycle || "monthly",
+          };
+          const existingProfile = await getProfile(resolvedSession.user.id);
+          if (!existingProfile.error) {
+            const profileWriteResult = existingProfile.data
+              ? await updateProfile(resolvedSession.user.id, membershipProfileRow)
+              : await createProfile(resolvedSession.user.id, membershipProfileRow);
+            if (!profileWriteResult.error) {
+              nextState = await hydrateSessionState(resolvedSession, { persistDraftRestore });
+              clearApprovedCreatorSignupState();
+              clearConversionSignupState();
+            }
+          }
+        }
+      }
       clearConversionSignupPassword();
       setAuthReady(true);
       return { error: null, nextState };

@@ -80,7 +80,19 @@ export default function SignupPage({ shared }) {
     return { ...base, accent: signupAccent };
   }, [isSignupDarkMode, signupAccent]);
   const activeBillingCycle = normalizeBillingCycle(selectedBillingCycle);
-  const planMeta = getPlanMeta(selectedPlan);
+  const approvedCreatorFlow = useMemo(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      const params = new URLSearchParams(window.location.search || "");
+      const planParam = String(params.get("plan") || "").trim().toLowerCase();
+      const approvedParam = String(params.get("approved") || "").trim().toLowerCase();
+      return planParam === "creator" && approvedParam === "true";
+    } catch {
+      return false;
+    }
+  }, []);
+  const effectiveSelectedPlan = approvedCreatorFlow ? "creator" : selectedPlan;
+  const planMeta = getPlanMeta(effectiveSelectedPlan);
   const selectedPlanPriceLabel = activeBillingCycle === "yearly" ? planMeta.yearly : planMeta.monthly;
   const cleanEmail = String(email || "").trim();
   const hasValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail);
@@ -283,15 +295,23 @@ export default function SignupPage({ shared }) {
       const result = await onContinue?.({
         email: cleanEmail,
         password,
-        selectedPlan,
+        selectedPlan: effectiveSelectedPlan,
         selectedBillingCycle: activeBillingCycle,
+        approvedCreatorFlow,
         requiresEmailConfirmation: !data?.session,
         session: data?.session || null,
         pendingAuthUserId: String(data?.user?.id || "").trim(),
       });
       if (!result?.redirected) setIsSubmittingSignup(false);
     } catch (error) {
-      setSubmitError(String(error?.message || "We couldn't start secure checkout. Please try again."));
+      setSubmitError(
+        String(
+          error?.message ||
+            (approvedCreatorFlow
+              ? "We couldn't complete your approved creator signup. Please try again."
+              : "We couldn't start secure checkout. Please try again.")
+        )
+      );
       setIsSubmittingSignup(false);
     }
   };
@@ -421,7 +441,7 @@ export default function SignupPage({ shared }) {
                   Step 1 of 2
                 </div>
                 <h1 style={{ margin: 0, fontSize: 39, fontWeight: 950, lineHeight: 1.04, letterSpacing: "-0.02em" }}>
-                  Create your TabStudio account
+                  {approvedCreatorFlow ? "Create your approved Creator account" : "Create your TabStudio account"}
                 </h1>
                 <div
                   style={{
@@ -432,7 +452,9 @@ export default function SignupPage({ shared }) {
                     lineHeight: 1.4,
                   }}
                 >
-                  {planMeta.label.replace(/\s+Plan$/i, "")} • {selectedPlanPriceLabel}
+                  {approvedCreatorFlow
+                    ? "Affiliate approval confirmed • Creator access included"
+                    : `${planMeta.label.replace(/\s+Plan$/i, "")} • ${selectedPlanPriceLabel}`}
                 </div>
               </div>
 
@@ -662,7 +684,11 @@ export default function SignupPage({ shared }) {
                           animation: "tabstudio-signup-spin 0.8s linear infinite",
                         }}
                       />
-                      <span>Preparing Checkout...</span>
+                      <span>{approvedCreatorFlow ? "Creating account..." : "Preparing Checkout..."}</span>
+                    </>
+                  ) : approvedCreatorFlow ? (
+                    <>
+                      <span>Create Creator Account</span>
                     </>
                   ) : (
                     "Continue to Checkout"
@@ -670,7 +696,9 @@ export default function SignupPage({ shared }) {
                 </button>
                 {submitError ? <div style={{ ...errorTextStyle, textAlign: "center" }}>{submitError}</div> : null}
                 <div style={{ textAlign: "center", fontSize: 13, color: SIGNUP_THEME.textFaint, fontWeight: 700 }}>
-                  Secure checkout powered by Stripe • Cancel anytime
+                  {approvedCreatorFlow
+                    ? "Approved creator signup • No payment required"
+                    : "Secure checkout powered by Stripe • Cancel anytime"}
                 </div>
               </form>
             </div>
