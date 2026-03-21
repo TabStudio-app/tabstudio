@@ -237,9 +237,15 @@ export default function SigninPage({ shared }) {
     const { data, error } = await signIn(cleanEmail, password);
 
     if (error) {
+      const rawErrorMessage = String(error.message || "");
+      const normalizedErrorMessage = rawErrorMessage.trim().toLowerCase();
+      const formMessage =
+        normalizedErrorMessage === "email not confirmed"
+          ? "Please verify your email address and try again."
+          : rawErrorMessage || "Unable to sign in.";
       setErrors((prev) => ({
         ...prev,
-        form: error.message || "Unable to sign in.",
+        form: formMessage,
       }));
       setIsSubmitting(false);
       return;
