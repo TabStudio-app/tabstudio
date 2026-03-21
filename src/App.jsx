@@ -323,7 +323,11 @@ function setForcedProfileSetupAfterPayment(enabled) {
 }
 
 function normalizeAppPath(rawPath) {
-  const value = String(rawPath || "/").trim() || "/";
+  let value = String(rawPath || "/").trim() || "/";
+  if (value.length > 1) {
+    value = value.replace(/\/+$/g, "");
+    if (!value) value = "/";
+  }
   if (value === "/member") return "/membership";
   return value;
 }
