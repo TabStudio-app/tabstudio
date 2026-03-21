@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { inputErrorText, inputImmersive, inputLabel } from "../../utils/uiTokens";
 import AffiliateSuccessState from "./AffiliateSuccessState";
+import { createAffiliateApplication } from "../../lib/affiliateApplications";
 
 const STEP_ONE_FIELDS = ["fullName", "email", "creatorLink", "mainPlatform", "following"];
 
@@ -83,6 +84,7 @@ export default function AffiliateApplicationForm({ theme, withAlpha, TABBY_ASSIS
   });
   const [touched, setTouched] = useState({});
   const [errors, setErrors] = useState(emptyErrors);
+  const [submitError, setSubmitError] = useState("");
 
   const errorTextStyle = inputErrorText();
   const labelStyle = (field) => ({
@@ -150,6 +152,7 @@ export default function AffiliateApplicationForm({ theme, withAlpha, TABBY_ASSIS
   const setValue = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
     setErrors((prev) => ({ ...prev, [field]: "" }));
+    setSubmitError("");
   };
   const toggleArrayValue = (field, value) => {
     setForm((prev) => {
@@ -184,6 +187,7 @@ export default function AffiliateApplicationForm({ theme, withAlpha, TABBY_ASSIS
 
   const handleContinue = (event) => {
     event.preventDefault();
+    setSubmitError("");
     const nextErrors = validateStepOne();
     setTouched((prev) => ({
       ...prev,
@@ -196,6 +200,7 @@ export default function AffiliateApplicationForm({ theme, withAlpha, TABBY_ASSIS
 
   const handleSubmit = async (event) => {
     event?.preventDefault?.();
+    setSubmitError("");
     const nextErrors = validateStepTwo();
     setTouched((prev) => ({
       ...prev,
@@ -204,9 +209,19 @@ export default function AffiliateApplicationForm({ theme, withAlpha, TABBY_ASSIS
     setErrors((prev) => ({ ...prev, ...nextErrors }));
     if (Object.keys(nextErrors).length) return;
     setSubmitting(true);
-    await new Promise((resolve) => window.setTimeout(resolve, 700));
-    setSubmitting(false);
-    setSubmitted(true);
+    try {
+      const { error } = await createAffiliateApplication(form);
+      if (error) {
+        throw error;
+      }
+      setSubmitted(true);
+    } catch (error) {
+      setSubmitError(
+        String(error?.message || "We couldn't submit your application right now. Please try again."),
+      );
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   useEffect(() => {
@@ -745,6 +760,7 @@ export default function AffiliateApplicationForm({ theme, withAlpha, TABBY_ASSIS
               {submitting ? "Submitting..." : "Submit Application"}
             </button>
           </div>
+          {submitError ? <div style={errorTextStyle}>{submitError}</div> : null}
           <div style={{ fontSize: 12, lineHeight: 1.5, fontWeight: 600, color: withAlpha(theme.text, 0.5) }}>
             Applications are reviewed manually. We&apos;ll email you after review.
           </div>
