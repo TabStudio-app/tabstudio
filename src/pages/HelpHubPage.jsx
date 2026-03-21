@@ -518,27 +518,76 @@ export default function HelpHubPage({ shared }) {
   const supportEmailLooksValid = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
   const supportMessageLooksReady = (value) => String(value || "").trim().length >= 12;
   const supportSendReady = supportEmailLooksValid(supportSenderEmail) && supportMessageLooksReady(supportMessage);
+  const SUPPORT_MAX_ATTACHMENTS = 5;
+  const SUPPORT_MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024; // 4MB per image
+  const SUPPORT_MAX_TOTAL_ATTACHMENT_BYTES = 12 * 1024 * 1024; // 12MB total
+  const formatBytes = (bytes) => {
+    const value = Number(bytes);
+    if (!Number.isFinite(value) || value <= 0) return "0 B";
+    if (value < 1024) return `${Math.round(value)} B`;
+    if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  };
+  const supportAttachedTotalBytes = supportAttachedImages.reduce((sum, file) => sum + Number(file?.size || 0), 0);
   const isAllowedSupportImageFile = (file) => {
     const mime = String(file?.type || "").toLowerCase();
     if (["image/png", "image/jpeg", "image/jpg", "image/webp"].includes(mime)) return true;
     const name = String(file?.name || "").toLowerCase();
     return [".png", ".jpg", ".jpeg", ".webp"].some((ext) => name.endsWith(ext));
   };
+  const readSupportFileAsBase64 = (file) =>
+    new Promise((resolve, reject) => {
+      try {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = String(reader.result || "");
+          const marker = "base64,";
+          const markerIndex = result.indexOf(marker);
+          if (markerIndex < 0) {
+            reject(new Error("Invalid attachment encoding."));
+            return;
+          }
+          resolve(result.slice(markerIndex + marker.length));
+        };
+        reader.onerror = () => reject(new Error("Failed to read attachment."));
+        reader.readAsDataURL(file);
+      } catch (error) {
+        reject(error);
+      }
+    });
   const addSupportImages = (incomingFiles) => {
     const files = Array.from(incomingFiles || []);
     if (!files.length) return;
-    const validFiles = files.filter((file) => isAllowedSupportImageFile(file));
-    const remaining = Math.max(0, 5 - supportAttachedImages.length);
-    const filesToAdd = validFiles.slice(0, remaining);
-    const ignoredByType = files.length - validFiles.length;
-    const ignoredByLimit = validFiles.length - filesToAdd.length;
-    if (filesToAdd.length) {
-      setSupportAttachedImages((prev) => [...prev, ...filesToAdd].slice(0, 5));
+    const validTypeFiles = files.filter((file) => isAllowedSupportImageFile(file));
+    const oversizedFiles = validTypeFiles.filter((file) => Number(file?.size || 0) > SUPPORT_MAX_ATTACHMENT_BYTES);
+    const validSizeFiles = validTypeFiles.filter((file) => Number(file?.size || 0) <= SUPPORT_MAX_ATTACHMENT_BYTES);
+    const remaining = Math.max(0, SUPPORT_MAX_ATTACHMENTS - supportAttachedImages.length);
+    const limitedFiles = validSizeFiles.slice(0, remaining);
+    const currentTotal = supportAttachedImages.reduce((sum, file) => sum + Number(file?.size || 0), 0);
+    const acceptedFiles = [];
+    let runningTotal = currentTotal;
+    for (const file of limitedFiles) {
+      const nextSize = Number(file?.size || 0);
+      if (runningTotal + nextSize > SUPPORT_MAX_TOTAL_ATTACHMENT_BYTES) break;
+      acceptedFiles.push(file);
+      runningTotal += nextSize;
     }
+
+    if (acceptedFiles.length) {
+      setSupportAttachedImages((prev) => [...prev, ...acceptedFiles].slice(0, SUPPORT_MAX_ATTACHMENTS));
+    }
+
+    const ignoredByType = files.length - validTypeFiles.length;
+    const ignoredByCount = validSizeFiles.length - limitedFiles.length;
+    const ignoredByTotal = limitedFiles.length - acceptedFiles.length;
     if (ignoredByType > 0) {
       setSupportAttachmentError("Only PNG, JPG, JPEG, and WEBP files are supported.");
-    } else if (ignoredByLimit > 0 || files.length > remaining) {
+    } else if (oversizedFiles.length > 0) {
+      setSupportAttachmentError("Each screenshot must be 4MB or smaller.");
+    } else if (ignoredByCount > 0 || files.length > remaining) {
       setSupportAttachmentError("You can attach up to 5 images.");
+    } else if (ignoredByTotal > 0) {
+      setSupportAttachmentError("Total attachment size must be 12MB or less.");
     } else {
       setSupportAttachmentError("");
     }
@@ -606,6 +655,12 @@ export default function HelpHubPage({ shared }) {
     if (nextSubject.length > 120) nextErrors.subject = "Subject must be 120 characters or less.";
     if (!nextMessage) nextErrors.message = "Please add a message.";
     if (nextMessage.length > 800) nextErrors.message = "Message must be 800 characters or less.";
+    if (supportAttachedImages.some((file) => Number(file?.size || 0) > SUPPORT_MAX_ATTACHMENT_BYTES)) {
+      nextErrors.form = "One or more screenshots are too large. Max 4MB per image.";
+    }
+    if (supportAttachedTotalBytes > SUPPORT_MAX_TOTAL_ATTACHMENT_BYTES) {
+      nextErrors.form = "Total screenshot size is too large. Max 12MB.";
+    }
     setSupportFormErrors(nextErrors);
     if (Object.keys(nextErrors).length) return;
     setSupportSending(true);
@@ -617,10 +672,22 @@ export default function HelpHubPage({ shared }) {
       }
 
       const functionUrl = `${supabaseUrl}/functions/v1/send-transactional-email`;
+      const supportEmailAttachments = await Promise.all(
+        supportAttachedImages.map(async (file, idx) => {
+          const base64Content = await readSupportFileAsBase64(file);
+          return {
+            filename: String(file?.name || `screenshot-${idx + 1}.png`).trim() || `screenshot-${idx + 1}.png`,
+            content_type: String(file?.type || "").trim() || "application/octet-stream",
+            content_base64: base64Content,
+            size_bytes: Number(file?.size || 0),
+          };
+        })
+      );
       const supportEmailPayload = {
         to: "support@tabstudio.app",
         subject: `Support Request: ${nextSubject}`,
         from: "TabStudio <support@tabstudio.app>",
+        attachments: supportEmailAttachments,
         html: `
           <p><strong>Sender:</strong> ${nextEmail}</p>
           <p><strong>Subject:</strong> ${nextSubject}</p>
@@ -1419,9 +1486,11 @@ export default function HelpHubPage({ shared }) {
                             lineHeight: 1.3,
                           }}
                         >
-                          <span style={{ color: HELP_THEME.textMuted }}>Add up to 5 screenshots if helpful.</span>
+                          <span style={{ color: HELP_THEME.textMuted }}>
+                            Add up to 5 screenshots (max 4MB each, 12MB total).
+                          </span>
                           <span style={{ color: supportAttachmentError ? "#FF6E7A" : HELP_THEME.textMuted, fontWeight: supportAttachmentError ? 700 : 500 }}>
-                            {supportAttachmentError || `${supportAttachedImages.length} / 5`}
+                            {supportAttachmentError || `${supportAttachedImages.length} / 5 · ${formatBytes(supportAttachedTotalBytes)}`}
                           </span>
                         </div>
                         {supportAttachedImages.length > 0 ? (

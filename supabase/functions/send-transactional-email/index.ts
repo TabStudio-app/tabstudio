@@ -23,6 +23,77 @@ function getRequiredEnv(name: string): string {
   return value
 }
 
+const MAX_ATTACHMENTS = 5
+const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024
+const MAX_TOTAL_ATTACHMENT_BYTES = 12 * 1024 * 1024
+
+type IncomingAttachment = {
+  filename?: unknown
+  content_type?: unknown
+  content_base64?: unknown
+  size_bytes?: unknown
+}
+
+function normalizeAttachments(rawAttachments: unknown) {
+  if (rawAttachments === undefined || rawAttachments === null) return []
+  if (!Array.isArray(rawAttachments)) {
+    throw new Error("Invalid 'attachments' field: expected an array")
+  }
+  if (rawAttachments.length > MAX_ATTACHMENTS) {
+    throw new Error(`Too many attachments: max ${MAX_ATTACHMENTS}`)
+  }
+
+  let totalBytes = 0
+  const attachments = rawAttachments.map((rawAttachment, idx) => {
+    const attachment = (rawAttachment ?? {}) as IncomingAttachment
+    const filename =
+      typeof attachment.filename === "string" && attachment.filename.trim()
+        ? attachment.filename.trim()
+        : `attachment-${idx + 1}`
+    const contentType =
+      typeof attachment.content_type === "string" && attachment.content_type.trim()
+        ? attachment.content_type.trim()
+        : "application/octet-stream"
+    const contentBase64 =
+      typeof attachment.content_base64 === "string" && attachment.content_base64.trim()
+        ? attachment.content_base64.trim()
+        : ""
+
+    if (!contentBase64) {
+      throw new Error(`Attachment ${idx + 1} is missing content_base64`)
+    }
+
+    if (!/^[A-Za-z0-9+/=\r\n]+$/.test(contentBase64)) {
+      throw new Error(`Attachment ${idx + 1} has invalid base64 content`)
+    }
+
+    const inferredBytes = Math.floor((contentBase64.replace(/\s+/g, "").length * 3) / 4)
+    const reportedBytes =
+      Number.isFinite(Number(attachment.size_bytes)) && Number(attachment.size_bytes) > 0
+        ? Number(attachment.size_bytes)
+        : inferredBytes
+    const resolvedBytes = Math.max(inferredBytes, reportedBytes)
+
+    if (resolvedBytes > MAX_ATTACHMENT_BYTES) {
+      throw new Error(`Attachment ${idx + 1} exceeds ${MAX_ATTACHMENT_BYTES} bytes`)
+    }
+
+    totalBytes += resolvedBytes
+    if (totalBytes > MAX_TOTAL_ATTACHMENT_BYTES) {
+      throw new Error(`Attachments exceed total ${MAX_TOTAL_ATTACHMENT_BYTES} bytes`)
+    }
+
+    return {
+      filename,
+      content: contentBase64,
+      encoding: "base64" as const,
+      contentType,
+    }
+  })
+
+  return attachments
+}
+
 Deno.serve(async (req) => {
   try {
     if (req.method === "OPTIONS") {
@@ -40,11 +111,12 @@ Deno.serve(async (req) => {
       return jsonResponse(400, { success: false, error: "Invalid JSON body" })
     }
 
-    const { to, subject, html, from } = body as {
+    const { to, subject, html, from, attachments } = body as {
       to?: unknown
       subject?: unknown
       html?: unknown
       from?: unknown
+      attachments?: unknown
       template_type?: unknown
       template_data?: unknown
     }
@@ -145,11 +217,14 @@ Deno.serve(async (req) => {
         ? from.trim()
         : `${fromName} <${fromAddress}>`
 
+    const normalizedAttachments = normalizeAttachments(attachments)
+
     const info = await transporter.sendMail({
       from: resolvedFrom,
       to: to.trim(),
       subject: resolvedSubject,
       html: resolvedHtml,
+      attachments: normalizedAttachments,
     })
 
     return jsonResponse(200, {
@@ -173,6 +248,20 @@ Deno.serve(async (req) => {
 
     if (error instanceof Error && error.message.startsWith("Invalid ZOHO_SMTP_PORT")) {
       return jsonResponse(500, {
+        success: false,
+        error: error.message,
+      })
+    }
+
+    if (
+      error instanceof Error &&
+      (
+        error.message.startsWith("Invalid 'attachments' field") ||
+        error.message.startsWith("Too many attachments") ||
+        error.message.includes("Attachment")
+      )
+    ) {
+      return jsonResponse(400, {
         success: false,
         error: error.message,
       })
