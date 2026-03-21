@@ -41,7 +41,7 @@ export function buildAffiliateApplicationInsertPayload(formValues = {}) {
 
 export async function createAffiliateApplication(formValues = {}) {
   const payload = buildAffiliateApplicationInsertPayload(formValues);
-  const { data, error } = await supabase.from("affiliate_applications").insert(payload).select("id").single();
+  const { data, error } = await supabase.from("affiliate_applications").insert(payload);
   if (error) {
     console.error("[affiliate_applications.insert] Supabase error", {
       error,
