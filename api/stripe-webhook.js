@@ -141,6 +141,16 @@ async function upsertProfileMembership(supabaseAdmin, userId, updates) {
   if (result.error) throw result.error;
 }
 
+function isProfilesForeignKeyError(error) {
+  const message = String(error?.message || "").toLowerCase();
+  const details = String(error?.details || "").toLowerCase();
+  const code = String(error?.code || "").trim();
+  return (
+    code === "23503" &&
+    (message.includes("profiles_id_fkey") || details.includes("profiles_id_fkey") || message.includes("foreign key constraint"))
+  );
+}
+
 function getSubscriptionPriceId(subscription) {
   return subscription?.items?.data?.[0]?.price?.id || "";
 }
@@ -271,12 +281,22 @@ export default async function handler(req, res) {
     return sendJson(res, 200, { received: true });
   } catch (error) {
     const isMetadataIssue = error?.code === "missing_user_metadata" || error?.code === "invalid_user_metadata";
+    const isCheckoutAuthRace =
+      event?.type === "checkout.session.completed" && isProfilesForeignKeyError(error);
     const branch = isMetadataIssue ? String(error.code) : "profile_update_failure";
 
     if (isMetadataIssue) {
       logWebhook("warn", branch, {
         eventType: event.type,
         message: String(error?.message || "Membership metadata issue."),
+      });
+      return sendJson(res, 200, { received: true, ignored: true });
+    }
+
+    if (isCheckoutAuthRace) {
+      logWebhook("warn", "checkout_profile_fk_blocked", {
+        eventType: event.type,
+        message: String(error?.message || "Checkout profile update blocked by FK."),
       });
       return sendJson(res, 200, { received: true, ignored: true });
     }
