@@ -225,10 +225,33 @@ function deriveInvoiceEmailFields(invoice) {
   const priceId = String(line?.price?.id || "").trim();
   const fromPrice = resolvePlanFromPriceId(priceId);
   return {
-    email: String(invoice?.customer_email || "").trim().toLowerCase(),
+    email: String(invoice?.customer_email || invoice?.customer_details?.email || "").trim().toLowerCase(),
     planTier: normalizePlanTier(fromPrice.planTier),
     billingCycle: normalizeBillingCycle(line?.price?.recurring?.interval || fromPrice.billingCycle),
   };
+}
+
+async function resolveInvoiceRecipientEmail(stripe, invoice) {
+  const directEmail = String(invoice?.customer_email || invoice?.customer_details?.email || "").trim().toLowerCase();
+  if (directEmail) return directEmail;
+
+  const customerId = String(invoice?.customer || "").trim();
+  if (!customerId) return "";
+
+  try {
+    const customer = await stripe.customers.retrieve(customerId);
+    if (customer && !("deleted" in customer && customer.deleted)) {
+      return String(customer?.email || "").trim().toLowerCase();
+    }
+  } catch (error) {
+    logWebhook("warn", "invoice_customer_lookup_failed", {
+      eventType: "invoice.paid",
+      customerId,
+      message: String(error?.message || "Unable to look up Stripe customer email."),
+    });
+  }
+
+  return "";
 }
 
 function deriveCheckoutSessionMembershipFields(session) {
@@ -330,22 +353,26 @@ export default async function handler(req, res) {
         userId: membershipFields.userId,
       });
     } else if (event.type === "invoice.paid") {
-      const invoiceFields = deriveInvoiceEmailFields(event.data.object || {});
+      const invoice = event.data.object || {};
+      const invoiceFields = deriveInvoiceEmailFields(invoice);
+      if (!invoiceFields.email) {
+        invoiceFields.email = await resolveInvoiceRecipientEmail(stripe, invoice);
+      }
       if (!invoiceFields.email) {
         logWebhook("warn", "invoice_paid_missing_email", {
           eventType: event.type,
           invoiceId: String(event?.data?.object?.id || "").trim(),
         });
-      } else {
-        await sendSubscriptionConfirmedEmail(invoiceFields);
-        logWebhook("info", "invoice_paid_subscription_email_sent", {
-          eventType: event.type,
-          invoiceId: String(event?.data?.object?.id || "").trim(),
-          email: invoiceFields.email,
-          planTier: invoiceFields.planTier,
-          billingCycle: invoiceFields.billingCycle,
-        });
+        return sendJson(res, 200, { received: true, ignored: true });
       }
+      await sendSubscriptionConfirmedEmail(invoiceFields);
+      logWebhook("info", "invoice_paid_subscription_email_sent", {
+        eventType: event.type,
+        invoiceId: String(event?.data?.object?.id || "").trim(),
+        email: invoiceFields.email,
+        planTier: invoiceFields.planTier,
+        billingCycle: invoiceFields.billingCycle,
+      });
     } else {
       logWebhook("info", "ignored_event", {
         eventType: event.type,
