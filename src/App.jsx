@@ -1250,13 +1250,18 @@ export default function App() {
     setPendingEditorPanel("");
   }, []);
   const selectedPlan = useMemo(() => {
-    if (isPaidPlanTier(userState?.planTier)) return normalizePlanId(userState?.planTier);
-    if (typeof window === "undefined") return "solo";
+    const fallbackPlan = isPaidPlanTier(userState?.planTier) ? normalizePlanId(userState?.planTier) : "solo";
+    if (typeof window === "undefined") return fallbackPlan;
     try {
       const raw = String(window.localStorage.getItem(LS_SELECTED_PLAN_KEY) || "").toLowerCase();
-      return normalizePlanId(raw);
+      const storedPlan = normalizePlanId(raw);
+      const hasStoredPlan = Boolean(String(raw || "").trim());
+      if (hasStoredPlan && (path === "/membership" || path === "/checkout" || path === "/signup")) {
+        return storedPlan;
+      }
+      return fallbackPlan;
     } catch {
-      return "solo";
+      return fallbackPlan;
     }
   }, [path, userState]);
   const selectedBillingCycle = useMemo(() => {
