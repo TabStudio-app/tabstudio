@@ -1,7 +1,6 @@
 import React from "react";
 import {
   AccountCard,
-  AccountEmptyState,
   AccountMetricCard,
   AccountMetricGrid,
   AccountStatusPill,
@@ -16,7 +15,11 @@ export default function AccountOverviewSection({ shared, data }) {
         shared={shared}
         title="Membership"
         subtitle="Your active plan, renewal schedule, and billing cadence at a glance."
-        aside={<AccountStatusPill shared={shared} tone="accent">Active</AccountStatusPill>}
+        aside={
+          <AccountStatusPill shared={shared} tone={data.identity.isMember ? "accent" : "muted"}>
+            {data.identity.isMember ? "Active" : "Free"}
+          </AccountStatusPill>
+        }
       >
         <AccountValueGrid
           items={[
@@ -33,12 +36,6 @@ export default function AccountOverviewSection({ shared, data }) {
           <AccountMetricCard key={item.id} shared={shared} label={item.label} value={item.value} />
         ))}
       </AccountMetricGrid>
-
-      <AccountCard shared={shared} title="What’s next" subtitle="A compact account summary area for invoices, devices, and usage trends will live here as those systems go live.">
-        <AccountEmptyState shared={shared} title="Connected account activity">
-          {data.usage.summaryNote}
-        </AccountEmptyState>
-      </AccountCard>
     </div>
   );
 }

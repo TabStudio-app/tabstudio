@@ -1,14 +1,13 @@
 import { useCallback, useMemo, useState } from "react";
 import { ACCOUNT_LANGUAGE_OPTIONS, ACCOUNT_MOCK_DATA } from "./accountMockData";
 import { createBillingPortalSession } from "../../utils/billingPortal";
-import { requestEmailChange, signIn } from "../../lib/auth";
+import { requestEmailChange, signIn, signOut, updatePassword } from "../../lib/auth";
 import {
   accountActionLabel,
   affiliateStatusMeta,
   formatCurrency,
   formatDate,
   formatMonthYear,
-  formatStorageMb,
   invoiceStatusMeta,
   planDisplayName,
   sessionDeviceLabel,
@@ -22,8 +21,7 @@ const DEFAULT_ACTION_STATE = {
   updatePassword: "idle",
   enable2fa: "idle",
   signOutSessions: "idle",
-  updatePlan: "idle",
-  comparePlans: "idle",
+  selectPlan: "idle",
   cancelSubscription: "idle",
   updatePaymentMethod: "idle",
   saveBilling: "idle",
@@ -41,7 +39,6 @@ export function useAccountViewModel(shared) {
     accountMemberSince,
     accountPlanId,
     accountRenewalDate,
-    accountStorageUsedMb,
     accountTabsCreated,
     accountTier,
     billingEmail,
@@ -56,11 +53,9 @@ export function useAccountViewModel(shared) {
     securityEmail,
     securityTwoFactorEnabled,
     settingsLanguagePreview,
-    onOpenMembershipPlans,
+    onSelectPlan,
     setSettingsLanguagePreview,
-    subscriptionAutoRenew,
     setSecurityTwoFactorEnabled,
-    setSubscriptionAutoRenew,
     onSaveAccountProfile,
   } = shared;
 
@@ -102,15 +97,14 @@ export function useAccountViewModel(shared) {
     () => [
       { id: "tabs", label: "Tabs created", value: String(Number(accountTabsCreated) || 0) },
       { id: "exports", label: "Exports (30 days)", value: String(Number(accountExports30d) || 0) },
-      { id: "storage", label: "Storage used", value: formatStorageMb(Number(accountStorageUsedMb) || 0) },
-      { id: "active", label: "Last active", value: accountLastActiveLabel || "—" },
+      { id: "active", label: "Last active", value: accountLastActiveLabel || "-" },
     ],
-    [accountExports30d, accountLastActiveLabel, accountStorageUsedMb, accountTabsCreated]
+    [accountExports30d, accountLastActiveLabel, accountTabsCreated]
   );
 
   const invoiceRows = useMemo(
     () =>
-      (Array.isArray(recentInvoices) && recentInvoices.length > 0 ? recentInvoices : ACCOUNT_MOCK_DATA.billing.invoices).map((invoice) => {
+      (Array.isArray(recentInvoices) ? recentInvoices : []).map((invoice) => {
         const status = invoice.status?.toLowerCase?.() || invoice.status;
         const meta = invoiceStatusMeta(status);
         return {
@@ -121,6 +115,8 @@ export function useAccountViewModel(shared) {
               ? invoice.amount
               : formatCurrency(invoice.amountCents, invoice.currency || "USD"),
           status: meta,
+          hostedInvoiceUrl: String(invoice.hostedInvoiceUrl || "").trim(),
+          invoicePdf: String(invoice.invoicePdf || "").trim(),
         };
       }),
     [recentInvoices]
@@ -169,6 +165,9 @@ export function useAccountViewModel(shared) {
   const availableLanguages = languages.filter((lang) => lang.available);
   const upcomingLanguages = languages.filter((lang) => !lang.available);
 
+  const normalizedBillingCycle = String(accountBillingCycle || "").trim().toLowerCase();
+  const billingCycleRaw = normalizedBillingCycle === "yearly" ? "yearly" : "monthly";
+
   const data = useMemo(
     () => ({
       identity: {
@@ -188,14 +187,13 @@ export function useAccountViewModel(shared) {
       },
       membership: {
         planLabel: accountTier || planDisplayName(accountPlanId),
-        memberSinceLabel: accountMemberSince ? formatDate(accountMemberSince) : formatDate(ACCOUNT_MOCK_DATA.membership.memberSince),
-        renewalDateLabel: accountRenewalDate ? formatDate(accountRenewalDate) : formatDate(ACCOUNT_MOCK_DATA.membership.renewalDate),
-        billingCycleLabel: accountBillingCycle || ACCOUNT_MOCK_DATA.membership.billingCycle,
-        autoRenew: subscriptionAutoRenew,
+        memberSinceLabel: accountMemberSince ? formatDate(accountMemberSince) : "-",
+        renewalDateLabel: accountRenewalDate ? formatDate(accountRenewalDate) : "-",
+        billingCycleLabel: accountBillingCycle || "-",
+        billingCycleRaw,
       },
       usage: {
         stats: usageStats,
-        summaryNote: ACCOUNT_MOCK_DATA.usage.summaryNote,
       },
       security: {
         email: securityEmail,
@@ -213,24 +211,25 @@ export function useAccountViewModel(shared) {
         available: availableLanguages,
         upcoming: upcomingLanguages,
       },
-      featureFlags: ACCOUNT_MOCK_DATA.featureFlags,
+      featureFlags: {
+        invoicesLive: invoiceRows.length > 0,
+        devicesLive: sessionRows.length > 0,
+        affiliateLive: true,
+      },
     }),
     [
       accountAvatarDataUrl,
       accountBillingCycle,
       accountEmail,
-      accountExports30d,
       accountFullName,
-      accountLastActiveLabel,
       accountMemberSince,
       accountPlanId,
       accountRenewalDate,
-      accountStorageUsedMb,
-      accountTabsCreated,
       accountTier,
       activeLanguage,
       affiliate,
       availableLanguages,
+      billingCycleRaw,
       billingEmail,
       defaultPaymentMethod,
       editorHasMembership,
@@ -243,7 +242,6 @@ export function useAccountViewModel(shared) {
       securityEmail,
       securityTwoFactorEnabled,
       sessionRows,
-      subscriptionAutoRenew,
       upcomingLanguages,
       usageStats,
     ]
@@ -301,17 +299,25 @@ export function useAccountViewModel(shared) {
         run: () =>
           runAction(
             "updatePassword",
-            () => {
-              if (!passwordDraft.current) {
-                throw new Error("Missing current password");
-              }
-              if (!passwordDraft.next || passwordDraft.next !== passwordDraft.confirm) {
-                throw new Error("Password mismatch");
-              }
+            async () => {
+              const currentPassword = String(passwordDraft.current || "").trim();
+              const nextPassword = String(passwordDraft.next || "").trim();
+              const confirmPassword = String(passwordDraft.confirm || "").trim();
+
+              if (!currentPassword) throw new Error("Missing current password");
+              if (!nextPassword || nextPassword !== confirmPassword) throw new Error("Password mismatch");
+              if (nextPassword.length < 8) throw new Error("Weak password");
+
+              const passwordCheck = await signIn(String(accountEmail || securityEmail || "").trim(), currentPassword);
+              if (passwordCheck.error) throw passwordCheck.error;
+
+              const passwordUpdate = await updatePassword(nextPassword);
+              if (passwordUpdate.error) throw passwordUpdate.error;
+
               setPasswordDraft({ current: "", next: "", confirm: "" });
               setPasswordChangeOpen(false);
             },
-            { success: "Password updated", error: "Enter your current password and make sure the new passwords match" }
+            { success: "Password updated", error: "Use your current password and a valid new password" }
           ),
       },
       saveSecurity: {
@@ -333,22 +339,28 @@ export function useAccountViewModel(shared) {
         state: actionState.signOutSessions,
         label: accountActionLabel(actionState.signOutSessions, "Sign out other sessions", "Signed out", "Signing out..."),
         message: actionMessage.signOutSessions,
-        run: () => runAction("signOutSessions", () => console.info("signOutSessions"), { success: "Other sessions signed out" }),
+        run: () =>
+          runAction(
+            "signOutSessions",
+            async () => {
+              const result = await signOut({ scope: "others" });
+              if (result.error) throw result.error;
+            },
+            { success: "Other sessions signed out" }
+          ),
       },
-      updatePlan: {
-        state: actionState.updatePlan,
-        label: accountActionLabel(actionState.updatePlan, "Update Plan", "Updated", "Updating..."),
-        message: actionMessage.updatePlan,
-        run: () => runAction("updatePlan", () => console.info("updatePlan"), { success: "Plan updated" }),
-      },
-      comparePlans: {
-        state: actionState.comparePlans,
-        label: "Compare Plans",
-        message: "",
-        run: () => {
-          setActionState((prev) => ({ ...prev, comparePlans: "saving" }));
-          onOpenMembershipPlans?.();
-        },
+      selectPlan: {
+        state: actionState.selectPlan,
+        label: accountActionLabel(actionState.selectPlan, "Select", "Opening", "Opening..."),
+        message: actionMessage.selectPlan,
+        run: (planId, billingCycle) =>
+          runAction(
+            "selectPlan",
+            async () => {
+              onSelectPlan?.(planId, billingCycle);
+            },
+            { success: "Opening checkout", error: "Unable to open checkout" }
+          ),
       },
       cancelSubscription: {
         state: actionState.cancelSubscription,
@@ -358,7 +370,7 @@ export function useAccountViewModel(shared) {
       },
       updatePaymentMethod: {
         state: actionState.updatePaymentMethod,
-        label: actionState.updatePaymentMethod === "saving" ? "Opening Portal..." : "Update Payment Method",
+        label: actionState.updatePaymentMethod === "saving" ? "Opening Portal..." : "Open Billing Portal",
         message: actionMessage.updatePaymentMethod,
         run: async () => {
           const userEmail = String(accountEmail || billingEmail || data.identity.email || "").trim();
@@ -435,10 +447,11 @@ export function useAccountViewModel(shared) {
       data.security.twoFactorEnabled,
       emailDraft,
       onSaveAccountProfile,
-      onOpenMembershipPlans,
+      onSelectPlan,
       passwordDraft,
       runAction,
       setSecurityTwoFactorEnabled,
+      securityEmail,
     ]
   );
 

@@ -2,14 +2,12 @@ import React from "react";
 import {
   AccountActionMessage,
   AccountCard,
-  AccountEmptyState,
   AccountLabel,
   AccountReadOnlyField,
-  AccountStatusPill,
 } from "./AccountSectionPrimitives";
 
 export default function AccountSecuritySection({ shared, data, actions, fieldDrafts }) {
-  const { field, btnSmallPill, btnSmallPillDanger, THEME } = shared;
+  const { field, btnSmallPill, THEME } = shared;
   const {
     emailDraft,
     setEmailDraft,
@@ -161,63 +159,6 @@ export default function AccountSecuritySection({ shared, data, actions, fieldDra
             </div>
           ) : null}
         </div>
-      </AccountCard>
-
-      <AccountCard
-        shared={shared}
-        title="Recent sessions"
-        subtitle="Review where your account is active and sign out any devices you no longer trust."
-        aside={<AccountStatusPill shared={shared} tone="info">{`${data.security.sessions.length} active`}</AccountStatusPill>}
-      >
-        {data.security.sessions.length > 0 ? (
-          <>
-            <div style={{ display: "grid", gap: 8 }}>
-              {data.security.sessions.map((session, index) => (
-                <div
-                  key={session.id}
-                  style={{
-                    borderRadius: 12,
-                    border: `1px solid ${THEME.border}`,
-                    padding: "12px 14px",
-                    display: "grid",
-                    gridTemplateColumns: "minmax(0, 1fr) auto",
-                    gap: 10,
-                    alignItems: "center",
-                    background: THEME.surface,
-                  }}
-                >
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontWeight: 900, fontSize: 14, color: THEME.text }}>{session.title}</div>
-                    <div style={{ marginTop: 4, fontSize: 12, color: THEME.textFaint, display: "flex", gap: 10, flexWrap: "wrap" }}>
-                      <span>{session.location}</span>
-                      <span>{session.lastSeen}</span>
-                    </div>
-                  </div>
-                  {index === 0 ? <AccountStatusPill shared={shared} tone="accent">Current session</AccountStatusPill> : null}
-                </div>
-              ))}
-            </div>
-
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "end", gap: 12, flexWrap: "wrap" }}>
-              <div style={{ fontSize: 12, color: THEME.textFaint, lineHeight: 1.45 }}>You’ll stay signed in on this device.</div>
-              <div style={{ display: "grid", gap: 6 }}>
-                <button
-                  type="button"
-                  onClick={actions.signOutSessions.run}
-                  disabled={actions.signOutSessions.state === "saving"}
-                  style={{ ...btnSmallPillDanger, opacity: actions.signOutSessions.state === "saving" ? 0.65 : 1 }}
-                >
-                  {actions.signOutSessions.label}
-                </button>
-                <AccountActionMessage shared={shared} state={actions.signOutSessions.state} message={actions.signOutSessions.message} align="right" />
-              </div>
-            </div>
-          </>
-        ) : (
-          <AccountEmptyState shared={shared} title="No recent sessions to show">
-            Recent device activity will appear here once real account session data is available for your account.
-          </AccountEmptyState>
-        )}
       </AccountCard>
     </div>
   );

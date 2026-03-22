@@ -25,8 +25,8 @@ export async function getAccountUsageSummary(userId) {
   }
 
   const [projectsCountRes, projectsRowsRes, exportEventsRes] = await Promise.all([
-    supabase.from("projects").select("id", { count: "exact", head: true }),
-    supabase.from("projects").select("project_data, updated_at").order("updated_at", { ascending: false }).limit(5000),
+    supabase.from("projects").select("id", { count: "exact", head: true }).eq("user_id", normalizedUserId),
+    supabase.from("projects").select("project_data, updated_at").eq("user_id", normalizedUserId).order("updated_at", { ascending: false }).limit(5000),
     supabase
       .from("export_events")
       .select("id", { count: "exact", head: true })

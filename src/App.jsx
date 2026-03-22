@@ -43,7 +43,6 @@ import EditorToolbar from "./components/EditorToolbar";
 import SettingsPanel from "./components/SettingsPanel";
 import TabGrid from "./components/TabGrid";
 import TabbyAssistant, { TabbySpeechBubble } from "./components/TabbyAssistant";
-import { ACCOUNT_MOCK_DATA } from "./components/account/accountMockData";
 import {
   brandLogoButtonClass,
   supportFormFieldClass,
@@ -5111,10 +5110,15 @@ function EditorApp({
   const accountTier =
     accountPlanId === "creator" ? "Creator Plan" : accountPlanId === "band" ? "Band Plan" : accountPlanId === "solo" ? "Solo Plan" : "Free Plan";
   const accountEmail = isLoggedIn ? String(userState?.email || "").trim() : "";
+  const accountCreatedAt = String(supabaseUser?.created_at || userState?.createdAt || "").trim();
+  const accountLastSignInAt = String(supabaseUser?.last_sign_in_at || "").trim();
   const fallbackBillingCycle = normalizeBillingCycle(userState?.billingCycle);
-  const accountMemberSince = accountSubscriptionSummary.loaded ? accountSubscriptionSummary.memberSinceDate || "" : "";
-  const accountRenewalDate = accountSubscriptionSummary.loaded ? accountSubscriptionSummary.renewalDate || "" : "";
-  const accountBillingCycle = accountSubscriptionSummary.loaded
+  const hasStripePaidSubscription = accountSubscriptionSummary.loaded && accountSubscriptionSummary.planId && accountSubscriptionSummary.planId !== "free";
+  const accountMemberSince = hasStripePaidSubscription
+    ? String(accountSubscriptionSummary.memberSinceDate || "").trim() || accountCreatedAt
+    : accountCreatedAt;
+  const accountRenewalDate = hasStripePaidSubscription ? String(accountSubscriptionSummary.renewalDate || "").trim() : "";
+  const accountBillingCycle = hasStripePaidSubscription
     ? accountSubscriptionSummary.billingCycleLabel || ""
     : editorHasMembership
     ? fallbackBillingCycle === "yearly"
@@ -5129,26 +5133,28 @@ function EditorApp({
   });
   const accountTabsCreated = Number(accountUsageSummary?.tabsCreated || 0);
   const accountExports30d = Number(accountUsageSummary?.exports30d || 0);
-  const accountStorageUsedMb = Number(accountUsageSummary?.storageUsedMb || 0);
   const accountLastActiveLabel = (() => {
-    const raw = String(accountUsageSummary?.lastActiveLabel || "").trim();
-    if (!raw || raw === "—") return "—";
-    const parsed = new Date(raw);
-    if (Number.isNaN(parsed.getTime())) return "—";
-    return parsed.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+    const signInIso = String(accountLastSignInAt || "").trim();
+    const signInMs = signInIso ? new Date(signInIso).getTime() : Number.NaN;
+    if (!Number.isFinite(signInMs) || signInMs <= 0) return "—";
+    return new Date(signInMs).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
   })();
   const [profileDisplayName, setProfileDisplayName] = useState(() => String(userState?.profile?.displayName || "").trim());
-  const [profileHandle, setProfileHandle] = useState(ACCOUNT_MOCK_DATA.profile.handle);
-  const [profileBio, setProfileBio] = useState(ACCOUNT_MOCK_DATA.profile.bio);
-  const [profileWebsite, setProfileWebsite] = useState(ACCOUNT_MOCK_DATA.profile.website);
+  const [profileHandle, setProfileHandle] = useState("");
+  const [profileBio, setProfileBio] = useState("");
+  const [profileWebsite, setProfileWebsite] = useState("");
   const [accountAvatarDataUrl, setAccountAvatarDataUrl] = useState(() => String(userState?.profile?.avatarDataUrl || ""));
   const [securityEmail, setSecurityEmail] = useState(() => String(userState?.email || "").trim());
   const [securityTwoFactorEnabled, setSecurityTwoFactorEnabled] = useState(false);
-  const [subscriptionAutoRenew, setSubscriptionAutoRenew] = useState(true);
-  const [billingEmail, setBillingEmail] = useState(() => String(userState?.email || "").trim());
-  const [defaultPaymentMethod, setDefaultPaymentMethod] = useState("Visa •••• 4242");
+  const billingEmail = accountEmail;
+  const [billingDetails, setBillingDetails] = useState({
+    loaded: false,
+    defaultPaymentMethod: "",
+    invoices: [],
+  });
+  const defaultPaymentMethod = String(billingDetails?.defaultPaymentMethod || "").trim();
   const recentSessions = [];
-  const recentInvoices = ACCOUNT_MOCK_DATA.billing.invoices;
+  const recentInvoices = Array.isArray(billingDetails?.invoices) ? billingDetails.invoices : [];
   useEffect(() => {
     setAccountAvatarDataUrl(String(userState?.profile?.avatarDataUrl || ""));
   }, [userState?.profile?.avatarDataUrl]);
@@ -5158,7 +5164,6 @@ function EditorApp({
   useEffect(() => {
     const nextEmail = String(userState?.email || "").trim();
     setSecurityEmail(nextEmail);
-    setBillingEmail(nextEmail);
   }, [userState?.email]);
   const accountUsageUserId = String(userState?.authUserId || "").trim();
   const refreshAccountUsageSummary = useCallback(async () => {
@@ -5166,7 +5171,6 @@ function EditorApp({
       setAccountUsageSummary({
         tabsCreated: 0,
         exports30d: 0,
-        storageUsedMb: 0,
         lastActiveLabel: "—",
       });
       return;
@@ -5241,6 +5245,54 @@ function EditorApp({
       cancelled = true;
     };
   }, [accountEmail, isLoggedIn, userState?.authUserId]);
+  useEffect(() => {
+    let cancelled = false;
+    if (!isLoggedIn || !accountEmail) {
+      setBillingDetails({
+        loaded: false,
+        defaultPaymentMethod: "",
+        invoices: [],
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const fetchBillingDetails = async () => {
+      try {
+        const response = await fetch("/api/billing-details", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            userEmail: accountEmail,
+            userId: String(userState?.authUserId || "").trim(),
+          }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || cancelled) return;
+        setBillingDetails({
+          loaded: true,
+          defaultPaymentMethod: String(payload?.defaultPaymentMethod || "").trim(),
+          invoices: Array.isArray(payload?.invoices) ? payload.invoices : [],
+        });
+      } catch {
+        if (!cancelled) {
+          setBillingDetails({
+            loaded: true,
+            defaultPaymentMethod: "",
+            invoices: [],
+          });
+        }
+      }
+    };
+
+    void fetchBillingDetails();
+    return () => {
+      cancelled = true;
+    };
+  }, [accountEmail, isLoggedIn, userState?.authUserId]);
   const saveAccountProfile = useCallback(() => {
     updateUserState?.((prev) => ({
       ...prev,
@@ -5276,10 +5328,6 @@ function EditorApp({
     setAccountProfileOpen(true);
   }, [isLoggedIn, navigateTo]);
 
-  const openMembershipFromAccount = useCallback(() => {
-    setAccountProfileOpen(false);
-    navigateTo("/membership");
-  }, [navigateTo]);
   const handleAccountSignOut = useCallback(async () => {
     const { error } = await signOut();
     if (error) throw error;
@@ -15624,7 +15672,6 @@ function clearSelectedCells() {
               accountProfileSection,
               accountPlanId,
               accountRenewalDate,
-              accountStorageUsedMb,
               accountTabsCreated,
               accountTier,
               billingEmail,
@@ -15649,8 +15696,6 @@ function clearSelectedCells() {
               setAccountAvatarDataUrl,
               setAccountProfileOpen,
               setAccountProfileSection,
-              setBillingEmail,
-              setDefaultPaymentMethod,
               setProfileBio,
               setProfileDisplayName,
               setProfileHandle,
@@ -15658,13 +15703,11 @@ function clearSelectedCells() {
               setSettingsLanguagePreview,
               setSecurityEmail,
               setSecurityTwoFactorEnabled,
-              setSubscriptionAutoRenew,
-              subscriptionAutoRenew,
               THEME,
               toolbarMenuBtn,
               withAlpha,
               onSaveAccountProfile: saveAccountProfile,
-              onOpenMembershipPlans: openMembershipFromAccount,
+              onSelectPlan: handleMembershipPlanAction,
               onSignOut: handleAccountSignOut,
             }}
           />

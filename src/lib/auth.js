@@ -122,7 +122,9 @@ export async function updatePassword(nextPassword) {
   return { data, error };
 }
 
-export async function signOut() {
-  const { error } = await supabase.auth.signOut();
+export async function signOut(options = {}) {
+  const scope = String(options?.scope || "").trim().toLowerCase();
+  const signOutOptions = scope ? { scope } : undefined;
+  const { error } = await supabase.auth.signOut(signOutOptions);
   return { error };
 }

@@ -52,8 +52,8 @@ export default function AccountPage({ shared }) {
     overview: actions.saveOverview,
     profile: actions.saveProfile,
     security: null,
-    subscription: actions.updatePlan,
-    billing: actions.saveBilling,
+    subscription: null,
+    billing: null,
     affiliate: actions.copyReferralLink,
   };
   const primaryAction = primaryActionBySection[activeSection];
