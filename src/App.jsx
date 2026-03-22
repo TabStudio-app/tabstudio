@@ -1530,13 +1530,21 @@ export default function App() {
     const billingCycle = normalizeBillingCycle(selectedBillingCycle);
     const flowSignupState = loadConversionSignupState();
     const pendingFlowIdentityReady = hasPendingFlowAuthIdentity(flowSignupState);
+    const fallbackAuthUserId = String(supabaseUser?.id || userState?.authUserId || "").trim();
+    const fallbackAuthEmail = String(supabaseUser?.email || userState?.email || "").trim().toLowerCase();
+    const pendingAuthUserIdForCheckout = pendingFlowIdentityReady
+      ? String(flowSignupState.pendingAuthUserId || "").trim()
+      : fallbackAuthUserId;
+    const pendingAuthEmailForCheckout = pendingFlowIdentityReady
+      ? String(flowSignupState.flowEmail || "").trim().toLowerCase()
+      : fallbackAuthEmail;
     const checkoutRequestKey = buildPendingFlowCheckoutRequestKey(flowSignupState, plan, billingCycle);
     onboardingTrace("[ONBOARDING TRACE] createStripeCheckoutSession:start", {
       selectedPlan: plan,
       selectedBillingCycle: billingCycle,
       hasPendingFlowAuthIdentity: pendingFlowIdentityReady,
-      pendingAuthUserId: pendingFlowIdentityReady ? flowSignupState.pendingAuthUserId : "",
-      pendingAuthEmail: pendingFlowIdentityReady ? flowSignupState.flowEmail : "",
+      pendingAuthUserId: pendingAuthUserIdForCheckout,
+      pendingAuthEmail: pendingAuthEmailForCheckout,
       checkoutRequestKey,
     });
     setCheckoutLaunchError("");
@@ -1549,8 +1557,8 @@ export default function App() {
             billingCycle,
             successPath: "/success",
             cancelPath: "/checkout",
-            pendingAuthUserId: pendingFlowIdentityReady ? flowSignupState.pendingAuthUserId : "",
-            pendingAuthEmail: pendingFlowIdentityReady ? flowSignupState.flowEmail : "",
+            pendingAuthUserId: pendingAuthUserIdForCheckout,
+            pendingAuthEmail: pendingAuthEmailForCheckout,
             idempotencyKey: checkoutRequestKey,
           });
           if (typeof window !== "undefined") {
@@ -1587,7 +1595,7 @@ export default function App() {
       setCheckoutLaunchError(nextMessage);
       setIsLaunchingCheckout(false);
     }
-  }, [isAuthenticated, selectedBillingCycle, selectedPlan]);
+  }, [isAuthenticated, selectedBillingCycle, selectedPlan, supabaseUser, userState]);
   const saveProfileSetup = useCallback(
     async (profilePayload) => {
       const normalizedProfile = normalizeProfileData(profilePayload);
