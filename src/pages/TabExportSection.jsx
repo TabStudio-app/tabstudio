@@ -242,7 +242,8 @@ export default function TabExportSection({
   allUserChords,
   saveCustomChordToLibrary,
   availableChordTunings,
-  saveChordExportTuning
+  saveChordExportTuning,
+  onRecordExportEvent,
 }) {
   const pdfWorkspaceRef = useRef(null);
   const pdfPanStateRef = useRef({ dragging: false, startX: 0, startY: 0, originX: 0, originY: 0 });
@@ -1041,6 +1042,7 @@ export default function TabExportSection({
                     saveCustomChordToLibrary={saveCustomChordToLibrary}
                     availableChordTunings={availableChordTunings}
                     saveChordExportTuning={saveChordExportTuning}
+                    onChordDiagramExported={() => onRecordExportEvent?.("chord")}
                     chordDiagramPrefs={chordDiagramPrefs}
                     saveChordDiagramPrefs={saveChordDiagramPrefs}
                     includeBranding={imageShowBranding}

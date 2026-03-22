@@ -246,6 +246,7 @@ export default function FretboardDiagramSection({
   saveCustomChordToLibrary,
   availableChordTunings,
   saveChordExportTuning,
+  onChordDiagramExported,
   chordDiagramPrefs,
   saveChordDiagramPrefs,
   includeBranding,
@@ -507,6 +508,7 @@ export default function FretboardDiagramSection({
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
       setStatusText(`Exported ${normalizedChordName}-diagram.png`);
+      onChordDiagramExported?.();
     };
     image.onerror = () => {
       URL.revokeObjectURL(url);

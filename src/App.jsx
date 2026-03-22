@@ -35,6 +35,7 @@ import AffiliateApplicationPage from "./pages/AffiliateApplicationPage";
 import { normalizeAuthOtpType, readAuthRedirectState, signOut } from "./lib/auth";
 import { createProject, getProjectById, getUserProjects, updateProject } from "./lib/projects";
 import { createProfile, getProfile, updateProfile } from "./lib/profile";
+import { getAccountUsageSummary, recordExportEvent } from "./lib/accountUsage";
 import { supabase } from "./lib/supabaseClient";
 import { createStripeCheckoutSession } from "./utils/stripeCheckout";
 import EditorMetadataPanel from "./components/EditorMetadataPanel";
@@ -5120,6 +5121,22 @@ function EditorApp({
       ? "Yearly"
       : "Monthly"
     : "";
+  const [accountUsageSummary, setAccountUsageSummary] = useState({
+    tabsCreated: 0,
+    exports30d: 0,
+    storageUsedMb: 0,
+    lastActiveLabel: "—",
+  });
+  const accountTabsCreated = Number(accountUsageSummary?.tabsCreated || 0);
+  const accountExports30d = Number(accountUsageSummary?.exports30d || 0);
+  const accountStorageUsedMb = Number(accountUsageSummary?.storageUsedMb || 0);
+  const accountLastActiveLabel = (() => {
+    const raw = String(accountUsageSummary?.lastActiveLabel || "").trim();
+    if (!raw || raw === "—") return "—";
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) return "—";
+    return parsed.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  })();
   const [profileDisplayName, setProfileDisplayName] = useState(() => String(userState?.profile?.displayName || "").trim());
   const [profileHandle, setProfileHandle] = useState(ACCOUNT_MOCK_DATA.profile.handle);
   const [profileBio, setProfileBio] = useState(ACCOUNT_MOCK_DATA.profile.bio);
@@ -5143,6 +5160,38 @@ function EditorApp({
     setSecurityEmail(nextEmail);
     setBillingEmail(nextEmail);
   }, [userState?.email]);
+  const refreshAccountUsageSummary = useCallback(async () => {
+    if (!isLoggedIn || !supabaseUser?.id) {
+      setAccountUsageSummary({
+        tabsCreated: 0,
+        exports30d: 0,
+        storageUsedMb: 0,
+        lastActiveLabel: "—",
+      });
+      return;
+    }
+    try {
+      const next = await getAccountUsageSummary(supabaseUser.id);
+      setAccountUsageSummary(next);
+    } catch {}
+  }, [isLoggedIn, supabaseUser?.id]);
+  useEffect(() => {
+    void refreshAccountUsageSummary();
+  }, [refreshAccountUsageSummary]);
+
+  const recordAccountExportEvent = useCallback(
+    async (exportType) => {
+      if (!supabaseUser?.id) return;
+      try {
+        await recordExportEvent({
+          userId: supabaseUser.id,
+          exportType,
+        });
+      } catch {}
+      void refreshAccountUsageSummary();
+    },
+    [refreshAccountUsageSummary, supabaseUser?.id]
+  );
   useEffect(() => {
     let cancelled = false;
     if (!isLoggedIn || !accountEmail) {
@@ -11634,6 +11683,7 @@ function fillSelectedColumnWith(value) {
     });
 
     downloadPdf(bytes, filename);
+    void recordAccountExportEvent("pdf");
     try {
       const alreadyCelebrated = String(localStorage.getItem(LS_FIRST_EXPORT_CELEBRATED_KEY) ?? "").toLowerCase() === "true";
       if (!alreadyCelebrated) {
@@ -11935,7 +11985,7 @@ function fillSelectedColumnWith(value) {
 
     try {
       const targetPixelWidth = getPngExportTargetWidth(imageExportSize);
-      if (selectedExportRows.length > 1 && imageMultiExportMode === "combined") {
+        if (selectedExportRows.length > 1 && imageMultiExportMode === "combined") {
         setImageExportProgress("Exporting combined image...");
         const combinedBlob = await renderRowsTextToPngBlob({
           rows: selectedExportRows.map((row, i) => ({
@@ -12024,6 +12074,7 @@ function fillSelectedColumnWith(value) {
         }
         setImageExportProgress(`Exported ${files.length} image${files.length > 1 ? "s" : ""}.`);
       }
+      void recordAccountExportEvent("png");
     } catch (err) {
       console.error(err);
       setImageExportProgress("");
@@ -15565,11 +15616,15 @@ function clearSelectedCells() {
               accountBillingCycle,
               accountEmail,
               accountFullName,
+              accountExports30d,
+              accountLastActiveLabel,
               accountMemberSince,
               accountProfileOpen,
               accountProfileSection,
               accountPlanId,
               accountRenewalDate,
+              accountStorageUsedMb,
+              accountTabsCreated,
               accountTier,
               billingEmail,
               btnSmallPill,
@@ -15852,6 +15907,7 @@ function clearSelectedCells() {
             saveCustomChordToLibrary={saveCustomChordToLibrary}
             availableChordTunings={allTunings}
             saveChordExportTuning={saveChordExportTuning}
+            onRecordExportEvent={recordAccountExportEvent}
           />
 
           {/* Edit chord modal */}

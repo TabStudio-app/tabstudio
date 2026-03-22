@@ -35,10 +35,14 @@ export function useAccountViewModel(shared) {
     accountAvatarDataUrl,
     accountBillingCycle,
     accountEmail,
+    accountExports30d,
     accountFullName,
+    accountLastActiveLabel,
     accountMemberSince,
     accountPlanId,
     accountRenewalDate,
+    accountStorageUsedMb,
+    accountTabsCreated,
     accountTier,
     billingEmail,
     defaultPaymentMethod,
@@ -96,12 +100,12 @@ export function useAccountViewModel(shared) {
 
   const usageStats = useMemo(
     () => [
-      { id: "tabs", label: "Tabs created", value: String(ACCOUNT_MOCK_DATA.usage.tabsCreated) },
-      { id: "exports", label: "PDF exports (30 days)", value: String(ACCOUNT_MOCK_DATA.usage.pdfExports30d) },
-      { id: "storage", label: "Storage used", value: formatStorageMb(ACCOUNT_MOCK_DATA.usage.storageUsedMb) },
-      { id: "active", label: "Last active", value: ACCOUNT_MOCK_DATA.usage.lastActiveLabel },
+      { id: "tabs", label: "Tabs created", value: String(Number(accountTabsCreated) || 0) },
+      { id: "exports", label: "Exports (30 days)", value: String(Number(accountExports30d) || 0) },
+      { id: "storage", label: "Storage used", value: formatStorageMb(Number(accountStorageUsedMb) || 0) },
+      { id: "active", label: "Last active", value: accountLastActiveLabel || "—" },
     ],
-    []
+    [accountExports30d, accountLastActiveLabel, accountStorageUsedMb, accountTabsCreated]
   );
 
   const invoiceRows = useMemo(
@@ -184,8 +188,8 @@ export function useAccountViewModel(shared) {
       },
       membership: {
         planLabel: accountTier || planDisplayName(accountPlanId),
-        memberSinceLabel: accountMemberSince || formatDate(ACCOUNT_MOCK_DATA.membership.memberSince),
-        renewalDateLabel: accountRenewalDate || formatDate(ACCOUNT_MOCK_DATA.membership.renewalDate),
+        memberSinceLabel: accountMemberSince ? formatDate(accountMemberSince) : formatDate(ACCOUNT_MOCK_DATA.membership.memberSince),
+        renewalDateLabel: accountRenewalDate ? formatDate(accountRenewalDate) : formatDate(ACCOUNT_MOCK_DATA.membership.renewalDate),
         billingCycleLabel: accountBillingCycle || ACCOUNT_MOCK_DATA.membership.billingCycle,
         autoRenew: subscriptionAutoRenew,
       },
@@ -215,10 +219,14 @@ export function useAccountViewModel(shared) {
       accountAvatarDataUrl,
       accountBillingCycle,
       accountEmail,
+      accountExports30d,
       accountFullName,
+      accountLastActiveLabel,
       accountMemberSince,
       accountPlanId,
       accountRenewalDate,
+      accountStorageUsedMb,
+      accountTabsCreated,
       accountTier,
       activeLanguage,
       affiliate,

@@ -73,7 +73,7 @@ async function findStripeCustomer({ secretKey, userEmail, userId }) {
   if (!customers.length) return null;
   const normalizedUserId = String(userId || "").trim();
   if (!normalizedUserId) return customers[0];
-  return customers.find((customer) => String(customer?.metadata?.supabase_user_id || "").trim() === normalizedUserId) || customers[0];
+  return customers.find((customer) => String(customer?.metadata?.supabase_user_id || "").trim() === normalizedUserId) || null;
 }
 
 async function getActiveSubscription({ secretKey, customerId }) {
@@ -127,12 +127,7 @@ export default async function handler(req, res) {
       userId,
     });
     if (!customer?.id) {
-      return sendJson(res, 200, {
-        planId: "free",
-        billingCycle: "monthly",
-        renewalDate: "",
-        memberSinceDate: "",
-      });
+      return sendJson(res, 404, { error: "No matching Stripe customer found for this account." });
     }
 
     const subscription = await getActiveSubscription({
