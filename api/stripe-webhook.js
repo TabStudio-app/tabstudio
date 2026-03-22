@@ -167,11 +167,26 @@ async function upsertProfileMembership(supabaseAdmin, userId, updates) {
     billing_cycle: normalizeBillingCycle(updates?.billingCycle),
   };
 
-  const existing = await supabaseAdmin.from("profiles").select("id,email").eq("id", normalizedUserId).maybeSingle();
+  const existing = await supabaseAdmin
+    .from("profiles")
+    .select("id,email,affiliate_approved")
+    .eq("id", normalizedUserId)
+    .maybeSingle();
   if (existing.error) throw existing.error;
 
   if (existing.data) {
-    const updatePayload = { ...payload };
+    const isAffiliateApproved = Boolean(existing.data.affiliate_approved);
+    const updatePayload = {
+      ...payload,
+      ...(isAffiliateApproved
+        ? {
+            // Affiliate-approved users should keep Creator access regardless of Stripe plan events.
+            plan_tier: "creator",
+            membership_status: "active",
+            billing_cycle: "monthly",
+          }
+        : {}),
+    };
     if (normalizedEmail && String(existing.data.email || "").trim().toLowerCase() !== normalizedEmail) {
       updatePayload.email = normalizedEmail;
     }
