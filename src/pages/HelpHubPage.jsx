@@ -22,7 +22,11 @@ export default function HelpHubPage({ shared }) {
     TabbySpeechBubble,
     getTabStudioInteractiveFieldStyle,
     onBack,
+    onGoMembership,
+    onGoSignIn,
+    onOpenAccountSubscription,
     onGoSettings,
+    isAuthenticated = false,
     siteHeaderBarStyle,
     siteHeaderEditorLinkStyle,
     siteHeaderLeftGroupStyle,
@@ -384,7 +388,7 @@ export default function HelpHubPage({ shared }) {
     {
       id: "faq-1",
       q: "What instruments does TabStudio support?",
-      a: "Currently TabStudio focuses on standard guitar tablature.\n\nAdditional instrument support may be considered in future updates.",
+      a: "TabStudio is currently focused on guitar tablature.\n\nThe editing flow is designed around a fast, clean guitar tab workflow. Additional instrument support may be considered in future updates as development continues.",
     },
     {
       id: "faq-2",
@@ -404,17 +408,21 @@ export default function HelpHubPage({ shared }) {
     {
       id: "faq-4b",
       q: "Can I cancel my membership?",
-      a: "Yes.\n\nYou can cancel your subscription anytime.\n\nYour tabs remain safely stored in your account.",
+      a: "Yes.\n\nYou can cancel your membership anytime from your Account subscription settings.\n\nYour tabs remain safely stored in your account after cancellation.",
+      cta: {
+        label: isAuthenticated ? "Open Subscription Settings" : "Sign In To Manage Membership",
+        action: "account-subscription",
+      },
     },
     {
       id: "faq-5",
       q: "Can I export my tabs?",
-      a: "Yes.\n\nBand and Creator subscription plans can export tabs as clean PDF sheets, ideal for printing, rehearsals, and sharing with bandmates.\n\nThe Creator subscription plan can also export PNG images, making it easy to use tab overlays in lesson videos, tutorials, YouTube content, and social media posts.",
+      a: "Yes.\n\nBand and Creator subscription plans can export tabs as clean PDF sheets, ideal for printing, rehearsals, and sharing with bandmates.\n\nThe Creator subscription plan can also export PNG images, including chord diagram style visuals for lessons, tutorials, YouTube content, and social media posts.",
     },
     {
       id: "faq-6",
       q: "Does TabStudio auto-save my work?",
-      a: "Yes.\n\nTabStudio automatically saves your work while you write. If you close the app, refresh the page, temporarily disconnect, or leave with an unfinished tab still in the grid, your progress should still be there when you return.\n\nThis helps protect unfinished ideas, riffs, and song sections from being lost.",
+      a: "Yes.\n\nTabStudio automatically saves while you write.\n\nIf you refresh, close the app, temporarily disconnect, or leave with unfinished tab edits in the grid, your latest work should still be there when you return.\n\nThis helps protect riffs, ideas, and in-progress song sections from being lost.",
     },
     {
       id: "faq-7",
@@ -445,16 +453,28 @@ export default function HelpHubPage({ shared }) {
       id: "faq-12",
       q: "Can I send feature requests or feedback?",
       a: "Absolutely.\n\nUser feedback plays an important role in shaping the direction of TabStudio. Feature requests, bug reports, and general feedback are always welcome and help improve future versions of the app.",
+      cta: {
+        label: "Open Support Section",
+        action: "support",
+      },
     },
     {
       id: "faq-13",
       q: "Can I upgrade or downgrade my plan?",
       a: "Yes.\n\nYou can change your subscription plan at any time.\n\nIf you upgrade mid-billing cycle, you only pay the difference for the remaining time in your billing period.\n\nIf you downgrade, the new plan starts on your next billing cycle.",
+      cta: {
+        label: isAuthenticated ? "Manage Plan In Account" : "Sign In To Manage Plan",
+        action: "account-subscription",
+      },
     },
     {
       id: "faq-14",
       q: "What happens if I reach my tab limit?",
-      a: "Solo plans allow up to 50 saved tabs.\n\nBand plans allow up to 250 saved tabs.\n\nCreator plans allow unlimited saved tabs.\n\nYou can upgrade your subscription anytime if you need more space.",
+      a: "Solo plans allow up to 50 saved tabs.\n\nBand plans allow up to 250 saved tabs.\n\nCreator plans allow unlimited saved tabs.\n\nIf you hit your current plan limit, you can upgrade from your account subscription settings for more space.",
+      cta: {
+        label: isAuthenticated ? "Upgrade From Account" : "Sign In To Upgrade",
+        action: "account-subscription",
+      },
     },
     {
       id: "faq-15",
@@ -462,6 +482,23 @@ export default function HelpHubPage({ shared }) {
       a: "No.\n\nYour tabs remain stored in your account.\n\nYou can reactivate your subscription later to continue editing or exporting them.",
     },
   ];
+  const onFaqCta = useCallback((action) => {
+    if (action === "support") {
+      scrollToRef(supportRef);
+      return;
+    }
+    if (action === "account-subscription") {
+      if (isAuthenticated) {
+        onOpenAccountSubscription?.();
+      } else if (onGoSignIn) {
+        onGoSignIn();
+      } else {
+        onGoMembership?.();
+      }
+      return;
+    }
+    if (action === "membership") onGoMembership?.();
+  }, [isAuthenticated, onGoMembership, onGoSignIn, onOpenAccountSubscription]);
   const normalizedFaqQuery = faqQuery.trim().toLowerCase();
   const filteredFaqItems = useMemo(() => {
     if (!normalizedFaqQuery) return faqItems;
@@ -472,6 +509,26 @@ export default function HelpHubPage({ shared }) {
   }, [faqItems, normalizedFaqQuery]);
   const hasFaqSearch = normalizedFaqQuery.length > 0;
   const showFaqEmpty = filteredFaqItems.length === 0;
+  const faqSearchFieldStyle = {
+    ...getTabStudioInteractiveFieldStyle({
+      focused: faqSearchFocused,
+      hovered: faqSearchHovered,
+      minHeight: 42,
+      padding: "0 12px",
+      fontSize: 15,
+      fontWeight: 700,
+    }),
+    ...(isHelpDarkMode
+      ? {}
+      : {
+        background: withAlpha("#FFFFFF", faqSearchFocused ? 0.98 : 0.94),
+        border: `1px solid ${
+          faqSearchFocused ? withAlpha(HELP_THEME.accent, 0.62) : faqSearchHovered ? withAlpha(HELP_THEME.text, 0.24) : HELP_THEME.border
+        }`,
+        color: HELP_THEME.text,
+        boxShadow: faqSearchFocused ? `0 0 0 2px ${withAlpha(HELP_THEME.accent, 0.12)}` : "none",
+      }),
+  };
   const supportMessagingAvailable = true;
   const supportCanAttachImages = Boolean(supportPaidSubscriber || supportEverPaidSubscriber);
   const supportSubjectChars = supportSubject.length;
@@ -999,7 +1056,7 @@ export default function HelpHubPage({ shared }) {
               <br />
               <br />
               What began as a small tool for myself gradually evolved into TabStudio. After using it for my own tabs, it became
-              clear that other guitarists could benefit from a simple tab writing tool focused on speed and ease of use, no
+              clear that other musicians could benefit from a simple tab writing tool focused on speed and ease of use, no
               complex music theory required, just getting ideas straight into tab.
               <br />
               <br />
@@ -1070,14 +1127,7 @@ export default function HelpHubPage({ shared }) {
               placeholder="Search by keyword, for example: export, PNG, subscription, mobile"
               autoComplete="off"
               spellCheck={false}
-              style={getTabStudioInteractiveFieldStyle({
-                focused: faqSearchFocused,
-                hovered: faqSearchHovered,
-                minHeight: 42,
-                padding: "0 12px",
-                fontSize: 15,
-                fontWeight: 700,
-              })}
+              style={faqSearchFieldStyle}
             />
             <div style={{ color: HELP_THEME.textMuted, fontSize: 12, lineHeight: 1.45 }}>
               Try terms like subscription, account, cancel subscription, renew subscription, export, PDF, PNG, auto-save, mobile, phone, or content creator.
@@ -1164,6 +1214,27 @@ export default function HelpHubPage({ shared }) {
                       }}
                     >
                       {item.a}
+                      {item.cta ? (
+                        <div style={{ marginTop: 12 }}>
+                          <button
+                            type="button"
+                            onClick={() => onFaqCta(item.cta.action)}
+                            style={{
+                              minHeight: 34,
+                              padding: "0 12px",
+                              borderRadius: 999,
+                              border: `1px solid ${withAlpha(HELP_THEME.accent, isHelpDarkMode ? 0.58 : 0.4)}`,
+                              background: withAlpha(HELP_THEME.accent, isHelpDarkMode ? 0.2 : 0.1),
+                              color: HELP_THEME.text,
+                              fontSize: 13,
+                              fontWeight: 850,
+                              cursor: "pointer",
+                            }}
+                          >
+                            {item.cta.label}
+                          </button>
+                        </div>
+                      ) : null}
                     </div>
                   )}
                 </div>

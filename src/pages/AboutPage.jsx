@@ -14,7 +14,8 @@ export default function AboutPage({ shared }) {
         </p>
         <p>
           Whether you're writing quick riffs at home, structuring full songs with a band, creating lesson material for
-          students, or exporting tab images for content creators, TabStudio helps keep your ideas organised and easy to share.
+          students, or exporting tab images and chord diagrams for content creators, TabStudio helps keep your ideas organised
+          and easy to share.
         </p>
         <p>The goal is simple:</p>
         <p style={{ margin: 0 }}>

@@ -1728,6 +1728,9 @@ export default function App() {
           getTabStudioInteractiveFieldStyle,
           onBack: () => navigateTo("/"),
           onGoSettings: () => openEditorPanelFromHelp("settings"),
+          onGoSignIn: () => navigateTo("/signin"),
+          onOpenAccountSubscription: () => openEditorPanelFromHelp("account-subscription"),
+          onGoMembership: () => navigateTo("/membership"),
           siteHeaderBarStyle,
           siteHeaderEditorLinkStyle,
           siteHeaderLeftGroupStyle,
@@ -1739,6 +1742,7 @@ export default function App() {
           supportEverPaidSubscriber: helpSupportEverPaidSubscriber,
           supportPaidSubscriber: helpSupportPaidSubscriber,
           supportUserEmail: helpSupportUserEmail,
+          isAuthenticated,
           targetSection: helpTargetSection,
           withAlpha,
         }}
@@ -11331,6 +11335,18 @@ function fillSelectedColumnWith(value) {
         return;
       }
       setAccountProfileSection("billing");
+      setAccountProfileOpen(true);
+    } else if (panel === "account-subscription") {
+      setProjectsLibraryOpen(false);
+      setExportModalOpen(false);
+      setSettingsOpen(false);
+      setSettingsFullscreen(false);
+      if (!isLoggedIn) {
+        navigateTo("/signin");
+        onPendingPanelHandled?.();
+        return;
+      }
+      setAccountProfileSection("subscription");
       setAccountProfileOpen(true);
     } else if (panel === "settings") {
       setProjectsLibraryOpen(false);

@@ -58,12 +58,32 @@ type StripeSubscription = {
   cancel_at_period_end?: boolean | null
 }
 
+function normalizeUserId(rawUserId: unknown): string {
+  return typeof rawUserId === "string" ? rawUserId.trim() : ""
+}
+
+async function listSubscriptionsBySupabaseUserId({
+  secretKey,
+  supabaseUserId,
+}: {
+  secretKey: string
+  supabaseUserId: string
+}): Promise<StripeSubscription[]> {
+  if (!supabaseUserId) return []
+
+  const query = `metadata['supabase_user_id']:'${supabaseUserId.replaceAll("'", "\\'")}'`
+  const payload = await stripeRequestJson(`/subscriptions/search?query=${encodeURIComponent(query)}&limit=100`, {
+    secretKey,
+  })
+  return Array.isArray(payload?.data) ? (payload.data as StripeSubscription[]) : []
+}
+
 Deno.serve(async (req) => {
   try {
     if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders })
     if (req.method !== "POST") return jsonResponse(405, { success: false, error: "Method not allowed" })
 
-    let body: { email?: unknown } = {}
+    let body: { email?: unknown; supabase_user_id?: unknown } = {}
     try {
       body = await req.json()
     } catch {
@@ -71,21 +91,57 @@ Deno.serve(async (req) => {
     }
 
     const email = normalizeEmail(body.email)
-    if (!email) return jsonResponse(400, { success: false, error: "Missing email" })
+    const supabaseUserId = normalizeUserId(body.supabase_user_id)
+    if (!email && !supabaseUserId) {
+      return jsonResponse(400, { success: false, error: "Missing email or supabase_user_id" })
+    }
 
     const stripeSecretKey = getRequiredEnv("STRIPE_SECRET_KEY")
 
-    const customersPayload = await stripeRequestJson(`/customers?email=${encodeURIComponent(email)}&limit=20`, {
+    const customerIds: string[] = []
+    if (email) {
+      const customersPayload = await stripeRequestJson(`/customers?email=${encodeURIComponent(email)}&limit=20`, {
+        secretKey: stripeSecretKey,
+      })
+      const customers = Array.isArray(customersPayload?.data) ? (customersPayload.data as StripeCustomer[]) : []
+      customerIds.push(
+        ...customers
+          .map((customer) => String(customer?.id || "").trim())
+          .filter((value) => Boolean(value)),
+      )
+    }
+
+    const byUserIdSubscriptions = await listSubscriptionsBySupabaseUserId({
       secretKey: stripeSecretKey,
+      supabaseUserId,
     })
-    const customers = Array.isArray(customersPayload?.data) ? (customersPayload.data as StripeCustomer[]) : []
-    const customerIds = customers
-      .map((customer) => String(customer?.id || "").trim())
-      .filter((value) => Boolean(value))
 
     let canceledAtPeriodEndCount = 0
     let alreadyCanceledCount = 0
     let scannedSubscriptions = 0
+    const seenSubscriptionIds = new Set<string>()
+
+    for (const subscription of byUserIdSubscriptions) {
+      const subscriptionId = String(subscription?.id || "").trim()
+      const status = String(subscription?.status || "").trim().toLowerCase()
+      if (!subscriptionId || seenSubscriptionIds.has(subscriptionId)) continue
+      seenSubscriptionIds.add(subscriptionId)
+
+      scannedSubscriptions += 1
+      if (status === "canceled" || status === "incomplete_expired" || subscription?.cancel_at_period_end) {
+        alreadyCanceledCount += 1
+        continue
+      }
+
+      const form = new URLSearchParams()
+      form.set("cancel_at_period_end", "true")
+      await stripeRequestJson(`/subscriptions/${encodeURIComponent(subscriptionId)}`, {
+        secretKey: stripeSecretKey,
+        method: "POST",
+        form,
+      })
+      canceledAtPeriodEndCount += 1
+    }
 
     for (const customerId of customerIds) {
       const subscriptionsPayload = await stripeRequestJson(
@@ -101,7 +157,8 @@ Deno.serve(async (req) => {
       for (const subscription of subscriptions) {
         const subscriptionId = String(subscription?.id || "").trim()
         const status = String(subscription?.status || "").trim().toLowerCase()
-        if (!subscriptionId) continue
+        if (!subscriptionId || seenSubscriptionIds.has(subscriptionId)) continue
+        seenSubscriptionIds.add(subscriptionId)
 
         scannedSubscriptions += 1
         if (status === "canceled" || status === "incomplete_expired") {
@@ -128,6 +185,7 @@ Deno.serve(async (req) => {
     return jsonResponse(200, {
       success: true,
       email,
+      supabaseUserId: supabaseUserId || null,
       customersFound: customerIds.length,
       subscriptionsScanned: scannedSubscriptions,
       subscriptionsUpdated: canceledAtPeriodEndCount,
