@@ -1302,6 +1302,10 @@ export default function App() {
     window.history.replaceState({}, "", guardedPath);
     setPath(guardedPath);
   }, [guardedPath, path]);
+  useEffect(() => {
+    if (routePath !== "/checkout") return;
+    setCheckoutLaunchError("");
+  }, [routePath, selectedPlan, selectedBillingCycle]);
   const startMembershipSignup = useCallback(
     (planId, billingCycle = "monthly") => {
       const safePlan = normalizePlanId(planId);
@@ -1334,9 +1338,7 @@ export default function App() {
         window.localStorage.setItem(LS_SELECTED_BILLING_CYCLE_KEY, safeBillingCycle);
       } catch {}
       if (isAuthenticated && hasActiveMembership) {
-        try {
-          window.sessionStorage.setItem(SESSION_CHECKOUT_AUTOSTART_KEY, "true");
-        } catch {}
+        setCheckoutLaunchError("");
         navigateTo("/checkout");
         return;
       }
@@ -1572,15 +1574,20 @@ export default function App() {
         }
       }
     } catch (error) {
+      const rawMessage = String(error?.message || "Unable to start secure checkout.");
+      const nextMessage =
+        isAuthenticated && /valid email is required before checkout can begin/i.test(rawMessage)
+          ? "Your account session needs refreshing. Please sign out and sign back in, then try again."
+          : rawMessage;
       console.error("[ONBOARDING TRACE] createStripeCheckoutSession:failed", {
         selectedPlan: plan,
         selectedBillingCycle: billingCycle,
         error,
       });
-      setCheckoutLaunchError(String(error?.message || "Unable to start secure checkout."));
+      setCheckoutLaunchError(nextMessage);
       setIsLaunchingCheckout(false);
     }
-  }, [selectedBillingCycle, selectedPlan]);
+  }, [isAuthenticated, selectedBillingCycle, selectedPlan]);
   const saveProfileSetup = useCallback(
     async (profilePayload) => {
       const normalizedProfile = normalizeProfileData(profilePayload);
