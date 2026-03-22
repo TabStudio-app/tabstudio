@@ -1349,6 +1349,7 @@ export default function App() {
     },
     [hasActiveMembership, isAuthenticated, navigateTo, startMembershipSignup]
   );
+  const membershipPlanAction = handleMembershipPlanAction;
   const continueToCheckout = useCallback(
     async ({
       email,
@@ -1997,7 +1998,7 @@ export default function App() {
       <MembershipPage
         onBack={() => navigateTo("/")}
         onGoSettings={() => openEditorPanelFromHelp("settings")}
-        onSelectPlan={handleMembershipPlanAction}
+        onSelectPlan={membershipPlanAction}
         shared={{
           ACCENT_PRESETS,
           DARK_THEME,
@@ -15707,7 +15708,7 @@ function clearSelectedCells() {
               toolbarMenuBtn,
               withAlpha,
               onSaveAccountProfile: saveAccountProfile,
-              onSelectPlan: handleMembershipPlanAction,
+              onSelectPlan: membershipPlanAction,
               onSignOut: handleAccountSignOut,
             }}
           />
