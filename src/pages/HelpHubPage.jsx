@@ -388,7 +388,7 @@ export default function HelpHubPage({ shared }) {
     {
       id: "faq-1",
       q: "What instruments does TabStudio support?",
-      a: "TabStudio is currently focused on guitar tablature.\n\nThe editing flow is designed around a fast, clean guitar tab workflow. Additional instrument support may be considered in future updates as development continues.",
+      a: "TabStudio supports tab writing for guitar, bass, ukulele, and banjo.",
     },
     {
       id: "faq-2",
@@ -422,7 +422,7 @@ export default function HelpHubPage({ shared }) {
     {
       id: "faq-6",
       q: "Does TabStudio auto-save my work?",
-      a: "Yes.\n\nTabStudio automatically saves while you write.\n\nIf you refresh, close the app, temporarily disconnect, or leave with unfinished tab edits in the grid, your latest work should still be there when you return.\n\nThis helps protect riffs, ideas, and in-progress song sections from being lost.",
+      a: "Yes.\n\nTabStudio automatically saves while you write.\n\nIf you refresh, close the app, temporarily disconnect, or leave with unfinished tab edits in the grid, your latest work should still be there when you return.\n\nThis helps protect riffs, ideas, and in-progress song sections from being lost.\n\nThough we always recommend saving your work to be sure before finishing a session.",
     },
     {
       id: "faq-7",
@@ -475,11 +475,6 @@ export default function HelpHubPage({ shared }) {
         label: isAuthenticated ? "Upgrade From Account" : "Sign In To Upgrade",
         action: "account-subscription",
       },
-    },
-    {
-      id: "faq-15",
-      q: "Do my tabs disappear if I cancel?",
-      a: "No.\n\nYour tabs remain stored in your account.\n\nYou can reactivate your subscription later to continue editing or exporting them.",
     },
   ];
   const onFaqCta = useCallback((action) => {
