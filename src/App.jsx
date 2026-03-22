@@ -2229,6 +2229,8 @@ export default function App() {
           shouldAutoLaunchCheckout,
           selectedBillingCycle,
           selectedPlan,
+          currentPlanId: hasActiveMembership ? normalizePlanId(userState?.planType || userState?.planTier) : null,
+          hasActiveMembership,
           siteHeaderBarStyle,
           siteHeaderEditorLinkStyle,
           siteHeaderLeftGroupStyle,

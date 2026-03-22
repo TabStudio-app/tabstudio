@@ -19,6 +19,8 @@ export default function CheckoutPlaceholderPage({ shared }) {
     onActivateMembership,
     onBack,
     onChangePlan,
+    currentPlanId = null,
+    hasActiveMembership = false,
     selectedBillingCycle = "monthly",
     selectedPlan = "solo",
     shouldAutoLaunchCheckout = false,
@@ -63,9 +65,28 @@ export default function CheckoutPlaceholderPage({ shared }) {
   const accent = useMemo(() => (ACCENT_PRESETS.find((preset) => preset.id === accentId) || ACCENT_PRESETS[0]).hex, [ACCENT_PRESETS, accentId]);
   const THEME = useMemo(() => ({ ...(isDark ? DARK_THEME : LIGHT_THEME), accent }), [DARK_THEME, LIGHT_THEME, accent, isDark]);
   const planMeta = getPlanMeta(selectedPlan);
+  const currentPlanMeta = getPlanMeta(currentPlanId || "solo");
   const activeBillingCycle = normalizeBillingCycle(selectedBillingCycle);
   const selectedPlanPriceLabel = activeBillingCycle === "yearly" ? planMeta.yearly : planMeta.monthly;
   const selectedBillingLabel = activeBillingCycle === "yearly" ? "Yearly billing" : "Monthly billing";
+  const currentPlanPriceLabel = activeBillingCycle === "yearly" ? currentPlanMeta.yearly : currentPlanMeta.monthly;
+  const planRank = useMemo(() => ({ solo: 1, band: 2, creator: 3 }), []);
+  const isPlanSwitch = Boolean(hasActiveMembership && currentPlanId && String(currentPlanId) !== String(planMeta.id));
+  const switchDirection = !isPlanSwitch
+    ? "none"
+    : (planRank[String(planMeta.id)] || 0) > (planRank[String(currentPlanId)] || 0)
+      ? "upgrade"
+      : "downgrade";
+  const switchActionLabel = switchDirection === "upgrade" ? "upgrade" : switchDirection === "downgrade" ? "downgrade" : "plan change";
+  const checkoutPrimaryActionLabel = isPlanSwitch
+    ? `Review ${switchActionLabel} in Stripe`
+    : checkoutButtonLabel;
+  const switchBillingSummary =
+    switchDirection === "upgrade"
+      ? "Stripe will show whether there is an immediate prorated charge before you confirm."
+      : switchDirection === "downgrade"
+        ? "This shows the new plan price. Stripe will apply any eligible credit/timing on the confirmation page."
+        : "Stripe will show the exact billing outcome before you confirm.";
   const selectedPlanHighlights = useMemo(() => {
     if (planMeta.id === "creator") {
       return [
@@ -311,6 +332,27 @@ export default function CheckoutPlaceholderPage({ shared }) {
               >
                 Instant access after checkout • Cancel anytime • Secure payment via Stripe
               </div>
+              {isPlanSwitch ? (
+                <div
+                  style={{
+                    marginTop: 2,
+                    borderRadius: 10,
+                    border: `1px solid ${THEME.border}`,
+                    background: withAlpha(THEME.text, isDark ? 0.045 : 0.03),
+                    padding: "9px 11px",
+                    display: "grid",
+                    gap: 5,
+                    textAlign: "left",
+                  }}
+                >
+                  <div style={{ fontSize: 12, fontWeight: 900, color: THEME.text }}>
+                    You’re switching from {currentPlanMeta.label} ({currentPlanPriceLabel}) to {planMeta.label} ({selectedPlanPriceLabel}).
+                  </div>
+                  <div style={{ fontSize: 12, lineHeight: 1.45, color: THEME.textFaint, fontWeight: 700 }}>
+                    {switchBillingSummary} Nothing changes until you complete confirmation in Stripe.
+                  </div>
+                </div>
+              ) : null}
               <button
                 type="button"
                 onClick={onActivateMembership}
@@ -336,7 +378,7 @@ export default function CheckoutPlaceholderPage({ shared }) {
                   transition: "transform 0.15s ease, filter 0.15s ease, box-shadow 0.15s ease, background 0.15s ease",
                 }}
               >
-                {isCheckoutProcessing ? "Opening secure checkout..." : checkoutButtonLabel}
+                {isCheckoutProcessing ? "Opening secure checkout..." : checkoutPrimaryActionLabel}
               </button>
               {isCheckoutProcessing ? (
                 <div
