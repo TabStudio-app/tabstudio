@@ -915,9 +915,8 @@ export default function MembershipPage({ onBack, onGoSettings, onSelectPlan, sha
                   cardCtaLabel = `Upgrade to ${plan.name}`;
                   cardCtaTone = "upgrade";
                 } else if (isLowerTierThanCurrent) {
-                  cardCtaLabel = "Included in current plan";
-                  cardCtaDisabled = true;
-                  cardCtaTone = "included";
+                  cardCtaLabel = `Downgrade to ${plan.name}`;
+                  cardCtaTone = "downgrade";
                 }
                 const isHovered = hoveredPlan === plan.id;
                 const isButtonHovered = hoveredPlanButton === plan.id;
@@ -934,7 +933,8 @@ export default function MembershipPage({ onBack, onGoSettings, onSelectPlan, sha
                   : isHovered
                   ? `0 14px 28px ${withAlpha("#000000", isMembershipDarkMode ? 0.28 : 0.13)}, 0 0 0 1px ${withAlpha(TABBY_ASSIST_MINT, isMembershipDarkMode ? 0.22 : 0.14)}, 0 10px 24px ${withAlpha(TABBY_ASSIST_MINT, isMembershipDarkMode ? 0.26 : 0.18)}`
                   : "none";
-                const ctaMintActive = isCurrentPlan || isHovered || isButtonHovered || isBandPlan || cardCtaTone === "upgrade";
+                const ctaMintActive =
+                  isCurrentPlan || isHovered || isButtonHovered || isBandPlan || cardCtaTone === "upgrade" || cardCtaTone === "downgrade";
                 const ctaInteractive = !cardCtaDisabled && (isHovered || isButtonHovered);
                 const ctaBorderColor =
                   cardCtaTone === "included"

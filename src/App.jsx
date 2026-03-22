@@ -652,8 +652,12 @@ function resolvePlaceholderGuardPath(targetPath, routeState) {
       guardReason = hasCheckoutIntent ? "checkout-allowed-pending-payment" : "checkout-no-intent";
       guardedPath = hasCheckoutIntent ? "/checkout" : "/membership";
     } else {
-      guardReason = isProfileComplete ? "checkout-paid-profile-complete" : "checkout-paid-profile-incomplete";
-      guardedPath = isProfileComplete ? "/editor" : "/profile-setup";
+      guardReason = hasCheckoutIntent
+        ? "checkout-paid-tier-plan-change-allowed"
+        : isProfileComplete
+        ? "checkout-paid-profile-complete"
+        : "checkout-paid-profile-incomplete";
+      guardedPath = hasCheckoutIntent ? "/checkout" : isProfileComplete ? "/editor" : "/profile-setup";
     }
   } else if (path === "/profile-setup") {
     if (!isAuthenticated) {
@@ -1325,6 +1329,9 @@ export default function App() {
         window.localStorage.setItem(LS_SELECTED_BILLING_CYCLE_KEY, safeBillingCycle);
       } catch {}
       if (isAuthenticated && hasActiveMembership) {
+        try {
+          window.sessionStorage.setItem(SESSION_CHECKOUT_AUTOSTART_KEY, "true");
+        } catch {}
         navigateTo("/checkout");
         return;
       }
