@@ -140,7 +140,6 @@ const LS_MEMBERSHIP_PRICING_GUIDE_SEEN_KEY = "tabstudioMembershipPricingGuideSee
 const LS_TABBY_TOUR_COMPLETE_KEY = "tabbyTourComplete";
 const LS_TABBY_INTRO_SEEN_KEY = "tabbyIntroSeen";
 const LS_TABBY_HIDDEN_KEY = "tabbyHidden";
-const LS_MAINTENANCE_OVERRIDE_KEY = "tabstudio_maintenance_override_v1";
 const TABBY_ASSIST_MINT = "#34d399";
 const TABBY_ASSIST_MINT_STRONG = "#10b981";
 const PDF_FOOTER_BRANDING_TEXT = "www.tabstudio.app | Tabs, simplfied.";
@@ -991,6 +990,7 @@ export default function App() {
   const [authReady, setAuthReady] = useState(false);
   const [userState, setUserState] = useState(() => loadUserStateFromStorage());
   const [maintenanceControl, setMaintenanceControl] = useState(() => normalizeMaintenanceControl({ enabled: false }));
+  const [maintenanceNowMs, setMaintenanceNowMs] = useState(() => Date.now());
   const [isLaunchingCheckout, setIsLaunchingCheckout] = useState(false);
   const [checkoutLaunchError, setCheckoutLaunchError] = useState("");
   const helpSupportUserEmail = String(userState?.email || "");
@@ -1027,15 +1027,6 @@ export default function App() {
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
-    const readMaintenanceOverride = () => {
-      try {
-        const parsed = JSON.parse(window.localStorage.getItem(LS_MAINTENANCE_OVERRIDE_KEY) || "null");
-        const normalized = normalizeMaintenanceControl(parsed);
-        return normalized.enabled ? normalized : null;
-      } catch {
-        return null;
-      }
-    };
     const assignIfChanged = (nextControl) => {
       const nextSerialized = JSON.stringify(normalizeMaintenanceControl(nextControl));
       setMaintenanceControl((prev) => {
@@ -1046,11 +1037,6 @@ export default function App() {
     };
     let disposed = false;
     const fetchMaintenanceControl = async () => {
-      const override = readMaintenanceOverride();
-      if (override) {
-        assignIfChanged(override);
-        return;
-      }
       try {
         const { data, error } = await supabase
           .from("app_maintenance")
@@ -1072,50 +1058,20 @@ export default function App() {
     const pollId = window.setInterval(() => {
       void fetchMaintenanceControl();
     }, MAINTENANCE_POLL_MS);
-    const onStorage = (e) => {
-      if (!e?.key || e.key === LS_MAINTENANCE_OVERRIDE_KEY) {
-        void fetchMaintenanceControl();
-      }
-    };
-    window.addEventListener("storage", onStorage);
-
-    // Local testing helpers: set/clear maintenance without touching the database.
-    window.__tabstudioSetMaintenanceOverride = (override) => {
-      try {
-        window.localStorage.setItem(
-          LS_MAINTENANCE_OVERRIDE_KEY,
-          JSON.stringify(
-            normalizeMaintenanceControl({
-              enabled: true,
-              countdown_seconds: 300,
-              started_at: new Date().toISOString(),
-              expected_minutes_min: 2,
-              expected_minutes_max: 5,
-              message: "Scheduled maintenance update in progress.",
-              ...(override && typeof override === "object" ? override : {}),
-            })
-          )
-        );
-      } catch {}
-      void fetchMaintenanceControl();
-    };
-    window.__tabstudioClearMaintenanceOverride = () => {
-      try {
-        window.localStorage.removeItem(LS_MAINTENANCE_OVERRIDE_KEY);
-      } catch {}
-      void fetchMaintenanceControl();
-    };
 
     return () => {
       disposed = true;
       window.clearInterval(pollId);
-      window.removeEventListener("storage", onStorage);
-      try {
-        delete window.__tabstudioSetMaintenanceOverride;
-        delete window.__tabstudioClearMaintenanceOverride;
-      } catch {}
     };
   }, []);
+
+  useEffect(() => {
+    if (!maintenanceControl?.enabled) return undefined;
+    const timerId = window.setInterval(() => {
+      setMaintenanceNowMs(Date.now());
+    }, 1000);
+    return () => window.clearInterval(timerId);
+  }, [maintenanceControl?.enabled]);
 
   const syncBillingCycleFromProfileRow = useCallback((profileRow) => {
     if (typeof window === "undefined") return;
@@ -1863,9 +1819,114 @@ export default function App() {
     if (path === "/support") return "support";
     return "about";
   }, [path]);
+  const appMaintenanceRuntime = useMemo(
+    () => resolveMaintenanceRuntime(maintenanceControl, maintenanceNowMs),
+    [maintenanceControl, maintenanceNowMs]
+  );
+  const isEditorSurfaceRoute =
+    routePath === "/" ||
+    routePath === "/editor" ||
+    routePath === "/projects" ||
+    routePath === "/export" ||
+    routePath === "/account" ||
+    routePath === "/account/billing";
+  const showGlobalMaintenanceOverlay = appMaintenanceRuntime.active && !isEditorSurfaceRoute;
+  const maintenanceWindowLabel = `${appMaintenanceRuntime.expectedMinutesMin}-${appMaintenanceRuntime.expectedMinutesMax} minutes`;
+  const maintenanceGlobalMessage = appMaintenanceRuntime.message || "Scheduled maintenance update in progress.";
+  const withGlobalMaintenanceOverlay = (pageNode) => (
+    <>
+      {showGlobalMaintenanceOverlay ? (
+        appMaintenanceRuntime.phase === "countdown" ? (
+          <div
+            role="status"
+            aria-live="polite"
+            style={{
+              position: "fixed",
+              top: 16,
+              left: "50%",
+              transform: "translateX(-50%)",
+              zIndex: 9000,
+              width: "min(980px, calc(100vw - 20px))",
+              borderRadius: 12,
+              border: "1px solid rgba(255,209,102,0.72)",
+              background: "rgba(20,20,20,0.96)",
+              color: "#F5F5F5",
+              boxShadow: "0 16px 30px rgba(0,0,0,0.32)",
+              padding: "10px 14px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
+            }}
+          >
+            <div style={{ display: "grid", gap: 2 }}>
+              <div style={{ fontSize: 13, fontWeight: 900 }}>
+                Site update starts in {formatMaintenanceCountdown(appMaintenanceRuntime.remainingSeconds)}
+              </div>
+              <div style={{ fontSize: 12, color: "rgba(245,245,245,0.74)" }}>
+                {maintenanceGlobalMessage} Editing locks at 00:00, then active editor sessions are saved before update.
+              </div>
+            </div>
+            <div style={{ fontSize: 24, fontWeight: 950, letterSpacing: 0.6 }}>
+              {formatMaintenanceCountdown(appMaintenanceRuntime.remainingSeconds)}
+            </div>
+          </div>
+        ) : (
+          <div
+            role="alert"
+            aria-live="assertive"
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 9001,
+              background: "rgba(0,0,0,0.74)",
+              backdropFilter: "blur(4px)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 16,
+            }}
+          >
+            <div
+              style={{
+                width: "min(640px, 100%)",
+                borderRadius: 16,
+                border: "1px solid rgba(91,212,161,0.55)",
+                background: "#141414",
+                boxShadow: "0 22px 60px rgba(0,0,0,0.44)",
+                padding: 18,
+                display: "grid",
+                gap: 10,
+              }}
+            >
+              <div style={{ fontSize: 22, fontWeight: 950, color: "#F5F5F5" }}>Update in progress</div>
+              <div style={{ fontSize: 14, lineHeight: 1.6, color: "rgba(245,245,245,0.74)" }}>
+                {maintenanceGlobalMessage} The site is temporarily paused. Expected duration: {maintenanceWindowLabel}.
+              </div>
+              <div
+                style={{
+                  borderRadius: 10,
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  background: "rgba(255,255,255,0.04)",
+                  padding: "10px 12px",
+                  fontSize: 13,
+                  lineHeight: 1.45,
+                  color: "#F5F5F5",
+                  fontWeight: 800,
+                }}
+              >
+                Active editor sessions are being protected and saved while maintenance completes.
+              </div>
+            </div>
+          </div>
+        )
+      ) : null}
+      {pageNode}
+    </>
+  );
 
   if (routePath === "/help" || routePath === "/about" || routePath === "/faq" || routePath === "/support") {
-    return (
+    return withGlobalMaintenanceOverlay(
       <HelpHubPage
         shared={{
           ACCENT_PRESETS,
@@ -1902,7 +1963,7 @@ export default function App() {
   }
 
   if (routePath === "/membership") {
-    return (
+    return withGlobalMaintenanceOverlay(
       <MembershipPage
         onBack={() => navigateTo("/")}
         onGoSettings={() => openEditorPanelFromHelp("settings")}
@@ -1937,7 +1998,7 @@ export default function App() {
   }
 
   if (routePath === "/becomeanaffiliate") {
-    return (
+    return withGlobalMaintenanceOverlay(
       <BecomeAnAffiliatePage
         shared={{
           ACCENT_PRESETS,
@@ -1961,7 +2022,7 @@ export default function App() {
   }
 
   if (routePath === "/becomeanaffiliate/apply") {
-    return (
+    return withGlobalMaintenanceOverlay(
       <AffiliateApplicationPage
         shared={{
           ACCENT_PRESETS,
@@ -1985,7 +2046,7 @@ export default function App() {
   }
 
   if (routePath === "/signup") {
-    return (
+    return withGlobalMaintenanceOverlay(
       <SignupPage
         shared={{
           ACCENT_PRESETS,
@@ -2015,7 +2076,7 @@ export default function App() {
   }
 
   if (routePath === "/signin") {
-    return (
+    return withGlobalMaintenanceOverlay(
       <SigninPage
         shared={{
           ACCENT_PRESETS,
@@ -2054,7 +2115,7 @@ export default function App() {
   }
 
   if (routePath === "/auth/callback") {
-    return (
+    return withGlobalMaintenanceOverlay(
       <AuthCallbackPage
         shared={{
           ACCENT_PRESETS,
@@ -2078,7 +2139,7 @@ export default function App() {
   }
 
   if (routePath === "/auth/reset-password") {
-    return (
+    return withGlobalMaintenanceOverlay(
       <ResetPasswordPage
         shared={{
           ACCENT_PRESETS,
@@ -2111,7 +2172,7 @@ export default function App() {
       } catch {}
     }
 
-    return (
+    return withGlobalMaintenanceOverlay(
       <CheckoutPlaceholderPage
         shared={{
           ACCENT_PRESETS,
@@ -2154,7 +2215,7 @@ export default function App() {
   }
 
   if (routePath === "/profile-setup") {
-    return (
+    return withGlobalMaintenanceOverlay(
       <ProfileSetupPage
         shared={{
           ACCENT_PRESETS,
@@ -2193,7 +2254,7 @@ export default function App() {
   }
 
   if (routePath === "/success") {
-    return (
+    return withGlobalMaintenanceOverlay(
       <SuccessPage
         shared={{
           ACCENT_PRESETS,
@@ -2219,7 +2280,7 @@ export default function App() {
   }
 
   if (routePath === "/billing") {
-    return (
+    return withGlobalMaintenanceOverlay(
       <BillingPage
         shared={{
           ACCENT_PRESETS,
@@ -2242,7 +2303,7 @@ export default function App() {
     routePath === "/account" ||
     routePath === "/account/billing"
   ) {
-    return (
+    return withGlobalMaintenanceOverlay(
       <EditorApp
         navigateTo={navigateTo}
         pendingOpenPanel={
@@ -2264,7 +2325,7 @@ export default function App() {
     );
   }
 
-  return (
+  return withGlobalMaintenanceOverlay(
     <EditorApp
       navigateTo={navigateTo}
       pendingOpenPanel={pendingEditorPanel}
