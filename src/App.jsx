@@ -140,6 +140,7 @@ const LS_MEMBERSHIP_PRICING_GUIDE_SEEN_KEY = "tabstudioMembershipPricingGuideSee
 const LS_TABBY_TOUR_COMPLETE_KEY = "tabbyTourComplete";
 const LS_TABBY_INTRO_SEEN_KEY = "tabbyIntroSeen";
 const LS_TABBY_HIDDEN_KEY = "tabbyHidden";
+const LS_MAINTENANCE_OVERRIDE_KEY = "tabstudio_maintenance_override_v1";
 const TABBY_ASSIST_MINT = "#34d399";
 const TABBY_ASSIST_MINT_STRONG = "#10b981";
 const PDF_FOOTER_BRANDING_TEXT = "www.tabstudio.app | Tabs, simplfied.";
@@ -162,6 +163,7 @@ const DEFAULT_SLOGAN_OFFSET_X = -4;
 const SLOGAN_INTRO_OFFSET_DELTA = 16;
 const EXPORT_BRANDING_TEXT = "www.tabstudio.app | Tabs, simplfied.";
 const ONBOARDING_TRACE_ENABLED = false;
+const MAINTENANCE_POLL_MS = 10000;
 
 function onboardingTrace(...args) {
   if (!ONBOARDING_TRACE_ENABLED) return;
@@ -197,6 +199,62 @@ function getResolvedExportBrandingText({ includeBranding = true, useAffiliateLin
 function normalizeBillingCycle(raw) {
   const value = String(raw || "").trim().toLowerCase();
   return value === "yearly" ? "yearly" : "monthly";
+}
+
+function normalizeMaintenanceControl(rawValue) {
+  const raw = rawValue && typeof rawValue === "object" ? rawValue : {};
+  const countdownSeconds = Math.max(0, Math.floor(Number(raw.countdown_seconds ?? raw.countdownSeconds ?? 0) || 0));
+  const expectedMinutesMin = Math.max(1, Math.floor(Number(raw.expected_minutes_min ?? raw.expectedMinutesMin ?? 2) || 2));
+  const expectedMinutesMax = Math.max(
+    expectedMinutesMin,
+    Math.floor(Number(raw.expected_minutes_max ?? raw.expectedMinutesMax ?? Math.max(5, expectedMinutesMin)) || Math.max(5, expectedMinutesMin))
+  );
+  const startedAtRaw = raw.started_at ?? raw.startedAt ?? "";
+  const startedAtMs = Number(new Date(startedAtRaw).getTime());
+  return {
+    enabled: Boolean(raw.enabled),
+    countdownSeconds,
+    expectedMinutesMin,
+    expectedMinutesMax,
+    message: String(raw.message || "").trim(),
+    startedAtIso: Number.isFinite(startedAtMs) ? new Date(startedAtMs).toISOString() : "",
+  };
+}
+
+function resolveMaintenanceRuntime(control, nowMs = Date.now()) {
+  const normalized = normalizeMaintenanceControl(control);
+  if (!normalized.enabled || !normalized.startedAtIso) {
+    return {
+      ...normalized,
+      active: false,
+      phase: "inactive",
+      remainingSeconds: 0,
+    };
+  }
+  const startedAtMs = Number(new Date(normalized.startedAtIso).getTime());
+  if (!Number.isFinite(startedAtMs)) {
+    return {
+      ...normalized,
+      active: false,
+      phase: "inactive",
+      remainingSeconds: 0,
+    };
+  }
+  const elapsedSeconds = Math.max(0, Math.floor((Number(nowMs) - startedAtMs) / 1000));
+  const remainingSeconds = Math.max(0, normalized.countdownSeconds - elapsedSeconds);
+  return {
+    ...normalized,
+    active: true,
+    phase: remainingSeconds > 0 ? "countdown" : "locked",
+    remainingSeconds,
+  };
+}
+
+function formatMaintenanceCountdown(totalSeconds) {
+  const safe = Math.max(0, Number(totalSeconds) || 0);
+  const minutes = Math.floor(safe / 60);
+  const seconds = safe % 60;
+  return `${String(minutes).padStart(1, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
 function isValidFlowSignupEmail(email) {
@@ -932,6 +990,7 @@ export default function App() {
   const [supabaseUser, setSupabaseUser] = useState(null);
   const [authReady, setAuthReady] = useState(false);
   const [userState, setUserState] = useState(() => loadUserStateFromStorage());
+  const [maintenanceControl, setMaintenanceControl] = useState(() => normalizeMaintenanceControl({ enabled: false }));
   const [isLaunchingCheckout, setIsLaunchingCheckout] = useState(false);
   const [checkoutLaunchError, setCheckoutLaunchError] = useState("");
   const helpSupportUserEmail = String(userState?.email || "");
@@ -964,6 +1023,98 @@ export default function App() {
       persistUserStateToStorage(normalized);
       return normalized;
     });
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const readMaintenanceOverride = () => {
+      try {
+        const parsed = JSON.parse(window.localStorage.getItem(LS_MAINTENANCE_OVERRIDE_KEY) || "null");
+        const normalized = normalizeMaintenanceControl(parsed);
+        return normalized.enabled ? normalized : null;
+      } catch {
+        return null;
+      }
+    };
+    const assignIfChanged = (nextControl) => {
+      const nextSerialized = JSON.stringify(normalizeMaintenanceControl(nextControl));
+      setMaintenanceControl((prev) => {
+        const prevSerialized = JSON.stringify(normalizeMaintenanceControl(prev));
+        if (prevSerialized === nextSerialized) return prev;
+        return normalizeMaintenanceControl(nextControl);
+      });
+    };
+    let disposed = false;
+    const fetchMaintenanceControl = async () => {
+      const override = readMaintenanceOverride();
+      if (override) {
+        assignIfChanged(override);
+        return;
+      }
+      try {
+        const { data, error } = await supabase
+          .from("app_maintenance")
+          .select("enabled, countdown_seconds, started_at, expected_minutes_min, expected_minutes_max, message")
+          .eq("id", 1)
+          .maybeSingle();
+        if (disposed) return;
+        if (error || !data) {
+          assignIfChanged({ enabled: false });
+          return;
+        }
+        assignIfChanged(data);
+      } catch {
+        if (!disposed) assignIfChanged({ enabled: false });
+      }
+    };
+
+    void fetchMaintenanceControl();
+    const pollId = window.setInterval(() => {
+      void fetchMaintenanceControl();
+    }, MAINTENANCE_POLL_MS);
+    const onStorage = (e) => {
+      if (!e?.key || e.key === LS_MAINTENANCE_OVERRIDE_KEY) {
+        void fetchMaintenanceControl();
+      }
+    };
+    window.addEventListener("storage", onStorage);
+
+    // Local testing helpers: set/clear maintenance without touching the database.
+    window.__tabstudioSetMaintenanceOverride = (override) => {
+      try {
+        window.localStorage.setItem(
+          LS_MAINTENANCE_OVERRIDE_KEY,
+          JSON.stringify(
+            normalizeMaintenanceControl({
+              enabled: true,
+              countdown_seconds: 300,
+              started_at: new Date().toISOString(),
+              expected_minutes_min: 2,
+              expected_minutes_max: 5,
+              message: "Scheduled maintenance update in progress.",
+              ...(override && typeof override === "object" ? override : {}),
+            })
+          )
+        );
+      } catch {}
+      void fetchMaintenanceControl();
+    };
+    window.__tabstudioClearMaintenanceOverride = () => {
+      try {
+        window.localStorage.removeItem(LS_MAINTENANCE_OVERRIDE_KEY);
+      } catch {}
+      void fetchMaintenanceControl();
+    };
+
+    return () => {
+      disposed = true;
+      window.clearInterval(pollId);
+      window.removeEventListener("storage", onStorage);
+      try {
+        delete window.__tabstudioSetMaintenanceOverride;
+        delete window.__tabstudioClearMaintenanceOverride;
+      } catch {}
+    };
   }, []);
 
   const syncBillingCycleFromProfileRow = useCallback((profileRow) => {
@@ -2106,6 +2257,7 @@ export default function App() {
             : pendingEditorPanel
         }
         onPendingPanelHandled={clearPendingEditorPanel}
+        maintenanceControl={maintenanceControl}
         updateUserState={updateUserState}
         userState={userState}
       />
@@ -2117,6 +2269,7 @@ export default function App() {
       navigateTo={navigateTo}
       pendingOpenPanel={pendingEditorPanel}
       onPendingPanelHandled={clearPendingEditorPanel}
+      maintenanceControl={maintenanceControl}
       updateUserState={updateUserState}
       userState={userState}
     />
@@ -4279,7 +4432,14 @@ const DARK_THEME = {
   starActive: "#F5C518",
 };
 
-function EditorApp({ navigateTo, pendingOpenPanel = "", onPendingPanelHandled, updateUserState, userState }) {
+function EditorApp({
+  navigateTo,
+  pendingOpenPanel = "",
+  onPendingPanelHandled,
+  maintenanceControl = { enabled: false },
+  updateUserState,
+  userState,
+}) {
   const getSystemTheme = () => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return "light";
     return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
@@ -5822,6 +5982,9 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [uiDialog, setUiDialog] = useState(null);
   const [saveSoonNotice, setSaveSoonNotice] = useState("");
+  const [maintenanceNowMs, setMaintenanceNowMs] = useState(() => Date.now());
+  const [maintenanceSaveState, setMaintenanceSaveState] = useState("idle");
+  const [maintenanceSaveMessage, setMaintenanceSaveMessage] = useState("");
   const [editorSaveState, setEditorSaveState] = useState("idle");
   const [editorSaveStatus, setEditorSaveStatus] = useState("");
   const autosaveTimerRef = useRef(null);
@@ -5912,6 +6075,7 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
   const completedRowsActionsRef = useRef(null);
   const completedRowsSectionRef = useRef(null);
   const previousAuthUserIdRef = useRef(String(userState?.authUserId || ""));
+  const previousMaintenancePhaseRef = useRef("inactive");
 
   function clearPersistedUserScopedClientState() {
     if (typeof window === "undefined") return;
@@ -6616,7 +6780,73 @@ const editingCellRef = useRef(null); // tracks the cell for the current typing s
     [canSaveTabs, flushProjectSave, isLoggedIn, songTitle]
   );
 
+  const maintenanceRuntime = useMemo(
+    () => resolveMaintenanceRuntime(maintenanceControl, maintenanceNowMs),
+    [maintenanceControl, maintenanceNowMs]
+  );
+  const maintenanceCountdownActive = maintenanceRuntime.active && maintenanceRuntime.phase === "countdown";
+  const maintenanceLockActive = maintenanceRuntime.active && maintenanceRuntime.phase === "locked";
+  const maintenanceLabel = maintenanceRuntime.message || "Scheduled maintenance update in progress.";
+  const maintenanceWindowLabel = `${maintenanceRuntime.expectedMinutesMin}-${maintenanceRuntime.expectedMinutesMax} minutes`;
+
+  useEffect(() => {
+    if (!maintenanceRuntime.active) return undefined;
+    const id = window.setInterval(() => {
+      setMaintenanceNowMs(Date.now());
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [maintenanceRuntime.active]);
+
+  useEffect(() => {
+    if (!maintenanceLockActive) return undefined;
+    const blockInteractionKeydown = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    window.addEventListener("keydown", blockInteractionKeydown, true);
+    return () => window.removeEventListener("keydown", blockInteractionKeydown, true);
+  }, [maintenanceLockActive]);
+
+  useEffect(() => {
+    const currentPhase = maintenanceRuntime.phase;
+    const previousPhase = previousMaintenancePhaseRef.current;
+    previousMaintenancePhaseRef.current = currentPhase;
+    if (!(currentPhase === "locked" && previousPhase !== "locked")) return;
+
+    void (async () => {
+      const hasPendingChanges = currentProjectSignatureRef.current !== lastFlushedProjectSignatureRef.current;
+      if (!hasPendingChanges) {
+        setMaintenanceSaveState("saved");
+        setMaintenanceSaveMessage("All current work is already saved.");
+        return;
+      }
+      setMaintenanceSaveState("saving");
+      setMaintenanceSaveMessage("Saving your latest tab changes...");
+      const saveOk = await flushProjectSaveUntilSettled({ reason: "maintenance-lock", maxPasses: 4 });
+      if (saveOk) {
+        setMaintenanceSaveState("saved");
+        setMaintenanceSaveMessage("Your latest work has been saved. Update in progress.");
+      } else {
+        setMaintenanceSaveState("error");
+        setMaintenanceSaveMessage("We couldn't confirm every change was saved. Please wait and retry after maintenance.");
+      }
+    })();
+  }, [flushProjectSaveUntilSettled, maintenanceRuntime.phase]);
+
+  useEffect(() => {
+    if (maintenanceRuntime.phase === "inactive") {
+      setMaintenanceSaveState("idle");
+      setMaintenanceSaveMessage("");
+      return;
+    }
+    if (maintenanceRuntime.phase === "countdown") {
+      setMaintenanceSaveState("idle");
+      setMaintenanceSaveMessage("");
+    }
+  }, [maintenanceRuntime.phase]);
+
   function handleSaveTabClick() {
+    if (maintenanceLockActive) return;
     flushProjectSave({ manual: true });
   }
 
@@ -13297,6 +13527,106 @@ function clearSelectedCells() {
           {saveSoonNotice}
         </div>
       )}
+
+      {maintenanceCountdownActive ? (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            position: "fixed",
+            top: 78,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 6000,
+            width: "min(920px, calc(100vw - 20px))",
+            borderRadius: 12,
+            border: `1px solid ${withAlpha("#FFD166", 0.72)}`,
+            background: isDarkMode ? "rgba(27,24,16,0.96)" : "rgba(255,251,236,0.98)",
+            color: THEME.text,
+            boxShadow: "0 16px 30px rgba(0,0,0,0.24)",
+            padding: "10px 14px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+          }}
+        >
+          <div style={{ display: "grid", gap: 2 }}>
+            <div style={{ fontSize: 13, fontWeight: 900 }}>
+              Site update starts in {formatMaintenanceCountdown(maintenanceRuntime.remainingSeconds)}
+            </div>
+            <div style={{ fontSize: 12, color: THEME.textFaint }}>
+              {maintenanceLabel} Editing locks at 00:00, then your session is saved before the update ({maintenanceWindowLabel}).
+            </div>
+          </div>
+          <div style={{ fontSize: 24, fontWeight: 950, letterSpacing: 0.6 }}>
+            {formatMaintenanceCountdown(maintenanceRuntime.remainingSeconds)}
+          </div>
+        </div>
+      ) : null}
+
+      {maintenanceLockActive ? (
+        <div
+          role="alert"
+          aria-live="assertive"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 7000,
+            background: withAlpha("#000000", 0.72),
+            backdropFilter: "blur(4px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+          }}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+        >
+          <div
+            style={{
+              width: "min(640px, 100%)",
+              borderRadius: 16,
+              border: `1px solid ${withAlpha(THEME.accent, 0.55)}`,
+              background: THEME.surfaceWarm,
+              boxShadow: "0 22px 60px rgba(0,0,0,0.44)",
+              padding: 18,
+              display: "grid",
+              gap: 10,
+            }}
+          >
+            <div style={{ fontSize: 22, fontWeight: 950, color: THEME.text }}>Update in progress</div>
+            <div style={{ fontSize: 14, lineHeight: 1.6, color: THEME.textFaint }}>
+              {maintenanceLabel} The editor is temporarily paused while we protect your session. Expected duration: {maintenanceWindowLabel}.
+            </div>
+            <div
+              style={{
+                borderRadius: 10,
+                border: `1px solid ${THEME.border}`,
+                background: THEME.surface,
+                padding: "10px 12px",
+                fontSize: 13,
+                lineHeight: 1.45,
+                color: maintenanceSaveState === "error" ? "#FFB3BA" : THEME.text,
+                fontWeight: 800,
+              }}
+            >
+              {maintenanceSaveState === "saving"
+                ? "Saving your active session..."
+                : maintenanceSaveState === "saved"
+                ? maintenanceSaveMessage || "All active work has been saved."
+                : maintenanceSaveState === "error"
+                ? maintenanceSaveMessage || "Save confirmation failed."
+                : "Preparing maintenance lock..."}
+            </div>
+            <div style={{ fontSize: 12, color: THEME.textMuted }}>
+              Please keep this tab open. Access will resume automatically when maintenance mode is turned off.
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/* Main layout */}
       <div
