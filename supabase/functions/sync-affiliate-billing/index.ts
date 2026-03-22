@@ -1,5 +1,3 @@
-import "@supabase/functions-js/edge-runtime.d.ts"
-
 const jsonHeaders = { "Content-Type": "application/json" }
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
