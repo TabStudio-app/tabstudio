@@ -5160,8 +5160,9 @@ function EditorApp({
     setSecurityEmail(nextEmail);
     setBillingEmail(nextEmail);
   }, [userState?.email]);
+  const accountUsageUserId = String(userState?.authUserId || "").trim();
   const refreshAccountUsageSummary = useCallback(async () => {
-    if (!isLoggedIn || !supabaseUser?.id) {
+    if (!isLoggedIn || !accountUsageUserId) {
       setAccountUsageSummary({
         tabsCreated: 0,
         exports30d: 0,
@@ -5171,26 +5172,26 @@ function EditorApp({
       return;
     }
     try {
-      const next = await getAccountUsageSummary(supabaseUser.id);
+      const next = await getAccountUsageSummary(accountUsageUserId);
       setAccountUsageSummary(next);
     } catch {}
-  }, [isLoggedIn, supabaseUser?.id]);
+  }, [accountUsageUserId, isLoggedIn]);
   useEffect(() => {
     void refreshAccountUsageSummary();
   }, [refreshAccountUsageSummary]);
 
   const recordAccountExportEvent = useCallback(
     async (exportType) => {
-      if (!supabaseUser?.id) return;
+      if (!accountUsageUserId) return;
       try {
         await recordExportEvent({
-          userId: supabaseUser.id,
+          userId: accountUsageUserId,
           exportType,
         });
       } catch {}
       void refreshAccountUsageSummary();
     },
-    [refreshAccountUsageSummary, supabaseUser?.id]
+    [accountUsageUserId, refreshAccountUsageSummary]
   );
   useEffect(() => {
     let cancelled = false;
