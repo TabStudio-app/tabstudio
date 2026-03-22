@@ -81,12 +81,23 @@ export default function CheckoutPlaceholderPage({ shared }) {
   const checkoutPrimaryActionLabel = isPlanSwitch
     ? `Review ${switchActionLabel} in Stripe`
     : checkoutButtonLabel;
-  const switchBillingSummary =
-    switchDirection === "upgrade"
-      ? "Stripe will show whether there is an immediate prorated charge before you confirm."
-      : switchDirection === "downgrade"
-        ? "This shows the new plan price. Stripe will apply any eligible credit/timing on the confirmation page."
-        : "Stripe will show the exact billing outcome before you confirm.";
+  const switchSummaryLines = useMemo(() => {
+    if (!isPlanSwitch) return [];
+    if (switchDirection === "upgrade") {
+      return [
+        `You’re upgrading from ${currentPlanMeta.label} (${currentPlanPriceLabel}) to ${planMeta.label} (${selectedPlanPriceLabel}).`,
+        `You’ll get instant access to ${planMeta.label} features.`,
+        "You’ll be charged a prorated amount today for the price difference.",
+        `Your full ${selectedPlanPriceLabel} billing starts from your next billing date.`,
+      ];
+    }
+    return [
+      `You’re downgrading from ${currentPlanMeta.label} (${currentPlanPriceLabel}) to ${planMeta.label} (${selectedPlanPriceLabel}).`,
+      "Your current plan will remain active until the end of your billing period.",
+      `Your new ${selectedPlanPriceLabel} pricing will start on your next billing date.`,
+      "You won’t be charged anything today.",
+    ];
+  }, [currentPlanMeta.label, currentPlanPriceLabel, isPlanSwitch, planMeta.label, selectedPlanPriceLabel, switchDirection]);
   const selectedPlanHighlights = useMemo(() => {
     if (planMeta.id === "creator") {
       return [
@@ -346,11 +357,13 @@ export default function CheckoutPlaceholderPage({ shared }) {
                   }}
                 >
                   <div style={{ fontSize: 12, fontWeight: 900, color: THEME.text }}>
-                    You’re switching from {currentPlanMeta.label} ({currentPlanPriceLabel}) to {planMeta.label} ({selectedPlanPriceLabel}).
+                    {switchSummaryLines[0]}
                   </div>
-                  <div style={{ fontSize: 12, lineHeight: 1.45, color: THEME.textFaint, fontWeight: 700 }}>
-                    {switchBillingSummary} Nothing changes until you complete confirmation in Stripe.
-                  </div>
+                  {switchSummaryLines.slice(1).map((line) => (
+                    <div key={line} style={{ fontSize: 12, lineHeight: 1.45, color: THEME.textFaint, fontWeight: 700 }}>
+                      {line}
+                    </div>
+                  ))}
                 </div>
               ) : null}
               <button
@@ -380,6 +393,27 @@ export default function CheckoutPlaceholderPage({ shared }) {
               >
                 {isCheckoutProcessing ? "Opening secure checkout..." : checkoutPrimaryActionLabel}
               </button>
+              <div
+                style={{
+                  marginTop: 8,
+                  borderRadius: 10,
+                  border: `1px solid ${THEME.border}`,
+                  background: withAlpha(THEME.text, isDark ? 0.03 : 0.02),
+                  padding: "9px 11px",
+                  display: "grid",
+                  gap: 4,
+                  textAlign: "left",
+                }}
+              >
+                <div style={{ fontSize: 12, fontWeight: 900, color: THEME.text }}>
+                  What happens next
+                </div>
+                <div style={{ fontSize: 12, color: THEME.textFaint, fontWeight: 700, lineHeight: 1.45 }}>1. Review payment details in Stripe</div>
+                <div style={{ fontSize: 12, color: THEME.textFaint, fontWeight: 700, lineHeight: 1.45 }}>2. Confirm your plan change</div>
+                <div style={{ fontSize: 12, color: THEME.textFaint, fontWeight: 700, lineHeight: 1.45 }}>
+                  3. Return to TabStudio with your updated access
+                </div>
+              </div>
               {isCheckoutProcessing ? (
                 <div
                   style={{
