@@ -19,7 +19,7 @@ as $$
 begin
   if old.status is distinct from new.status and new.status = 'approved' then
     if new.invite_token is null or btrim(new.invite_token) = '' or new.invite_token_consumed_at is not null then
-      new.invite_token := encode(gen_random_bytes(24), 'hex');
+      new.invite_token := encode(extensions.gen_random_bytes(24), 'hex');
     end if;
     new.invite_token_created_at := timezone('utc', now());
     new.invite_token_consumed_at := null;
@@ -179,7 +179,7 @@ execute function public.enforce_affiliate_invite_token_on_signup();
 
 update public.affiliate_applications
 set
-  invite_token = coalesce(nullif(btrim(invite_token), ''), encode(gen_random_bytes(24), 'hex')),
+  invite_token = coalesce(nullif(btrim(invite_token), ''), encode(extensions.gen_random_bytes(24), 'hex')),
   invite_token_created_at = coalesce(invite_token_created_at, timezone('utc', now()))
 where status = 'approved'
   and (invite_token is null or btrim(invite_token) = '');
