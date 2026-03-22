@@ -5110,8 +5110,8 @@ function EditorApp({
   const accountTier =
     accountPlanId === "creator" ? "Creator Plan" : accountPlanId === "band" ? "Band Plan" : accountPlanId === "solo" ? "Solo Plan" : "Free Plan";
   const accountEmail = isLoggedIn ? String(userState?.email || "").trim() : "";
-  const accountCreatedAt = String(supabaseUser?.created_at || userState?.createdAt || "").trim();
-  const accountLastSignInAt = String(supabaseUser?.last_sign_in_at || "").trim();
+  const accountCreatedAt = String((typeof supabaseUser !== "undefined" ? supabaseUser?.created_at : "") || userState?.createdAt || "").trim();
+  const accountLastSignInAt = String((typeof supabaseUser !== "undefined" ? supabaseUser?.last_sign_in_at : "") || "").trim();
   const fallbackBillingCycle = normalizeBillingCycle(userState?.billingCycle);
   const hasStripePaidSubscription = accountSubscriptionSummary.loaded && accountSubscriptionSummary.planId && accountSubscriptionSummary.planId !== "free";
   const accountMemberSince = hasStripePaidSubscription
