@@ -24,6 +24,32 @@ function resolvePriceEnvKey(planTier, billingCycle) {
   return `STRIPE_PRICE_${plan.toUpperCase()}_${cycle.toUpperCase()}`;
 }
 
+function resolvePlanFromPriceId(priceId) {
+  const normalizedPriceId = String(priceId || "").trim();
+  if (!normalizedPriceId) return "free";
+  const priceMap = [
+    ["solo", "monthly", "STRIPE_PRICE_SOLO_MONTHLY"],
+    ["solo", "yearly", "STRIPE_PRICE_SOLO_YEARLY"],
+    ["band", "monthly", "STRIPE_PRICE_BAND_MONTHLY"],
+    ["band", "yearly", "STRIPE_PRICE_BAND_YEARLY"],
+    ["creator", "monthly", "STRIPE_PRICE_CREATOR_MONTHLY"],
+    ["creator", "yearly", "STRIPE_PRICE_CREATOR_YEARLY"],
+  ];
+  for (const [planTier, _billingCycle, envKey] of priceMap) {
+    if (String(process.env[envKey] || "").trim() === normalizedPriceId) {
+      return planTier;
+    }
+  }
+  return "free";
+}
+
+function planRank(planTier) {
+  if (planTier === "creator") return 3;
+  if (planTier === "band") return 2;
+  if (planTier === "solo") return 1;
+  return 0;
+}
+
 function getRequestOrigin(req) {
   const explicitOrigin = String(req.headers.origin || "").trim();
   if (explicitOrigin) return explicitOrigin;
@@ -105,6 +131,57 @@ async function findOrCreateStripeCustomer({ secretKey, userId, email }) {
   return String(createdCustomer.payload?.id || "").trim();
 }
 
+async function getActiveStripeSubscription({ secretKey, customerId }) {
+  const query = new URLSearchParams();
+  query.set("customer", String(customerId || "").trim());
+  query.set("status", "all");
+  query.set("limit", "20");
+  const listedSubscriptions = await fetchStripeJson(`/subscriptions?${query.toString()}`, { secretKey });
+  if (!listedSubscriptions.response.ok) {
+    throw new Error(String(listedSubscriptions.payload?.error?.message || "Unable to look up Stripe subscriptions."));
+  }
+  const subscriptions = Array.isArray(listedSubscriptions.payload?.data) ? listedSubscriptions.payload.data : [];
+  return subscriptions.find((subscription) => {
+    const status = String(subscription?.status || "").trim().toLowerCase();
+    return status === "active" || status === "trialing";
+  }) || null;
+}
+
+async function createSubscriptionUpdatePortalSession({
+  secretKey,
+  customerId,
+  subscriptionId,
+  subscriptionItemId,
+  targetPriceId,
+  returnUrl,
+} = {}) {
+  const form = new URLSearchParams();
+  form.set("customer", String(customerId || "").trim());
+  form.set("return_url", String(returnUrl || "").trim());
+  form.set("flow_data[type]", "subscription_update_confirm");
+  form.set("flow_data[subscription_update_confirm][subscription]", String(subscriptionId || "").trim());
+  form.set("flow_data[subscription_update_confirm][items][0][id]", String(subscriptionItemId || "").trim());
+  form.set("flow_data[subscription_update_confirm][items][0][price]", String(targetPriceId || "").trim());
+  form.set("flow_data[subscription_update_confirm][items][0][quantity]", "1");
+
+  const portalSession = await fetchStripeJson("/billing_portal/sessions", {
+    method: "POST",
+    secretKey,
+    form,
+  });
+
+  if (!portalSession.response.ok) {
+    throw new Error(String(portalSession.payload?.error?.message || "Unable to create plan update session."));
+  }
+
+  const url = String(portalSession.payload?.url || "").trim();
+  if (!url) {
+    throw new Error("Plan update session did not return a redirect URL.");
+  }
+
+  return { url };
+}
+
 async function resolveCheckoutIdentity({ accessToken, pendingAuthUserId, pendingAuthEmail }) {
   const normalizedPendingUserId = String(pendingAuthUserId || "").trim();
   const normalizedPendingEmail = String(pendingAuthEmail || "").trim().toLowerCase();
@@ -181,6 +258,43 @@ export default async function handler(req, res) {
       userId,
       email: userEmail,
     });
+    const existingSubscription = await getActiveStripeSubscription({
+      secretKey: stripeSecretKey,
+      customerId: stripeCustomerId,
+    });
+    const existingSubscriptionItem = Array.isArray(existingSubscription?.items?.data) ? existingSubscription.items.data[0] : null;
+    const existingPriceId = String(existingSubscriptionItem?.price?.id || "").trim();
+    const existingPlanTier = resolvePlanFromPriceId(existingPriceId);
+    const existingPlanRank = planRank(existingPlanTier);
+    const requestedPlanRank = planRank(planTier);
+
+    if (
+      existingSubscription?.id &&
+      existingSubscriptionItem?.id &&
+      existingPlanRank > 0 &&
+      requestedPlanRank > 0 &&
+      existingPlanTier !== planTier
+    ) {
+      const portalReturnUrl = `${appUrl}/account`;
+      const planSwitch = await createSubscriptionUpdatePortalSession({
+        secretKey: stripeSecretKey,
+        customerId: stripeCustomerId,
+        subscriptionId: String(existingSubscription.id || "").trim(),
+        subscriptionItemId: String(existingSubscriptionItem.id || "").trim(),
+        targetPriceId: priceId,
+        returnUrl: portalReturnUrl,
+      });
+      console.info("[create-checkout-session] existing-subscription-plan-switch", {
+        userId,
+        customerId: stripeCustomerId,
+        existingPlanTier,
+        requestedPlanTier: planTier,
+        switchDirection: requestedPlanRank > existingPlanRank ? "upgrade" : "downgrade",
+      });
+      return sendJson(res, 200, {
+        url: planSwitch.url,
+      });
+    }
 
     const form = new URLSearchParams();
     form.set("mode", "subscription");

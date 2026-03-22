@@ -768,6 +768,7 @@ function normalizeUserState(rawState) {
     everHadMembership: false,
     planTier: "free",
     planType: null,
+    billingCycle: "monthly",
     email: "",
     profile: normalizeProfileData(null),
   };
@@ -783,6 +784,7 @@ function normalizeUserState(rawState) {
     everHadMembership,
     planTier,
     planType,
+    billingCycle: normalizeBillingCycle(rawState.billingCycle),
     email: String(rawState.email || ""),
     profile: normalizeProfileData(rawState.profile),
   };
@@ -1138,6 +1140,7 @@ export default function App() {
         everHadMembership: session ? membershipState.everHadMembership : false,
         planTier: session ? membershipState.planTier : "free",
         planType: session ? membershipState.planType : null,
+        billingCycle: session ? membershipState.billingCycle : "monthly",
         email: String(session?.user?.email || ""),
         profile: session
           ? profileRow
@@ -2292,8 +2295,13 @@ export default function App() {
           LS_THEME_MODE_KEY,
           TABBY_ASSIST_MINT,
           onContinueToAccountSetup: () => {
-            setForcedProfileSetupAfterPayment(true);
-            navigateTo("/profile-setup");
+            const destination = resolveAuthenticatedDestination(userState, { hasCheckoutIntent: false });
+            if (destination === "/profile-setup") {
+              setForcedProfileSetupAfterPayment(true);
+            } else {
+              setForcedProfileSetupAfterPayment(false);
+            }
+            navigateTo(destination);
           },
           onVerificationDetected: handleVerifiedEmailDetected,
           pendingVerificationState: getPendingVerificationState(),
@@ -5087,16 +5095,31 @@ function EditorApp({
   const [songTitle, setSongTitle] = useState("");
   const [artist, setArtist] = useState("");
   const [albumName, setAlbumName] = useState("");
+  const [accountSubscriptionSummary, setAccountSubscriptionSummary] = useState({
+    loaded: false,
+    planId: null,
+    billingCycleLabel: "",
+    renewalDate: "",
+    memberSinceDate: "",
+  });
   const profileDisplayNameFromState = String(userState?.profile?.displayName || "").trim();
   const resolvedSignedInAccountName = profileDisplayNameFromState || String(userState?.email || "").trim() || "Account";
   const accountFullName = isLoggedIn ? resolvedSignedInAccountName : "Account";
-  const accountPlanId = editorHasMembership ? normalizePlanId(userState?.planType) : null;
+  const fallbackAccountPlanId = editorHasMembership ? normalizePlanId(userState?.planType || userState?.planTier) : "free";
+  const accountPlanId = accountSubscriptionSummary.loaded ? accountSubscriptionSummary.planId || "free" : fallbackAccountPlanId;
   const accountTier =
     accountPlanId === "creator" ? "Creator Plan" : accountPlanId === "band" ? "Band Plan" : accountPlanId === "solo" ? "Solo Plan" : "Free Plan";
   const accountEmail = isLoggedIn ? String(userState?.email || "").trim() : "";
-  const accountMemberSince = "";
-  const accountRenewalDate = "";
-  const accountBillingCycle = "";
+  const fallbackBillingCycle = normalizeBillingCycle(userState?.billingCycle);
+  const accountMemberSince = accountSubscriptionSummary.loaded ? accountSubscriptionSummary.memberSinceDate || "" : "";
+  const accountRenewalDate = accountSubscriptionSummary.loaded ? accountSubscriptionSummary.renewalDate || "" : "";
+  const accountBillingCycle = accountSubscriptionSummary.loaded
+    ? accountSubscriptionSummary.billingCycleLabel || ""
+    : editorHasMembership
+    ? fallbackBillingCycle === "yearly"
+      ? "Yearly"
+      : "Monthly"
+    : "";
   const [profileDisplayName, setProfileDisplayName] = useState(() => String(userState?.profile?.displayName || "").trim());
   const [profileHandle, setProfileHandle] = useState(ACCOUNT_MOCK_DATA.profile.handle);
   const [profileBio, setProfileBio] = useState(ACCOUNT_MOCK_DATA.profile.bio);
@@ -5120,6 +5143,54 @@ function EditorApp({
     setSecurityEmail(nextEmail);
     setBillingEmail(nextEmail);
   }, [userState?.email]);
+  useEffect(() => {
+    let cancelled = false;
+    if (!isLoggedIn || !accountEmail) {
+      setAccountSubscriptionSummary({
+        loaded: false,
+        planId: null,
+        billingCycleLabel: "",
+        renewalDate: "",
+        memberSinceDate: "",
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const fetchSummary = async () => {
+      try {
+        const response = await fetch("/api/subscription-summary", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            userEmail: accountEmail,
+            userId: String(userState?.authUserId || "").trim(),
+          }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || cancelled) return;
+        const planIdRaw = String(payload?.planId || "").trim().toLowerCase();
+        const planId = planIdRaw === "creator" || planIdRaw === "band" || planIdRaw === "solo" ? planIdRaw : "free";
+        const cycleRaw = String(payload?.billingCycle || "").trim().toLowerCase();
+        const billingCycleLabel = cycleRaw === "yearly" ? "Yearly" : cycleRaw === "monthly" ? "Monthly" : "";
+        setAccountSubscriptionSummary({
+          loaded: true,
+          planId,
+          billingCycleLabel,
+          renewalDate: String(payload?.renewalDate || "").trim(),
+          memberSinceDate: String(payload?.memberSinceDate || "").trim(),
+        });
+      } catch {}
+    };
+
+    void fetchSummary();
+    return () => {
+      cancelled = true;
+    };
+  }, [accountEmail, isLoggedIn, userState?.authUserId]);
   const saveAccountProfile = useCallback(() => {
     updateUserState?.((prev) => ({
       ...prev,
@@ -5133,12 +5204,12 @@ function EditorApp({
   const accountSummaryName = isLoggedIn ? resolvedSignedInAccountName : "Sign in to TabStudio";
   const accountSummaryTier = !isLoggedIn
     ? "Guest"
-    : editorHasMembership
-    ? normalizePlanId(userState?.planType) === "creator"
-      ? "Creator Plan"
-      : normalizePlanId(userState?.planType) === "band"
-      ? "Band Plan"
-      : "Solo Plan"
+    : accountPlanId === "creator"
+    ? "Creator Plan"
+    : accountPlanId === "band"
+    ? "Band Plan"
+    : accountPlanId === "solo"
+    ? "Solo Plan"
     : "Free Plan";
   const openSettingsAccountEntry = useCallback(() => {
     setSettingsLanguageOpen(false);
