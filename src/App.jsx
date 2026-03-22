@@ -209,7 +209,7 @@ function normalizeMaintenanceControl(rawValue) {
     expectedMinutesMin,
     Math.floor(Number(raw.expected_minutes_max ?? raw.expectedMinutesMax ?? Math.max(5, expectedMinutesMin)) || Math.max(5, expectedMinutesMin))
   );
-  const startedAtRaw = raw.started_at ?? raw.startedAt ?? "";
+  const startedAtRaw = raw.started_at ?? raw.startedAt ?? raw.startedAtIso ?? "";
   const startedAtMs = Number(new Date(startedAtRaw).getTime());
   return {
     enabled: Boolean(raw.enabled),
